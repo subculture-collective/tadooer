@@ -1,13 +1,55 @@
 # Productivity Suite
 
-This workspace is the discovery and eventual integration home for a private,
+This workspace is the implementation and integration home for a private,
 self-hostable productivity suite. The intended suite includes a Greenfield
-React successor to Super Productivity, Daymark, Baikal, SuperSync, and the
-existing Super Productivity MCP tooling.
+React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
+the existing Super Productivity MCP tooling.
 
-No component repository is vendored or moved here yet. Repository topology,
-product boundaries, compatibility requirements, and migration strategy remain
-open until the requirements interview is complete.
+Phase 0A provides the runnable repository foundation. It deliberately does not
+claim task, calendar, focus, synchronization, authentication, or MCP product
+functionality yet.
+
+## Run the foundation
+
+Requirements: Docker with Compose, or Node.js 24+ and pnpm 11.15.1 for local
+development.
+
+```bash
+docker compose up --detach --build --wait
+./deploy/smoke.sh
+```
+
+The React readiness screen is available at `http://127.0.0.1:18080`. Baïkal's
+installer/admin interface is available at `http://127.0.0.1:18086/admin/` until
+the first-run owner flow connects it in Phase 0B. Change either loopback port
+with `SUITE_PORT` or `BAIKAL_PORT`; public TLS and routing belong at the edge and
+are intentionally not embedded in this local Compose file.
+
+Persistent data lives in three named volumes:
+
+- `suite-data`: Suite SQLite database and backups
+- `baikal-specific`: authoritative Baïkal DAV database/resources
+- `baikal-config`: Baïkal configuration
+
+Create a consistent online SQLite backup with `./deploy/backup.sh`. Restore one
+with `./deploy/restore.sh <backup-basename>`; restore stops only the Suite
+service and retains a pre-restore database copy. Back up the two Baïkal volumes
+separately before upgrades; Suite backups never claim to contain authoritative
+calendar or address-book resources.
+
+## Develop and verify
+
+```bash
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm verify
+./deploy/verify-compose.sh
+```
+
+`pnpm verify` is the canonical local code gate. The Compose verification is a
+slower disposable deployment check: it builds both services, validates rendered
+HTTP/API output, proves installation identity across restart, replaces the
+database, restores an online SQLite backup, and removes its test volumes.
 
 ## Existing systems under consideration
 

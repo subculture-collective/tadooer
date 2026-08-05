@@ -1,0 +1,47 @@
+name: productivity-suite
+
+services:
+  suite:
+    build:
+      context: .
+      args:
+        SUITE_VERSION: ${SUITE_VERSION:-0.0.0-dev}
+        SUITE_REVISION: ${SUITE_REVISION:-development}
+        SUITE_BUILD_DATE: ${SUITE_BUILD_DATE:-}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SUITE_PORT:-18080}:8080"
+    volumes:
+      - suite-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  baikal:
+    image: ckulka/baikal:0.10.1-nginx@sha256:434bdd162247cc6aa6f878c9b4dce6216e39e79526b980453b13812d5f8ebf4b
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BAIKAL_PORT:-18086}:80"
+    volumes:
+      - baikal-specific:/var/www/baikal/Specific
+      - baikal-config:/var/www/baikal/config
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1/admin/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  suite-data:
+  baikal-specific:
+  baikal-config:
