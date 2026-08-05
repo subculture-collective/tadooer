@@ -15,6 +15,25 @@ Feature ordering follows
 
 ## Phase 0: Contract lab and repository foundation
 
+### Implementation checkpoint
+
+Phase 0A was completed on 2026-08-05 on `codex/phase-0-foundation`:
+
+- pnpm TypeScript workspace with React/Vite web, Node server, and framework-free
+  contract, domain, persistence, CalDAV, and test-support packages
+- same-origin `/api/health`, `/api/ready`, and `/api/build` contracts plus a
+  readiness UI that does not claim product functionality
+- built-in SQLite adapter with checksummed migration ledger, stable installation
+  identity, online backup, and restore tooling
+- pinned two-container Suite and Baïkal Compose topology with explicit volumes
+- disposable deployment drill covering health, restart persistence, database
+  replacement, backup restore, and cleanup
+
+Phase 0B is the next vertical slice: first-run owner setup, login/session
+security, and connection to the bundled Baïkal instance. The remaining Phase 0
+contract fixtures and feasibility spikes stay open until consumed by that slice
+or a later dependency-ready slice.
+
 ### Outcome
 
 The suite repository can build and test a React shell, application API, shared
