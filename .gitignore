@@ -20,3 +20,5 @@ data/
 *.swp
 *.swo
 
+# User Dev files
+/docs/scratchpad/
