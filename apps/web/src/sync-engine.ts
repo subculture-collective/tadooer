@@ -2,15 +2,23 @@ import type {
   ClientRegistrationResponse,
   SyncRoundRequest,
   SyncRoundResponse,
+  SyncSnapshotResponse,
 } from "@suite/contracts";
-import { LocalStore, type LocalClientIdentity } from "./local-store.ts";
+import type { LocalClientIdentity, LocalStore } from "./local-store.ts";
 
 export interface SyncTransport {
   registerClient(): Promise<ClientRegistrationResponse>;
+  snapshot(client: LocalClientIdentity): Promise<SyncSnapshotResponse>;
   syncRound(
     client: LocalClientIdentity,
     request: SyncRoundRequest,
   ): Promise<SyncRoundResponse>;
+}
+
+export class SyncCursorResetRequired extends Error {
+  constructor() {
+    super("The sync cursor must be reset from a full snapshot");
+  }
 }
 
 export class SyncEngine {
@@ -26,13 +34,27 @@ export class SyncEngine {
   async sync(pullLimit = 100): Promise<SyncRoundResponse> {
     const client = await this.ensureClient();
     const outbox = await this.store.loadOutbox();
-    const response = await this.transport.syncRound(client, {
+    const request = {
       cursor: client.cursor,
       operations: outbox
         .filter(({ state }) => state === "queued" || state === "sending")
         .map(({ operation }) => operation),
       pullLimit,
-    });
+    } satisfies SyncRoundRequest;
+    let response: SyncRoundResponse;
+    try {
+      response = await this.transport.syncRound(client, request);
+    } catch (error) {
+      if (!(error instanceof SyncCursorResetRequired)) throw error;
+      await this.store.replaceFromSnapshot(
+        await this.transport.snapshot(client),
+      );
+      const resetClient = await this.ensureClient();
+      response = await this.transport.syncRound(resetClient, {
+        ...request,
+        cursor: resetClient.cursor,
+      });
+    }
     await this.store.applySyncRound(response);
     return response;
   }

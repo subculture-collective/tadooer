@@ -1,30 +1,45 @@
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
+  ActiveSession,
   BaikalStatusResponse,
+  Project,
   SessionResponse,
+  Subtask,
+  Tag,
   Task,
   PlannerResponse,
 } from "@suite/contracts";
 import {
   ApiRequestError,
+  commandActiveSession,
   connectBaikal,
-  createTask,
-  deleteTask,
+  createProject,
+  createSubtask,
+  deleteSubtask,
+  createSyncTransport,
+  createTag,
+  assignTaskProject,
+  assignTaskTags,
   getBaikalStatus,
+  getActiveSession,
   getSetupStatus,
   getTasks,
   getPlanner,
+  getProjects,
   getRecoveryTasks,
+  getSubtasks,
+  getTags,
+  patchSubtask,
   login,
   logout,
-  patchTask,
   putTaskTimeBlock,
   removeTaskTimeBlock,
-  restoreTask,
   resumeSession,
   setupOwner,
-  transitionTask,
 } from "./api.ts";
+import { LocalStore, type LocalClientIdentity } from "./local-store.ts";
+import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
+import { FocusPanel, type FocusPanelCommand } from "./focus-panel.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -41,6 +56,17 @@ export type AppState =
       readonly tasks: readonly Task[];
       readonly recovery: readonly Task[];
       readonly planner: PlannerResponse | null;
+      readonly client?: LocalClientIdentity;
+      readonly activeSession?: ActiveSession | null;
+      readonly syncStatus?: "online" | "offline" | "syncing";
+      readonly conflictCount?: number;
+    }
+  | {
+      readonly kind: "offline";
+      readonly tasks: readonly Task[];
+      readonly recovery: readonly Task[];
+      readonly conflictCount: number;
+      readonly message: string;
     }
   | { readonly kind: "error"; readonly message: string };
 
@@ -106,26 +132,96 @@ export const App = ({ initialState }: AppProps) => {
   );
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [localStore] = useState(() => new LocalStore());
+  const [projects, setProjects] = useState<readonly Project[]>([]);
+  const [tags, setTags] = useState<readonly Tag[]>([]);
+  const [subtasks, setSubtasks] = useState<
+    Readonly<Record<string, readonly Subtask[]>>
+  >({});
 
-  const loadAuthenticated = useCallback(async (session: SessionResponse) => {
-    const [baikal, taskList, recoveryList] = await Promise.all([
-      getBaikalStatus(),
-      getTasks(),
-      getRecoveryTasks(),
-    ]);
-    const window = plannerWindow();
-    const planner = baikal.connected
-      ? await getPlanner(window.from, window.to)
-      : null;
-    setState({
-      kind: "authenticated",
-      session,
-      baikal,
-      tasks: taskList.tasks,
-      recovery: recoveryList.tasks,
-      planner,
+  const cachedTaskState = useCallback(async () => {
+    const snapshots = await localStore.loadCachedTasks({
+      includeDeleted: true,
     });
-  }, []);
+    return {
+      tasks: snapshots
+        .map(({ task }) => task)
+        .filter((task) => task.deletedAt == null),
+      recovery: snapshots
+        .map(({ task }) => task)
+        .filter((task) => task.deletedAt != null),
+      conflictCount: (await localStore.loadConflicts()).length,
+    };
+  }, [localStore]);
+
+  const synchronize = useCallback(
+    async (session: SessionResponse) => {
+      const transport = createSyncTransport(session.csrfToken);
+      const engine = new SyncEngine(localStore, transport);
+      const client = await engine.ensureClient();
+      if ((await localStore.loadCachedEntities()).length === 0) {
+        await localStore.replaceFromSnapshot(await transport.snapshot(client));
+      }
+      let round = await engine.sync();
+      while (round.hasMore) round = await engine.sync();
+      return {
+        ...(await cachedTaskState()),
+        client,
+        activeSession: await getActiveSession(client),
+      };
+    },
+    [cachedTaskState, localStore],
+  );
+
+  const loadAuthenticated = useCallback(
+    async (session: SessionResponse) => {
+      const [baikal, taskList, recoveryList, projectList, tagList] =
+        await Promise.all([
+          getBaikalStatus(),
+          getTasks(),
+          getRecoveryTasks(),
+          getProjects(),
+          getTags(),
+        ]);
+      setProjects(projectList);
+      setTags(tagList);
+      const window = plannerWindow();
+      const planner = baikal.connected
+        ? await getPlanner(window.from, window.to)
+        : null;
+      let local: Awaited<ReturnType<typeof synchronize>> | undefined;
+      try {
+        local = await synchronize(session);
+      } catch {
+        // Direct authenticated reads remain a safe first-run fallback. Existing
+        // browser profiles retain their IndexedDB cache for offline use.
+      }
+      const visibleTasks = local?.tasks ?? taskList.tasks;
+      const subtaskEntries = await Promise.all(
+        visibleTasks.map(
+          async (task) => [task.id, await getSubtasks(task.id)] as const,
+        ),
+      );
+      setSubtasks(Object.fromEntries(subtaskEntries));
+      setState({
+        kind: "authenticated",
+        session,
+        baikal,
+        tasks: visibleTasks,
+        recovery: local?.recovery ?? recoveryList.tasks,
+        planner,
+        ...(local === undefined
+          ? { syncStatus: "offline" as const }
+          : {
+              client: local.client,
+              activeSession: local.activeSession,
+              conflictCount: local.conflictCount,
+              syncStatus: "online" as const,
+            }),
+      });
+    },
+    [synchronize],
+  );
 
   useEffect(() => {
     if (initialState !== undefined) return;
@@ -152,12 +248,63 @@ export const App = ({ initialState }: AppProps) => {
       })
       .catch((error: unknown) => {
         if (!cancelled())
-          setState({ kind: "error", message: messageFor(error) });
+          void cachedTaskState()
+            .then((cached) => {
+              if (
+                !cancelled() &&
+                (cached.tasks.length > 0 || cached.recovery.length > 0)
+              )
+                setState({
+                  kind: "offline",
+                  ...cached,
+                  message: "Working from this browser’s durable task cache.",
+                });
+              else if (!cancelled())
+                setState({ kind: "error", message: messageFor(error) });
+            })
+            .catch(() => {
+              if (!cancelled())
+                setState({ kind: "error", message: messageFor(error) });
+            });
       });
     return () => {
       lifecycle.cancelled = true;
     };
-  }, [initialState, loadAuthenticated]);
+  }, [cachedTaskState, initialState, loadAuthenticated]);
+
+  useEffect(() => {
+    if (state.kind !== "authenticated") return;
+    return installOnlineSync(window, async () => {
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, syncStatus: "syncing" }
+          : current,
+      );
+      try {
+        const local = await synchronize(state.session);
+        setState((current) =>
+          current.kind === "authenticated"
+            ? {
+                ...current,
+                ...local,
+                syncStatus: "online",
+              }
+            : current,
+        );
+      } catch (error: unknown) {
+        setState((current) =>
+          current.kind === "authenticated"
+            ? { ...current, syncStatus: "offline" }
+            : current,
+        );
+        setFormError(messageFor(error));
+      }
+    });
+  }, [
+    state.kind,
+    state.kind === "authenticated" ? state.session : null,
+    synchronize,
+  ]);
 
   const submitSetup = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
@@ -231,32 +378,65 @@ export const App = ({ initialState }: AppProps) => {
     }
   };
 
+  const publishLocalState = async (): Promise<void> => {
+    const cached = await cachedTaskState();
+    setState((current) =>
+      current.kind === "authenticated"
+        ? {
+            ...current,
+            ...cached,
+            syncStatus: navigator.onLine
+              ? (current.syncStatus ?? "online")
+              : "offline",
+          }
+        : current.kind === "offline"
+          ? { ...current, ...cached }
+          : current,
+    );
+  };
+
+  const syncAfterLocalMutation = async (): Promise<void> => {
+    await publishLocalState();
+    if (state.kind !== "authenticated" || !navigator.onLine) return;
+    try {
+      const local = await synchronize(state.session);
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, ...local, syncStatus: "online" }
+          : current,
+      );
+      if (local.conflictCount > 0)
+        setFormError(
+          "A task field changed on another client. Review the visible sync conflict before retrying.",
+        );
+    } catch (error: unknown) {
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, syncStatus: "offline" }
+          : current,
+      );
+      setFormError(`Saved locally. ${messageFor(error)}`);
+    }
+  };
+
   const submitTask = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
   ): Promise<void> => {
     event.preventDefault();
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     const form = event.currentTarget;
     const data = new FormData(form);
     setBusy(true);
     setFormError(null);
     try {
-      const result = await createTask(
-        { title: formValue(data, "title"), notes: formValue(data, "notes") },
-        state.session.csrfToken,
-        crypto.randomUUID(),
-      );
-      setState({
-        ...state,
-        tasks: [result.task, ...state.tasks],
-        planner:
-          state.planner === null
-            ? null
-            : {
-                ...state.planner,
-                tasks: [result.task, ...state.planner.tasks],
-              },
+      const estimate = Number(formValue(data, "estimateMinutes"));
+      await localStore.queueTaskCreate({
+        title: formValue(data, "title"),
+        notes: formValue(data, "notes"),
+        estimateMinutes:
+          Number.isInteger(estimate) && estimate > 0 ? estimate : null,
       });
+      await syncAfterLocalMutation();
       form.reset();
     } catch (error: unknown) {
       setFormError(messageFor(error));
@@ -266,12 +446,17 @@ export const App = ({ initialState }: AppProps) => {
   };
 
   const replaceTask = (task: Task): void => {
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
+    const tasks = state.tasks.map((candidate) =>
+      candidate.id === task.id ? task : candidate,
+    );
+    if (state.kind === "offline") {
+      setState({ ...state, tasks });
+      return;
+    }
     setState({
       ...state,
-      tasks: state.tasks.map((candidate) =>
-        candidate.id === task.id ? task : candidate,
-      ),
+      tasks,
       planner:
         state.planner === null
           ? null
@@ -309,16 +494,14 @@ export const App = ({ initialState }: AppProps) => {
     setBusy(true);
     setFormError(null);
     try {
-      const result = await patchTask(
-        task.id,
-        task.revision,
-        {
-          title: formValue(data, "title"),
-          notes: formValue(data, "notes"),
-        },
-        state.session.csrfToken,
-      );
-      replaceTask(result.task);
+      const estimate = Number(formValue(data, "estimateMinutes"));
+      await localStore.queueTaskPatch(task.id, {
+        title: formValue(data, "title"),
+        notes: formValue(data, "notes"),
+        estimateMinutes:
+          Number.isInteger(estimate) && estimate > 0 ? estimate : null,
+      });
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       handleTaskError(error);
     } finally {
@@ -330,17 +513,12 @@ export const App = ({ initialState }: AppProps) => {
     task: Task,
     action: "complete" | "reopen",
   ): Promise<void> => {
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     setBusy(true);
     setFormError(null);
     try {
-      const result = await transitionTask(
-        task.id,
-        task.revision,
-        action,
-        state.session.csrfToken,
-      );
-      replaceTask(result.task);
+      await localStore.queueTaskStatus(task.id, action === "complete");
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       handleTaskError(error);
     } finally {
@@ -349,29 +527,12 @@ export const App = ({ initialState }: AppProps) => {
   };
 
   const removeTask = async (task: Task): Promise<void> => {
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     setBusy(true);
     setFormError(null);
     try {
-      const result = await deleteTask(
-        task.id,
-        task.revision,
-        state.session.csrfToken,
-      );
-      setState({
-        ...state,
-        tasks: state.tasks.filter((candidate) => candidate.id !== task.id),
-        recovery: [result.task, ...state.recovery],
-        planner:
-          state.planner === null
-            ? null
-            : {
-                ...state.planner,
-                tasks: state.planner.tasks.filter(
-                  (candidate) => candidate.id !== task.id,
-                ),
-              },
-      });
+      await localStore.queueTaskDelete(task.id);
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       handleTaskError(error);
     } finally {
@@ -380,28 +541,201 @@ export const App = ({ initialState }: AppProps) => {
   };
 
   const recoverTask = async (task: Task): Promise<void> => {
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     setBusy(true);
     setFormError(null);
     try {
-      const result = await restoreTask(
-        task.id,
-        task.revision,
-        state.session.csrfToken,
-      );
-      setState({
-        ...state,
-        tasks: [result.task, ...state.tasks],
-        recovery: state.recovery.filter(
-          (candidate) => candidate.id !== task.id,
-        ),
-      });
+      await localStore.queueTaskRestore(task.id);
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       handleTaskError(error);
     } finally {
       setBusy(false);
     }
   };
+
+  const handleFocusCommand = async (
+    command:
+      | FocusPanelCommand
+      | {
+          readonly command: "heartbeat";
+          readonly sessionId: string;
+          readonly expectedRevision: number;
+        },
+  ): Promise<void> => {
+    if (state.kind !== "authenticated" || state.client === undefined) return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await commandActiveSession(
+        state.client,
+        state.session.csrfToken,
+        { ...command, idempotencyKey: crypto.randomUUID() },
+      );
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, activeSession: result.session }
+          : current,
+      );
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitOrganization = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    kind: "project" | "tag",
+  ): Promise<void> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated") return;
+    const form = event.currentTarget;
+    const title = formValue(new FormData(form), "title");
+    setBusy(true);
+    try {
+      if (kind === "project")
+        setProjects([
+          ...projects,
+          await createProject(title, state.session.csrfToken),
+        ]);
+      else setTags([...tags, await createTag(title, state.session.csrfToken)]);
+      form.reset();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitTaskOrganization = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated") return;
+    const data = new FormData(event.currentTarget);
+    const projectId = formValue(data, "projectId") || null;
+    const tagIds = data
+      .getAll("tagIds")
+      .filter((value): value is string => typeof value === "string");
+    setBusy(true);
+    try {
+      const assignedProject = await assignTaskProject(
+        task.id,
+        task.revision,
+        projectId,
+        state.session.csrfToken,
+      );
+      const assignedTags = await assignTaskTags(
+        task.id,
+        assignedProject.task.revision,
+        tagIds,
+        state.session.csrfToken,
+      );
+      replaceTask(assignedTags.task);
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitSubtask = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated") return;
+    const form = event.currentTarget;
+    const title = formValue(new FormData(form), "title");
+    setBusy(true);
+    try {
+      const subtask = await createSubtask(
+        task.id,
+        { title, position: subtasks[task.id]?.length ?? 0 },
+        state.session.csrfToken,
+      );
+      setSubtasks((current) => ({
+        ...current,
+        [task.id]: [...(current[task.id] ?? []), subtask],
+      }));
+      form.reset();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeSubtask = async (
+    subtask: Subtask,
+    action: "toggle" | "up" | "down" | "delete",
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    try {
+      if (action === "delete") {
+        await deleteSubtask(
+          subtask.id,
+          subtask.revision,
+          state.session.csrfToken,
+        );
+        setSubtasks((current) => ({
+          ...current,
+          [subtask.taskId]: (current[subtask.taskId] ?? []).filter(
+            ({ id }) => id !== subtask.id,
+          ),
+        }));
+      } else {
+        const updated = await patchSubtask(
+          subtask.id,
+          subtask.revision,
+          action === "toggle"
+            ? { completed: !subtask.completed }
+            : {
+                position: Math.max(
+                  0,
+                  subtask.position + (action === "up" ? -1 : 1),
+                ),
+              },
+          state.session.csrfToken,
+        );
+        setSubtasks((current) => ({
+          ...current,
+          [subtask.taskId]: (current[subtask.taskId] ?? [])
+            .map((item) => (item.id === updated.id ? updated : item))
+            .sort((left, right) => left.position - right.position),
+        }));
+      }
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (state.kind !== "authenticated" || state.client === undefined) return;
+    const session = state.activeSession;
+    if (
+      session?.state !== "running" ||
+      session.controllerClientId !== state.client.clientId
+    )
+      return;
+    const timeout = window.setTimeout(() => {
+      void handleFocusCommand({
+        command: "heartbeat",
+        sessionId: session.id,
+        expectedRevision: session.revision,
+      });
+    }, 30_000);
+    return () => window.clearTimeout(timeout);
+  }, [
+    state.kind,
+    state.kind === "authenticated" ? state.activeSession : null,
+    state.kind === "authenticated" ? state.client : null,
+  ]);
 
   const submitTimeBlock = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
@@ -479,6 +813,20 @@ export const App = ({ initialState }: AppProps) => {
     }
   };
 
+  const exportDiagnostics = async (): Promise<void> => {
+    const manifest = await localStore.recoverySupportManifest();
+    const url = URL.createObjectURL(
+      new Blob([`${JSON.stringify(manifest, null, 2)}\n`], {
+        type: "application/json",
+      }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `suite-sync-diagnostics-${manifest.exportedAt.slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <main className="shell">
       <section className="hero" aria-labelledby="suite-title">
@@ -488,7 +836,7 @@ export const App = ({ initialState }: AppProps) => {
           One quiet place for tasks, real calendar time, focused work, and
           deliberate automation.
         </p>
-        <p className="phase">Self-hosted planning · Phase 1</p>
+        <p className="phase">Local-first focus · Phase 2</p>
       </section>
 
       <section className="panel" aria-live="polite">
@@ -572,6 +920,117 @@ export const App = ({ initialState }: AppProps) => {
           </form>
         )}
 
+        {state.kind === "offline" && (
+          <div>
+            <p className="step">Offline task cache</p>
+            <h2>Keep working locally</h2>
+            <p className="success">{state.message}</p>
+            <p className="hint">
+              Calendar placement and focus control return when this browser
+              reconnects. Pending task changes remain in IndexedDB.
+            </p>
+            <form
+              className="task-capture"
+              onSubmit={(event) => void submitTask(event)}
+            >
+              <Field
+                label="What needs doing?"
+                name="title"
+                autoComplete="off"
+              />
+              <Field
+                label="Notes"
+                name="notes"
+                autoComplete="off"
+                required={false}
+              />
+              <label className="field">
+                <span>Estimate minutes</span>
+                <input name="estimateMinutes" type="number" min="1" max="720" />
+              </label>
+              <button disabled={busy}>Save locally</button>
+            </form>
+            <ul className="tasks">
+              {state.tasks.map((task) => (
+                <li key={task.id}>
+                  <strong>{task.title}</strong>
+                  <span>{task.notes}</span>
+                  <form onSubmit={(event) => void submitTaskEdit(event, task)}>
+                    <Field
+                      label="Title"
+                      name="title"
+                      autoComplete="off"
+                      defaultValue={task.title}
+                    />
+                    <Field
+                      label="Notes"
+                      name="notes"
+                      autoComplete="off"
+                      defaultValue={task.notes}
+                      required={false}
+                    />
+                    <label className="field">
+                      <span>Estimate minutes</span>
+                      <input
+                        name="estimateMinutes"
+                        type="number"
+                        min="1"
+                        max="720"
+                        defaultValue={task.estimateMinutes ?? ""}
+                      />
+                    </label>
+                    <button disabled={busy}>Save locally</button>
+                  </form>
+                  <div className="task-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        void changeTaskStatus(
+                          task,
+                          task.status === "completed" ? "reopen" : "complete",
+                        )
+                      }
+                    >
+                      {task.status === "completed" ? "Reopen" : "Complete"}
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-button"
+                      disabled={busy}
+                      onClick={() => void removeTask(task)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <details className="recovery">
+              <summary>Deleted tasks ({state.recovery.length})</summary>
+              {state.recovery.map((task) => (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => void recoverTask(task)}
+                >
+                  Restore {task.title}
+                </button>
+              ))}
+            </details>
+            <p className="hint">
+              Visible sync conflicts: {state.conflictCount}
+            </p>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void exportDiagnostics()}
+            >
+              Export redacted sync diagnostics
+            </button>
+          </div>
+        )}
+
         {state.kind === "authenticated" && !state.baikal.connected && (
           <form onSubmit={(event) => void submitBaikal(event)}>
             <div className="panel-heading">
@@ -629,7 +1088,22 @@ export const App = ({ initialState }: AppProps) => {
               Baïkal is verified as {state.baikal.username}. Credentials remain
               server-side.
             </p>
+            <p
+              className="hint"
+              data-sync-status={state.syncStatus ?? "offline"}
+            >
+              Task sync: {state.syncStatus ?? "offline"} · visible conflicts:{" "}
+              {state.conflictCount ?? 0}
+            </p>
             {formError !== null && <p className="form-error">{formError}</p>}
+            <FocusPanel
+              tasks={state.tasks}
+              activeSession={state.activeSession ?? null}
+              clientId={state.client?.clientId ?? null}
+              busy={busy}
+              online={state.syncStatus === "online"}
+              onCommand={(command) => void handleFocusCommand(command)}
+            />
             <section className="week-plan" aria-labelledby="week-plan-title">
               <div className="section-heading">
                 <div>
@@ -678,10 +1152,33 @@ export const App = ({ initialState }: AppProps) => {
                 autoComplete="off"
                 required={false}
               />
+              <label className="field">
+                <span>Estimate minutes</span>
+                <input name="estimateMinutes" type="number" min="1" max="720" />
+              </label>
               <button disabled={busy}>
                 {busy ? "Capturing…" : "Capture task"}
               </button>
             </form>
+            <section aria-labelledby="organization-title">
+              <h3 id="organization-title">Projects and tags</h3>
+              <div className="task-actions">
+                <form
+                  onSubmit={(event) =>
+                    void submitOrganization(event, "project")
+                  }
+                >
+                  <Field label="New project" name="title" autoComplete="off" />
+                  <button disabled={busy}>Add project</button>
+                </form>
+                <form
+                  onSubmit={(event) => void submitOrganization(event, "tag")}
+                >
+                  <Field label="New tag" name="title" autoComplete="off" />
+                  <button disabled={busy}>Add tag</button>
+                </form>
+              </div>
+            </section>
             <h3>Captured tasks</h3>
             {state.tasks.length === 0 ? (
               <p className="muted">No tasks captured yet.</p>
@@ -725,6 +1222,16 @@ export const App = ({ initialState }: AppProps) => {
                         defaultValue={task.notes}
                         required={false}
                       />
+                      <label className="field">
+                        <span>Estimate minutes</span>
+                        <input
+                          name="estimateMinutes"
+                          type="number"
+                          min="1"
+                          max="720"
+                          defaultValue={task.estimateMinutes ?? ""}
+                        />
+                      </label>
                       <button disabled={busy}>Save task</button>
                     </form>
                     <form
@@ -777,6 +1284,101 @@ export const App = ({ initialState }: AppProps) => {
                         </button>
                       )}
                     </form>
+                    <form
+                      className="task-edit"
+                      onSubmit={(event) =>
+                        void submitTaskOrganization(event, task)
+                      }
+                    >
+                      <label className="field">
+                        <span>Project</span>
+                        <select
+                          name="projectId"
+                          defaultValue={task.projectId ?? ""}
+                        >
+                          <option value="">No project</option>
+                          {projects
+                            .filter((project) => project.archivedAt === null)
+                            .map((project) => (
+                              <option key={project.id} value={project.id}>
+                                {project.title}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <fieldset>
+                        <legend>Tags</legend>
+                        {tags
+                          .filter((tag) => tag.archivedAt === null)
+                          .map((tag) => (
+                            <label key={tag.id}>
+                              <input
+                                type="checkbox"
+                                name="tagIds"
+                                value={tag.id}
+                                defaultChecked={task.tagIds?.includes(tag.id)}
+                              />
+                              {tag.displayName}
+                            </label>
+                          ))}
+                      </fieldset>
+                      <button disabled={busy}>Save organization</button>
+                    </form>
+                    <div>
+                      <strong>Checklist</strong>
+                      <ul>
+                        {(subtasks[task.id] ?? []).map((subtask) => (
+                          <li key={subtask.id}>
+                            {subtask.completed ? "✓" : "○"} {subtask.title}
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void changeSubtask(subtask, "toggle")
+                              }
+                            >
+                              {subtask.completed ? "Reopen" : "Complete"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy || subtask.position === 0}
+                              onClick={() => void changeSubtask(subtask, "up")}
+                            >
+                              Move up
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void changeSubtask(subtask, "down")
+                              }
+                            >
+                              Move down
+                            </button>
+                            <button
+                              type="button"
+                              className="danger-button"
+                              disabled={busy}
+                              onClick={() =>
+                                void changeSubtask(subtask, "delete")
+                              }
+                            >
+                              Delete item
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <form
+                        onSubmit={(event) => void submitSubtask(event, task)}
+                      >
+                        <Field
+                          label="New checklist item"
+                          name="title"
+                          autoComplete="off"
+                        />
+                        <button disabled={busy}>Add item</button>
+                      </form>
+                    </div>
                     <div className="task-actions">
                       <button
                         type="button"
@@ -826,6 +1428,13 @@ export const App = ({ initialState }: AppProps) => {
                 </ul>
               )}
             </details>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void exportDiagnostics()}
+            >
+              Export redacted sync diagnostics
+            </button>
             <h3>Discovered calendars</h3>
             {state.baikal.calendars.length === 0 ? (
               <p className="muted">No calendar collections were returned.</p>

@@ -5,7 +5,11 @@ import type {
   SyncRoundResponse,
 } from "@suite/contracts";
 import { LocalStore } from "./local-store.ts";
-import { installOnlineSync, SyncEngine } from "./sync-engine.ts";
+import {
+  installOnlineSync,
+  SyncCursorResetRequired,
+  SyncEngine,
+} from "./sync-engine.ts";
 
 const clientId = "d1054acd-c04d-4bd8-a814-254b007154ba";
 const registration: ClientRegistrationResponse = {
@@ -26,22 +30,32 @@ afterEach(async () => {
   await new Promise<void>((resolveDelete, rejectDelete) => {
     const request = indexedDB.deleteDatabase("suite-local-v1");
     request.onsuccess = () => resolveDelete();
-    request.onerror = () => rejectDelete(request.error);
+    request.onerror = () =>
+      rejectDelete(request.error ?? new Error("IndexedDB delete failed"));
   });
 });
 
 describe("SyncEngine", () => {
   it("uses the persisted client proof and only queued operations", async () => {
     store = new LocalStore({ indexedDb: indexedDB });
-    const syncRound = vi.fn(async (): Promise<SyncRoundResponse> => ({
-      outcomes: [],
-      changes: [],
-      nextCursor: "sync-v1.epoch.0.tag",
-      hasMore: false,
-      serverTimestamp: "2026-08-06T16:00:00.000Z",
-    }));
+    const syncRound = vi.fn(() =>
+      Promise.resolve({
+        outcomes: [],
+        changes: [],
+        nextCursor: "sync-v1.epoch.0.tag",
+        hasMore: false,
+        serverTimestamp: "2026-08-06T16:00:00.000Z",
+      } satisfies SyncRoundResponse),
+    );
     const engine = new SyncEngine(store, {
-      registerClient: async () => registration,
+      registerClient: () => Promise.resolve(registration),
+      snapshot: () =>
+        Promise.resolve({
+          snapshots: [],
+          nextCursor: "sync-v1.epoch.0.tag",
+          hasMore: false,
+          serverTimestamp: "2026-08-06T16:00:00.000Z",
+        }),
       syncRound,
     });
 
@@ -53,6 +67,43 @@ describe("SyncEngine", () => {
     );
   });
 
+  it("resets from a bounded snapshot and retries an expired cursor", async () => {
+    store = new LocalStore({ indexedDb: indexedDB });
+    let attempts = 0;
+    const snapshot = vi.fn(() =>
+      Promise.resolve({
+        snapshots: [],
+        nextCursor: "sync-v1.epoch.4.tag",
+        hasMore: false,
+        serverTimestamp: "2026-08-06T16:00:00.000Z",
+      }),
+    );
+    const engine = new SyncEngine(store, {
+      registerClient: () => Promise.resolve(registration),
+      snapshot,
+      syncRound: (_client, request) => {
+        attempts += 1;
+        if (attempts === 1)
+          return Promise.reject(new SyncCursorResetRequired());
+        if (request.cursor === null)
+          return Promise.reject(new Error("Cursor missing"));
+        return Promise.resolve({
+          outcomes: [],
+          changes: [],
+          nextCursor: request.cursor,
+          hasMore: false,
+          serverTimestamp: "2026-08-06T16:00:01.000Z",
+        });
+      },
+    });
+
+    const response = await engine.sync();
+
+    expect(snapshot).toHaveBeenCalledOnce();
+    expect(attempts).toBe(2);
+    expect(response.nextCursor).toBe("sync-v1.epoch.4.tag");
+  });
+
   it("installs and removes a foreground-only online listener", async () => {
     const listeners = new Map<string, () => void>();
     const target = {
@@ -60,7 +111,7 @@ describe("SyncEngine", () => {
         listeners.set(name, listener),
       removeEventListener: (name: string) => listeners.delete(name),
     } as unknown as Window;
-    const sync = vi.fn(async () => undefined);
+    const sync = vi.fn(() => Promise.resolve(undefined));
     const remove = installOnlineSync(target, sync);
 
     listeners.get("online")?.();

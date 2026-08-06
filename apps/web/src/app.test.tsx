@@ -103,5 +103,41 @@ describe("App", () => {
     expect(markup).toContain("Existing appointment");
     expect(markup).toContain("Move calendar block");
     expect(markup).toContain("Recently deleted tasks (0)");
+    expect(markup).toContain("Local-first focus · Phase 2");
+    expect(markup).toContain("Focus session");
+    expect(markup).toContain("Estimate minutes");
+    expect(markup).toContain("Projects and tags");
+  });
+
+  it("renders a bounded offline task workspace without calendar or focus controls", () => {
+    const markup = renderToStaticMarkup(
+      <App
+        initialState={{
+          kind: "offline",
+          tasks: [
+            {
+              id: "afcab502-2199-43fd-b9d3-c8b556c6f25b",
+              title: "Durable offline task",
+              notes: "Queued in IndexedDB",
+              status: "open",
+              revision: 1,
+              createdAt: "2026-08-06T12:00:00.000Z",
+              updatedAt: "2026-08-06T12:00:00.000Z",
+              deletedAt: null,
+            },
+          ],
+          recovery: [],
+          conflictCount: 1,
+          message: "Working from this browser’s durable task cache.",
+        }}
+      />,
+    );
+    expect(markup).toContain("Keep working locally");
+    expect(markup).toContain("Durable offline task");
+    expect(markup).toContain("Save locally");
+    expect(markup).toContain("Visible sync conflicts: 1");
+    expect(markup).toContain("Export redacted sync diagnostics");
+    expect(markup).not.toContain("Place in calendar");
+    expect(markup).not.toContain("Start focus");
   });
 });

@@ -6,6 +6,7 @@ import {
   type SyncDiagnosticManifest,
   type SyncOperation,
   type SyncRoundResponse,
+  type SyncSnapshotResponse,
   type SyncTaskSnapshot,
   type Task,
   type TaskFieldVersions,
@@ -130,6 +131,18 @@ const isTaskSnapshot = (value: unknown): value is SyncTaskSnapshot =>
   typeof value === "object" &&
   "task" in value &&
   "fieldVersions" in value;
+
+const safeOutcomeCode = (value: unknown): string => {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    "code" in value &&
+    typeof value.code === "string"
+  ) {
+    return value.code;
+  }
+  return "INVALID_SYNC_OPERATION";
+};
 
 export class LocalStore {
   readonly #indexedDb: IDBFactory;
@@ -285,9 +298,9 @@ export class LocalStore {
     },
   ): Promise<SyncOperation> {
     const snapshot = await this.#requiredTask(taskId);
-    const changed = Object.keys(fields) as Array<
+    const changed = Object.keys(fields) as (
       "title" | "notes" | "estimateMinutes"
-    >;
+    )[];
     if (changed.length === 0)
       throw new Error("At least one task field is required");
     const metadata = await this.#requiredMetadata();
@@ -383,11 +396,11 @@ export class LocalStore {
           conflictingFields: outcome.conflictingFields ?? null,
           code: outcome.code,
         } satisfies LocalConflict);
-      } else if (outcome.kind === "rejected") {
+      } else {
         outbox.put({
           ...entry,
           state: "rejected",
-          safeErrorCode: outcome.code,
+          safeErrorCode: safeOutcomeCode(outcome),
         });
       }
     }
@@ -409,6 +422,136 @@ export class LocalStore {
       at: response.serverTimestamp,
       outcomeCount: response.outcomes.length,
       changeCount: response.changes.length,
+    });
+    await transactionDone(transaction);
+  }
+
+  async replaceFromSnapshot(response: SyncSnapshotResponse): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [metadataStore, entityStore, outboxStore, conflictStore, diagnosticStore],
+      "readwrite",
+    );
+    const entities = transaction.objectStore(entityStore);
+    const metadataHandle = transaction.objectStore(metadataStore);
+    const metadata = (await requestResult(metadataHandle.get(metadataKey))) as
+      LocalMetadata | undefined;
+    if (metadata === undefined) {
+      transaction.abort();
+      throw new Error("A registered client is required before resetting sync");
+    }
+
+    const outbox = (await requestResult(
+      transaction.objectStore(outboxStore).getAll(),
+    )) as LocalOutboxEntry[];
+    const taskSnapshots = new Map<string, SyncTaskSnapshot>();
+    entities.clear();
+    for (const snapshot of response.snapshots) {
+      if (snapshot.entityKind === "task") {
+        const value = snapshot.value;
+        taskSnapshots.set(value.task.id, value);
+        entities.put({
+          entityKind: "task",
+          id: value.task.id,
+          value,
+          revision: value.task.revision,
+          changeSequence: value.changeSequence,
+        } satisfies CachedEntity);
+      } else {
+        const value = snapshot.value;
+        entities.put({
+          entityKind: snapshot.entityKind,
+          id: value.id,
+          value,
+          revision: value.revision,
+          changeSequence: 0,
+        } satisfies CachedEntity);
+      }
+    }
+
+    for (const { operation } of outbox
+      .filter(({ state }) => state === "queued" || state === "sending")
+      .sort(
+        (left, right) =>
+          left.operation.clientSequence - right.operation.clientSequence,
+      )) {
+      const taskId =
+        operation.kind === "task.create" ? operation.task.id : operation.taskId;
+      let snapshot = taskSnapshots.get(taskId);
+      if (operation.kind === "task.create") {
+        const task: Task = {
+          ...operation.task,
+          status: "open",
+          revision: 1,
+          createdAt: operation.createdAt,
+          updatedAt: operation.createdAt,
+          completedAt: null,
+          deletedAt: null,
+          plannedStart: null,
+          projectId: null,
+          tagIds: [],
+        };
+        snapshot = {
+          task,
+          fieldVersions: initialFieldVersions(),
+          changeSequence: 0,
+        };
+      } else if (snapshot !== undefined) {
+        const now = operation.createdAt;
+        const task: Task =
+          operation.kind === "task.patch"
+            ? {
+                ...snapshot.task,
+                ...(operation.fields.title === undefined
+                  ? {}
+                  : { title: operation.fields.title }),
+                ...(operation.fields.notes === undefined
+                  ? {}
+                  : { notes: operation.fields.notes }),
+                ...(operation.fields.estimateMinutes === undefined
+                  ? {}
+                  : { estimateMinutes: operation.fields.estimateMinutes }),
+                updatedAt: now,
+              }
+            : operation.kind === "task.complete" ||
+                operation.kind === "task.reopen"
+              ? {
+                  ...snapshot.task,
+                  status:
+                    operation.kind === "task.complete"
+                      ? ("completed" as const)
+                      : ("open" as const),
+                  completedAt: operation.kind === "task.complete" ? now : null,
+                  updatedAt: now,
+                }
+              : {
+                  ...snapshot.task,
+                  deletedAt: operation.kind === "task.delete" ? now : null,
+                  updatedAt: now,
+                };
+        snapshot = { ...snapshot, task };
+      }
+      if (snapshot !== undefined) {
+        taskSnapshots.set(taskId, snapshot);
+        entities.put({
+          entityKind: "task",
+          id: taskId,
+          value: snapshot,
+          revision: snapshot.task.revision,
+          changeSequence: snapshot.changeSequence,
+        } satisfies CachedEntity);
+      }
+    }
+
+    metadataHandle.put(
+      { ...metadata, cursor: response.nextCursor },
+      metadataKey,
+    );
+    transaction.objectStore(conflictStore).clear();
+    transaction.objectStore(diagnosticStore).add({
+      at: response.serverTimestamp,
+      snapshotCount: response.snapshots.length,
+      reset: true,
     });
     await transactionDone(transaction);
   }
@@ -440,9 +583,10 @@ export class LocalStore {
     });
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
     this.#database?.close();
     this.#database = undefined;
+    return Promise.resolve();
   }
 
   async #queueStructuralTaskOperation(
@@ -520,7 +664,7 @@ export class LocalStore {
   }
 
   #applyChange(store: IDBObjectStore, change: SyncChange): void {
-    if (change.kind === "deleted" || change.snapshot === null) {
+    if (change.snapshot === null) {
       store.delete(entityKey(change.entityKind, change.entityId));
       return;
     }
