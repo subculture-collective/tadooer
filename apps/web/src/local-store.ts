@@ -418,7 +418,9 @@ export class LocalStore {
       { ...metadata, cursor: response.nextCursor },
       metadataKey,
     );
-    transaction.objectStore(diagnosticStore).add({
+    const diagnostics = transaction.objectStore(diagnosticStore);
+    diagnostics.clear();
+    diagnostics.add({
       at: response.serverTimestamp,
       outcomeCount: response.outcomes.length,
       changeCount: response.changes.length,
@@ -548,7 +550,9 @@ export class LocalStore {
       metadataKey,
     );
     transaction.objectStore(conflictStore).clear();
-    transaction.objectStore(diagnosticStore).add({
+    const diagnostics = transaction.objectStore(diagnosticStore);
+    diagnostics.clear();
+    diagnostics.add({
       at: response.serverTimestamp,
       snapshotCount: response.snapshots.length,
       reset: true,
@@ -632,7 +636,7 @@ export class LocalStore {
   ): Promise<void> {
     const database = await this.#open();
     const transaction = database.transaction(
-      [metadataStore, entityStore, outboxStore],
+      [metadataStore, entityStore, outboxStore, conflictStore],
       "readwrite",
     );
     const metadataHandle = transaction.objectStore(metadataStore);
@@ -655,7 +659,19 @@ export class LocalStore {
       revision: snapshot.task.revision,
       changeSequence: snapshot.changeSequence,
     } satisfies CachedEntity);
-    transaction.objectStore(outboxStore).put({
+    const outbox = transaction.objectStore(outboxStore);
+    const conflicts = transaction.objectStore(conflictStore);
+    const taskConflicts = (
+      (await requestResult(conflicts.getAll())) as LocalConflict[]
+    ).filter(({ taskId }) => taskId === snapshot.task.id);
+    for (const conflict of taskConflicts) {
+      conflicts.delete(conflict.operationId);
+      const prior = (await requestResult(outbox.get(conflict.operationId))) as
+        LocalOutboxEntry | undefined;
+      if (prior !== undefined)
+        outbox.put({ ...prior, state: "acknowledged", safeErrorCode: null });
+    }
+    outbox.put({
       operation,
       state: "queued",
       safeErrorCode: null,

@@ -126,6 +126,58 @@ describe("Phase 2 API transport", () => {
     });
   });
 
+  it("restarts snapshot pagination when the authoritative cursor changes", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) => {
+        calls.push(path);
+        const retry = calls.length > 2;
+        const firstPage = path.endsWith("offset=0");
+        return Promise.resolve(
+          response({
+            snapshots: firstPage
+              ? [
+                  {
+                    entityKind: "project",
+                    value: {
+                      id: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+                      ownerId: "4519c805-e478-486b-a918-616fc6d9ea98",
+                      title: "Home",
+                      revision: 1,
+                      createdAt: "2026-08-06T16:00:00.000Z",
+                      updatedAt: "2026-08-06T16:00:00.000Z",
+                      archivedAt: null,
+                    },
+                  },
+                ]
+              : [],
+            nextCursor:
+              retry || !firstPage
+                ? "sync-v1.epoch.3.tag"
+                : "sync-v1.epoch.2.tag",
+            hasMore: firstPage,
+            serverTimestamp: "2026-08-06T16:00:00.000Z",
+          }),
+        );
+      }),
+    );
+
+    const snapshot = await getSyncSnapshot(client);
+
+    expect(calls).toEqual([
+      "/api/sync/snapshot?offset=0",
+      "/api/sync/snapshot?offset=1",
+      "/api/sync/snapshot?offset=0",
+      "/api/sync/snapshot?offset=1",
+    ]);
+    expect(snapshot).toMatchObject({
+      nextCursor: "sync-v1.epoch.3.tag",
+      hasMore: false,
+    });
+    expect(snapshot.snapshots).toHaveLength(1);
+  });
+
   it("uses client proof for active-session reads and commands", async () => {
     const fetcher = vi.fn((_path: string, init: RequestInit) => {
       const headers = new Headers(init.headers);

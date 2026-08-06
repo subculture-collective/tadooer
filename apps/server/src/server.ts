@@ -1798,12 +1798,13 @@ export const startSuiteServer = async (
                     clientId: client.id,
                     operationId: operation.operationId,
                     requestHash: operation.requestHash,
+                    now,
                     task: {
                       ...operation.task,
                       status: "open",
                       revision: 1,
-                      createdAt: operation.createdAt,
-                      updatedAt: operation.createdAt,
+                      createdAt: now,
+                      updatedAt: now,
                     },
                   })
                 : operation.kind === "task.patch"

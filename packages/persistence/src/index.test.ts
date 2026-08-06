@@ -455,6 +455,59 @@ describe("SuiteDatabase", () => {
           now,
         )?.label,
       ).toBe("Laptop");
+      const acceptedAt = "2026-08-06T00:05:00.000Z";
+      const offlineCreated = database.applyTaskCreateSync({
+        ownerId: "owner-2",
+        clientId: "client-1",
+        operationId: "offline-create-1",
+        requestHash: "offline-create-hash",
+        now: acceptedAt,
+        task: {
+          id: "offline-created-task",
+          title: "Offline task",
+          notes: "",
+          status: "open",
+          revision: 1,
+          createdAt: "2099-01-01T00:00:00.000Z",
+          updatedAt: "2099-01-01T00:00:00.000Z",
+          estimateMinutes: 25,
+        },
+      });
+      expect(offlineCreated).toMatchObject({
+        kind: "applied",
+        task: { createdAt: acceptedAt, updatedAt: acceptedAt },
+      });
+      expect(
+        database.patchTask(
+          "owner-2",
+          "offline-created-task",
+          1,
+          { title: "Online rename" },
+          "2026-08-06T00:06:00.000Z",
+        ),
+      ).toMatchObject({ kind: "updated", task: { revision: 2 } });
+      expect(
+        database.applyTaskFieldSync({
+          ownerId: "owner-2",
+          clientId: "client-1",
+          operationId: "offline-stale-patch",
+          requestHash: "offline-stale-hash",
+          taskId: "offline-created-task",
+          baseVersions: { title: 1 },
+          patch: { title: "Stale offline rename" },
+          now: "2026-08-06T00:07:00.000Z",
+        }),
+      ).toMatchObject({ kind: "conflict", fields: ["title"] });
+      const syncState = database.getSyncState("owner-2");
+      expect(
+        database
+          .listSyncChanges("owner-2", syncState.epoch, 0)
+          .filter(({ entityId }) => entityId === "offline-created-task")
+          .map(({ kind, revision }) => ({ kind, revision })),
+      ).toEqual([
+        { kind: "upsert", revision: 1 },
+        { kind: "upsert", revision: 2 },
+      ]);
       const task = {
         id: "sync-task",
         title: "Initial",

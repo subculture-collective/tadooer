@@ -177,6 +177,13 @@ describe("LocalStore", () => {
         code: "SYNC_FIELD_CONFLICT",
       },
     ]);
+
+    await local.queueTaskPatch(taskId, { title: "Reviewed resolution" });
+    expect(await local.loadConflicts()).toEqual([]);
+    expect((await local.loadOutbox()).map(({ state }) => state)).toEqual([
+      "acknowledged",
+      "queued",
+    ]);
   });
 
   it("atomically resets canonical state and reapplies the immutable outbox", async () => {
@@ -219,5 +226,37 @@ describe("LocalStore", () => {
     expect(rendered).not.toContain("Sensitive task notes");
     expect(rendered).not.toContain(registration.clientCredential);
     expect(manifest.operations[0]?.kind).toBe("task.create");
+  });
+
+  it("retains only the latest content-free sync diagnostic", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    await local.applySyncRound(response());
+    await local.applySyncRound(
+      response({ serverTimestamp: "2026-08-06T16:02:00.000Z" }),
+    );
+
+    const database = await new Promise<IDBDatabase>(
+      (resolveOpen, rejectOpen) => {
+        const request = indexedDB.open("suite-local-v1");
+        request.onsuccess = () => resolveOpen(request.result);
+        request.onerror = () =>
+          rejectOpen(request.error ?? new Error("IndexedDB open failed"));
+      },
+    );
+    try {
+      const count = await new Promise<number>((resolveCount, rejectCount) => {
+        const request = database
+          .transaction("diagnostics", "readonly")
+          .objectStore("diagnostics")
+          .count();
+        request.onsuccess = () => resolveCount(request.result);
+        request.onerror = () =>
+          rejectCount(request.error ?? new Error("IndexedDB count failed"));
+      });
+      expect(count).toBe(1);
+    } finally {
+      database.close();
+    }
   });
 });

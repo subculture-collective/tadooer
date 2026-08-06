@@ -1110,6 +1110,19 @@ export class SuiteDatabase {
           released.ownerId,
           released.id,
         );
+      this.#database
+        .prepare(
+          "INSERT INTO task_field_versions (task_id,field,version) VALUES (?, 'estimateMinutes', ?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
+        )
+        .run(released.id, released.revision);
+      this.#appendSyncChangeInTransaction(
+        input.ownerId,
+        "task",
+        released.id,
+        "upsert",
+        released.revision,
+        input.now,
+      );
       this.#database.exec("COMMIT;");
       return released;
     } catch (error: unknown) {
@@ -1319,6 +1332,19 @@ export class SuiteDatabase {
           task.ownerId,
           task.id,
         );
+      this.#database
+        .prepare(
+          "INSERT INTO task_field_versions (task_id,field,version) VALUES (?, 'estimateMinutes', ?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
+        )
+        .run(task.id, task.revision);
+      this.#appendSyncChangeInTransaction(
+        input.ownerId,
+        "task",
+        task.id,
+        "upsert",
+        task.revision,
+        input.now,
+      );
       this.#database.exec("COMMIT;");
       return { task, block, event };
     } catch (error: unknown) {
@@ -1567,6 +1593,14 @@ export class SuiteDatabase {
           created.id,
           created.createdAt,
         );
+      this.#appendSyncChangeInTransaction(
+        ownerId,
+        "task",
+        created.id,
+        "upsert",
+        created.revision,
+        created.createdAt,
+      );
       this.#database.exec("COMMIT;");
       return { kind: "created", task: created };
     } catch (error: unknown) {
@@ -2749,6 +2783,7 @@ export class SuiteDatabase {
     readonly clientId: string;
     readonly operationId: string;
     readonly requestHash: string;
+    readonly now: string;
     readonly task: Omit<
       TaskRecord,
       | "ownerId"
@@ -2794,13 +2829,15 @@ export class SuiteDatabase {
             input.task.id,
             existing.revision,
             JSON.stringify(["task"]),
-            input.task.createdAt,
+            input.now,
           );
         this.#database.exec("COMMIT;");
         return { kind: "conflict", task: existing };
       }
       const task: TaskRecord = {
         ...input.task,
+        createdAt: input.now,
+        updatedAt: input.now,
         ownerId: input.ownerId,
         completedAt: null,
         deletedAt: null,
@@ -2819,7 +2856,7 @@ export class SuiteDatabase {
           task.notes,
           task.status,
           task.revision,
-          task.createdAt,
+          input.now,
           task.updatedAt,
           task.estimateMinutes,
         );
@@ -2854,7 +2891,7 @@ export class SuiteDatabase {
         task.id,
         "upsert",
         task.revision,
-        task.createdAt,
+        input.now,
       );
       this.#database.exec("COMMIT;");
       return { kind: "applied", task };
@@ -3017,6 +3054,26 @@ export class SuiteDatabase {
           expectedRevision,
         ).changes;
       if (changed !== 1) throw new Error("Conditional task update was lost");
+      const fieldVersions = this.#database.prepare(
+        "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
+      );
+      for (const field of [
+        "title",
+        "notes",
+        "status",
+        "estimateMinutes",
+      ] as const) {
+        if (current[field] !== next[field])
+          fieldVersions.run(taskId, field, next.revision);
+      }
+      this.#appendSyncChangeInTransaction(
+        ownerId,
+        "task",
+        taskId,
+        next.deletedAt === null ? "upsert" : "deleted",
+        next.revision,
+        now,
+      );
       this.#database.exec("COMMIT;");
       return { kind: "updated", task: next };
     } catch (error: unknown) {

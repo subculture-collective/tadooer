@@ -321,23 +321,33 @@ const getSyncSnapshotPage = (
 export const getSyncSnapshot = async (
   client: LocalClientIdentity,
 ): Promise<SyncSnapshotResponse> => {
-  const snapshots: SyncEntitySnapshot[] = [];
-  let offset = 0;
-  let page: SyncSnapshotResponse;
-  do {
-    page = await getSyncSnapshotPage(client, offset);
-    snapshots.push(...page.snapshots);
-    offset += page.snapshots.length;
-    if (page.hasMore && page.snapshots.length === 0) {
-      throw new Error("Sync snapshot page was empty before completion");
-    }
-  } while (page.hasMore);
-  return {
-    snapshots,
-    nextCursor: page.nextCursor,
-    hasMore: false,
-    serverTimestamp: page.serverTimestamp,
-  };
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const snapshots: SyncEntitySnapshot[] = [];
+    let offset = 0;
+    let expectedCursor: string | undefined;
+    let page: SyncSnapshotResponse;
+    let changed = false;
+    do {
+      page = await getSyncSnapshotPage(client, offset);
+      expectedCursor ??= page.nextCursor;
+      if (page.nextCursor !== expectedCursor) {
+        changed = true;
+        break;
+      }
+      snapshots.push(...page.snapshots);
+      offset += page.snapshots.length;
+      if (page.hasMore && page.snapshots.length === 0)
+        throw new Error("Sync snapshot page was empty before completion");
+    } while (page.hasMore);
+    if (changed) continue;
+    return {
+      snapshots,
+      nextCursor: page.nextCursor,
+      hasMore: false,
+      serverTimestamp: page.serverTimestamp,
+    };
+  }
+  throw new Error("Sync snapshot kept changing during pagination");
 };
 
 export const createSyncTransport = (csrfToken: string): SyncTransport => ({
