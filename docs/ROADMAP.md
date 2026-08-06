@@ -29,10 +29,21 @@ Phase 0A was completed on 2026-08-05 on `codex/phase-0-foundation`:
 - disposable deployment drill covering health, restart persistence, database
   replacement, backup restore, and cleanup
 
-Phase 0B is the next vertical slice: first-run owner setup, login/session
-security, and connection to the bundled Baïkal instance. The remaining Phase 0
-contract fixtures and feasibility spikes stay open until consumed by that slice
-or a later dependency-ready slice.
+Phase 0B was completed on 2026-08-05 on `codex/phase-0-foundation`:
+
+- one-shot, stable owner setup with scrypt password hashing and constant-work
+  invalid credential checks
+- revocable server-side sessions with idle/absolute expiry, HttpOnly SameSite
+  cookies, same-origin enforcement, CSRF rotation, and login rate limiting
+- owner-scoped AES-GCM encrypted Baïkal credentials under a mode-0600 key
+- bounded, redirect-safe CalDAV discovery of event and todo collections
+- first-run, login, connector, discovered-calendar, and logout React states
+- paired SQLite/key backup and restore drill with fail-closed key mismatch tests
+
+Phase 0C is the next contract slice: stable task and calendar-provider identities,
+API error/idempotency/revision conventions, and the first Phase 1 task-capture
+vertical slice. Google OAuth and MCP catalog feasibility spikes remain open until
+consumed by a dependency-ready slice.
 
 ### Outcome
 
