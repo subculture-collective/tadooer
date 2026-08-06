@@ -419,6 +419,48 @@ export const App = ({ initialState }: AppProps) => {
     }
   };
 
+  const syncNow = async (): Promise<void> => {
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
+    setBusy(true);
+    setFormError(null);
+    if (state.kind === "offline") {
+      try {
+        await loadAuthenticated(await resumeSession());
+      } catch (error: unknown) {
+        setFormError(messageFor(error));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    setState((current) =>
+      current.kind === "authenticated"
+        ? { ...current, syncStatus: "syncing" }
+        : current,
+    );
+    try {
+      const local = await synchronize(state.session);
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, ...local, syncStatus: "online" }
+          : current,
+      );
+      if (local.conflictCount > 0)
+        setFormError(
+          "A task field changed on another client. Review the visible sync conflict before retrying.",
+        );
+    } catch (error: unknown) {
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, syncStatus: "offline" }
+          : current,
+      );
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submitTask = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
   ): Promise<void> => {
@@ -1024,6 +1066,14 @@ export const App = ({ initialState }: AppProps) => {
             <button
               type="button"
               className="text-button"
+              disabled={busy}
+              onClick={() => void syncNow()}
+            >
+              Sync now
+            </button>
+            <button
+              type="button"
+              className="text-button"
               onClick={() => void exportDiagnostics()}
             >
               Export redacted sync diagnostics
@@ -1095,6 +1145,14 @@ export const App = ({ initialState }: AppProps) => {
               Task sync: {state.syncStatus ?? "offline"} · visible conflicts:{" "}
               {state.conflictCount ?? 0}
             </p>
+            <button
+              type="button"
+              className="text-button"
+              disabled={busy}
+              onClick={() => void syncNow()}
+            >
+              Sync now
+            </button>
             {formError !== null && <p className="form-error">{formError}</p>}
             <FocusPanel
               tasks={state.tasks}

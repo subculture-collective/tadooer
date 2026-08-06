@@ -107,6 +107,7 @@ describe("App", () => {
     expect(markup).toContain("Focus session");
     expect(markup).toContain("Estimate minutes");
     expect(markup).toContain("Projects and tags");
+    expect(markup).toContain("Sync now");
   });
 
   it("renders a bounded offline task workspace without calendar or focus controls", () => {
@@ -136,6 +137,7 @@ describe("App", () => {
     expect(markup).toContain("Durable offline task");
     expect(markup).toContain("Save locally");
     expect(markup).toContain("Visible sync conflicts: 1");
+    expect(markup).toContain("Sync now");
     expect(markup).toContain("Export redacted sync diagnostics");
     expect(markup).not.toContain("Place in calendar");
     expect(markup).not.toContain("Start focus");
