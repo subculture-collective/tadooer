@@ -30,3 +30,5 @@ export interface AuthorizationContext {
   readonly clientId: ClientId | null;
   readonly actor: "owner-session" | "automation";
 }
+
+export * from "./active-session.ts";
