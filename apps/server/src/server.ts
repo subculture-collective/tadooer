@@ -1649,10 +1649,15 @@ export const startSuiteServer = async (
             );
             return;
           }
+          const clientId = revokeMatch[1];
+          if (clientId === undefined) {
+            sendError(response, 404, "CLIENT_NOT_FOUND", "Client not found");
+            return;
+          }
           if (
             !database.revokeSyncClient(
               session.owner.id,
-              revokeMatch[1]!,
+              clientId,
               new Date().toISOString(),
             )
           ) {
@@ -1874,7 +1879,7 @@ export const startSuiteServer = async (
                           "estimateMinutes",
                           "projectId",
                           "tagIds",
-                        ].includes(field),
+                        ].includes(String(field)),
                     )
                   : undefined;
               return {
@@ -2015,8 +2020,7 @@ export const startSuiteServer = async (
                               entityKind: "subtask" as const,
                               value: subtaskResponse(subtask),
                             }
-                          : active !== undefined &&
-                              active.id === change.entityId
+                          : active?.id === change.entityId
                             ? {
                                 entityKind: "active_session" as const,
                                 value: activeResponse(
@@ -2201,8 +2205,17 @@ export const startSuiteServer = async (
             return;
           }
           const now = new Date().toISOString();
-          const kind = organizationMatch[1]!;
-          const id = organizationMatch[2]!;
+          const kind = organizationMatch[1];
+          const id = organizationMatch[2];
+          if (kind === undefined || id === undefined) {
+            sendError(
+              response,
+              404,
+              "NOT_FOUND",
+              "Organization record not found",
+            );
+            return;
+          }
           let result;
           try {
             result =
@@ -2213,7 +2226,7 @@ export const startSuiteServer = async (
                       session.owner.id,
                       id,
                       revision,
-                      title!,
+                      title ?? "",
                       now,
                     )
                 : wantsArchive
@@ -2222,8 +2235,8 @@ export const startSuiteServer = async (
                       session.owner.id,
                       id,
                       revision,
-                      title!,
-                      title!.normalize("NFKC").toLocaleLowerCase(),
+                      title ?? "",
+                      (title ?? "").normalize("NFKC").toLocaleLowerCase(),
                       now,
                     );
           } catch {
@@ -2286,8 +2299,17 @@ export const startSuiteServer = async (
             projectId?: unknown;
             tagIds?: unknown;
           };
-          const taskId = taskOrganizationMatch[1]!;
-          const target = taskOrganizationMatch[2]!;
+          const taskId = taskOrganizationMatch[1];
+          const target = taskOrganizationMatch[2];
+          if (taskId === undefined || target === undefined) {
+            sendError(
+              response,
+              404,
+              "NOT_FOUND",
+              "Task organization route not found",
+            );
+            return;
+          }
           const now = new Date().toISOString();
           const result =
             target === "project"
@@ -2297,7 +2319,7 @@ export const startSuiteServer = async (
                 database.assignTaskProject(
                   session.owner.id,
                   taskId,
-                  input.projectId as string | null,
+                  input.projectId ?? null,
                   revision,
                   now,
                 )
@@ -2358,7 +2380,16 @@ export const startSuiteServer = async (
             );
             return;
           }
-          const taskId = taskSubtasksMatch[1]!;
+          const taskId = taskSubtasksMatch[1];
+          if (taskId === undefined) {
+            sendError(
+              response,
+              404,
+              "NOT_FOUND",
+              "Task subtask route not found",
+            );
+            return;
+          }
           if (database.getTask(session.owner.id, taskId) === undefined) {
             sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
             return;
@@ -2435,7 +2466,11 @@ export const startSuiteServer = async (
           }
           const revision = expectedRevision(request, response);
           if (revision === undefined) return;
-          const id = subtaskMatch[1]!;
+          const id = subtaskMatch[1];
+          if (id === undefined) {
+            sendError(response, 404, "NOT_FOUND", "Subtask route not found");
+            return;
+          }
           const now = new Date().toISOString();
           if (method === "DELETE") {
             if (!database.deleteSubtask(session.owner.id, id, revision)) {
@@ -2719,7 +2754,10 @@ export const startSuiteServer = async (
             );
             expected = null;
           } else {
-            if (before === undefined || before.id !== command.sessionId) {
+            if (
+              before?.id !== command.sessionId ||
+              beforeSession === undefined
+            ) {
               sendError(
                 response,
                 404,
@@ -2729,7 +2767,7 @@ export const startSuiteServer = async (
               return;
             }
             const transition = transitionActiveSession(
-              beforeSession!,
+              beforeSession,
               {
                 type:
                   command.command === "start_break"

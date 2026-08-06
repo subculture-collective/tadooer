@@ -18,7 +18,10 @@ const hash = "a".repeat(43);
 const operationId = (tail: string): string =>
   `00000000-0000-4000-8000-0000000000${tail}`;
 
-type Client = { readonly id: string; readonly credential: string };
+interface Client {
+  readonly id: string;
+  readonly credential: string;
+}
 
 const configuration = (directory: string): ServerConfig => ({
   host: "127.0.0.1",

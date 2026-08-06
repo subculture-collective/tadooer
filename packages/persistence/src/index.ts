@@ -2398,13 +2398,12 @@ export class SuiteDatabase {
       }
       const current = this.getActiveSession(input.session.ownerId);
       if (input.expectedRevision === null) {
-        if (current !== undefined && current.endedAt === null) {
+        if (current?.endedAt === null) {
           this.#database.exec("COMMIT;");
           return { kind: "conflict", session: current };
         }
       } else if (
-        current === undefined ||
-        current.id !== input.session.id ||
+        current?.id !== input.session.id ||
         current.revision !== input.expectedRevision
       ) {
         this.#database.exec("COMMIT;");
@@ -2516,7 +2515,10 @@ export class SuiteDatabase {
         .prepare(
           "SELECT * FROM active_session_events WHERE session_id=? ORDER BY created_at,id",
         )
-        .all(sessionId) as unknown as readonly Record<string, string | number>[]
+        .all(sessionId) as unknown as readonly Record<
+        string,
+        string | number | null
+      >[]
     ).map((row) => ({
       id: String(row.id),
       kind: String(row.kind),
@@ -2898,8 +2900,7 @@ export class SuiteDatabase {
         ? undefined
         : this.getActiveSession(input.ownerId);
       if (
-        task === undefined ||
-        task.revision !== input.baseRevision ||
+        task?.revision !== input.baseRevision ||
         (input.restore ? task.deletedAt === null : task.deletedAt !== null) ||
         (activeSession?.endedAt === null &&
           activeSession.taskId === input.taskId)

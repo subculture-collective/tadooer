@@ -403,29 +403,26 @@ export const transitionActiveSession = (
       }),
     };
   }
-  if (command.type === "takeover") {
-    if (command.actorClientId === session.controllerClientId)
-      return { ok: false, reason: "invalid-transition" };
-    if (session.state === "paused")
-      return {
-        ok: true,
-        session: withChange(session, now, "taken-over", command.actorClientId, {
-          controllerClientId: command.actorClientId,
-        }),
-      };
-    const closed = closeOpenInterval(session, timestamp, "takeover");
-    const base: ActiveSession = { ...session, intervals: closed };
+  if (command.actorClientId === session.controllerClientId)
+    return { ok: false, reason: "invalid-transition" };
+  if (session.state === "paused")
     return {
       ok: true,
       session: withChange(session, now, "taken-over", command.actorClientId, {
         controllerClientId: command.actorClientId,
-        leaseExpiresAt: plus(now, leaseMilliseconds),
-        intervals: [
-          ...closed,
-          openInterval(base, command.actorClientId, timestamp, ids),
-        ],
       }),
     };
-  }
-  return { ok: false, reason: "invalid-transition" };
+  const closed = closeOpenInterval(session, timestamp, "takeover");
+  const base: ActiveSession = { ...session, intervals: closed };
+  return {
+    ok: true,
+    session: withChange(session, now, "taken-over", command.actorClientId, {
+      controllerClientId: command.actorClientId,
+      leaseExpiresAt: plus(now, leaseMilliseconds),
+      intervals: [
+        ...closed,
+        openInterval(base, command.actorClientId, timestamp, ids),
+      ],
+    }),
+  };
 };

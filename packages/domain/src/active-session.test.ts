@@ -18,7 +18,7 @@ const start = (clock: ManualSessionClock): ActiveSession =>
     clock,
     {
       sessionId: "session-1",
-      intervalId: (ordinal) => `interval-${ordinal}`,
+      intervalId: (ordinal) => `interval-${String(ordinal)}`,
     },
   );
 
@@ -39,7 +39,7 @@ describe("authoritative active-session state machine", () => {
       created,
       { type: "pause", actorClientId: clientA, expectedRevision: 1 },
       clock,
-      { intervalId: (ordinal) => `interval-${ordinal}` },
+      { intervalId: (ordinal) => `interval-${String(ordinal)}` },
     );
     expect(paused.ok && paused.session).toMatchObject({
       state: "paused",
@@ -53,7 +53,7 @@ describe("authoritative active-session state machine", () => {
       paused.ok ? paused.session : created,
       { type: "resume", actorClientId: clientA, expectedRevision: 2 },
       clock,
-      { intervalId: (ordinal) => `interval-${ordinal}` },
+      { intervalId: (ordinal) => `interval-${String(ordinal)}` },
     );
     expect(resumed.ok && resumed.session.intervals).toEqual([
       expect.objectContaining({
@@ -80,7 +80,7 @@ describe("authoritative active-session state machine", () => {
       created,
       { type: "takeover", actorClientId: clientB, expectedRevision: 1 },
       clock,
-      { intervalId: (ordinal) => `interval-${ordinal}` },
+      { intervalId: (ordinal) => `interval-${String(ordinal)}` },
     );
     expect(taken.ok && taken.session).toMatchObject({
       controllerClientId: clientB,
@@ -126,7 +126,7 @@ describe("authoritative active-session state machine", () => {
       created,
       { type: "start-break", actorClientId: clientA, expectedRevision: 1 },
       clock,
-      { intervalId: (ordinal) => `interval-${ordinal}` },
+      { intervalId: (ordinal) => `interval-${String(ordinal)}` },
     );
     expect(breaking.ok && breaking.session.intervals).toEqual([
       expect.objectContaining({
@@ -141,7 +141,7 @@ describe("authoritative active-session state machine", () => {
       breaking.ok ? breaking.session : created,
       { type: "end-break", actorClientId: clientA, expectedRevision: 2 },
       clock,
-      { intervalId: (ordinal) => `interval-${ordinal}` },
+      { intervalId: (ordinal) => `interval-${String(ordinal)}` },
     );
     expect(
       focused.ok &&
@@ -243,7 +243,7 @@ describe("authoritative active-session state machine", () => {
     let session = start(clock);
     const apply = (command: Parameters<typeof transitionActiveSession>[1]) => {
       const result = transitionActiveSession(session, command, clock, {
-        intervalId: (ordinal) => `interval-${ordinal}`,
+        intervalId: (ordinal) => `interval-${String(ordinal)}`,
       });
       expect(result.ok).toBe(true);
       if (result.ok) session = result.session;
