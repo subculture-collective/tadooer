@@ -227,6 +227,18 @@ const expireIfRequired = (session: ActiveSession, now: Date): ActiveSession => {
   });
 };
 
+/**
+ * Observes a persisted session at the authoritative clock instant.
+ *
+ * The returned session differs only when a running lease or paused hard
+ * lifetime has elapsed. Services persist that expiry before returning the
+ * read, so an ordinary GET cannot accidentally renew a lease.
+ */
+export const observeActiveSession = (
+  session: ActiveSession,
+  clock: SessionClock,
+): ActiveSession => expireIfRequired(session, clock.now());
+
 export const createActiveSession = (
   input: ActiveSessionStartInput,
   clock: SessionClock,

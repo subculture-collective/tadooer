@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ManualSessionClock,
   createActiveSession,
+  observeActiveSession,
   transitionActiveSession,
   type ActiveSession,
 } from "./active-session.ts";
@@ -182,6 +183,25 @@ describe("authoritative active-session state machine", () => {
         { intervalId: () => "unused" },
       ),
     ).toEqual({ ok: false, reason: "recovery-requires-new-session" });
+  });
+
+  it("expires on a read without renewing the controller lease", () => {
+    const clock = new ManualSessionClock("2026-08-06T12:00:00.000Z");
+    const created = start(clock);
+    clock.advanceSeconds(91);
+
+    const observed = observeActiveSession(created, clock);
+
+    expect(observed).toMatchObject({
+      state: "expired",
+      revision: 2,
+      leaseExpiresAt: null,
+      terminalReason: "expired",
+    });
+    expect(observed.intervals[0]).toMatchObject({
+      endedAt: "2026-08-06T12:01:30.000Z",
+      closedBy: "expiry",
+    });
   });
 
   it("renews only the lease on heartbeat and completes without completing the task", () => {
