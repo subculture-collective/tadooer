@@ -57,7 +57,7 @@ const placeTask = async (
 ) => {
   const item = taskItem(title);
   await item.getByLabel("Start").fill(start);
-  await item.getByLabel("Minutes").fill("45");
+  await item.getByLabel("Minutes", { exact: true }).fill("45");
   const [response] = await Promise.all([
     page.waitForResponse(
       (candidate) =>

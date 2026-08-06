@@ -5,13 +5,15 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phase 1 is complete. The runnable self-hosted planning slice now includes secure
-single-owner authentication, encrypted Baïkal connection, a bounded week event
-projection, the basic task lifecycle, and one explicit conditional calendar
-time block per task. It does not claim recurrence editing, offline multi-writer
-sync, focus sessions, Google Calendar, or MCP product functionality.
+Phase 2 is complete. The runnable self-hosted suite includes secure single-owner
+authentication, encrypted Baïkal planning, a durable browser-local task cache,
+replay-safe queued task writes, explicit two-client conflicts, daily-use task
+organization, and one server-authoritative focus/break session with follower
+and takeover behavior. It does not claim offline calendar/focus mutation,
+closed-application background sync, Google Calendar, recurrence editing, or MCP
+product functionality.
 
-## Run Phase 1
+## Run Phase 2
 
 Requirements: Docker with Compose, or Node.js 24+ and pnpm 11.15.1 for local
 development.
@@ -43,6 +45,15 @@ the previously observed strong DAV ETag; if the event changed elsewhere, the UI
 shows a conflict and does not overwrite it. Removing a time block likewise uses
 its stored ETag; a task with an active block must be cleaned up before it can be
 soft-deleted.
+
+Each authenticated browser registers a separate owner-scoped client and keeps
+its raw client proof, canonical task cache, immutable outbox, cursor, conflicts,
+and content-free diagnostic metadata in IndexedDB. Core task create/edit,
+complete/reopen, delete/restore, and estimates can be queued temporarily
+offline; the foreground app synchronizes on load, explicit activity, and the
+browser `online` event. Project, tag, subtask, calendar, connector, and focus
+commands remain online-only. A focus session has one controller; another client
+observes it read-only and must explicitly take over before controlling it.
 
 For the public HTTPS deployment, set `SUITE_SECURE_COOKIES=true` so the opaque
 session cookie is sent only over TLS. Preserve the original public `Host` header
@@ -83,6 +94,7 @@ pnpm dev
 pnpm verify
 ./deploy/verify-compose.sh
 pnpm verify:phase1
+pnpm verify:phase2
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
@@ -96,14 +108,23 @@ Baïkal instance, drives the real UI, proves conditional VEVENT CRUD and visible
 conflict handling, restarts the Suite, restores all state into fresh volumes,
 repeats task placement, and removes the verification volumes.
 
+`pnpm verify:phase2` uses two disposable persistent Chromium profiles. It proves
+offline task create/edit across profile close/reopen, reconnect without a
+duplicate task, visible same-field conflict handling, follower takeover, and
+the same authoritative focus session after a Suite restart. Lease expiry and
+the no-duplicate-interval transition matrix use an injected clock in server
+tests; no test clock endpoint exists in the Compose runtime.
+
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
 The bounded Phase 1 projection, write, and recovery rules are recorded in
 [`docs/adr/0009-phase-1-planning-and-caldav.md`](docs/adr/0009-phase-1-planning-and-caldav.md).
+The Phase 2 task-sync and active-session authority rules are recorded in
+[`docs/adr/0010-phase-2-local-sync-and-active-session.md`](docs/adr/0010-phase-2-local-sync-and-active-session.md).
 The Google connector and MCP work remain deliberately deferred; Phase 0 records
 their feasibility boundaries in [`docs/spikes/`](docs/spikes/) without creating
 production credentials, using real calendar/task data, or exposing an automation
-transport. The disposable Phase 1 gate is local verification, not a production
+transport. The disposable phase gates are local verification, not a production
 deployment or a universal CalDAV compatibility claim.
 
 ## Existing systems under consideration

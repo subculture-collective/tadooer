@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:e2e:phase1": "node deploy/phase1-browser.mjs",
     "verify:phase1": "./deploy/verify-phase1-compose.sh",
+    "verify:phase2": "./deploy/verify-phase2-compose.sh",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

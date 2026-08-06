@@ -53,8 +53,8 @@ Phase 0C was completed on 2026-08-05 on `codex/phase-0-foundation`:
 - an authoritative-store decision covering Suite, Baïkal, Google, imports, and
   future automation state
 
-Phase 0 is complete. Phase 1 was subsequently completed as the first bounded,
-self-hosted planning slice; Phase 2 is next.
+Phase 0 is complete. Phases 1 and 2 were subsequently completed as the first
+bounded planning and local-first focus slices; Phase 3 is next.
 
 ### Outcome
 
@@ -143,6 +143,31 @@ calendar, creates a task, and places it into a calendar interval.
 - Backup restores into a fresh stack and repeats the smoke flow
 
 ## Phase 2: Local-first tasks and cross-device focus
+
+### Implementation checkpoint
+
+Phase 2 was completed on 2026-08-06 on `codex/phase-2-local-first-focus`:
+
+- durable IndexedDB task snapshots, immutable task outbox, opaque cursors,
+  bounded reset snapshots, visible field conflicts, and redacted diagnostics
+- owner-scoped registered browser clients with one-time raw credentials,
+  server-side credential digests, inventory, proof, and revocation
+- ordered SQLite change streams, replay-safe operation outcomes, per-field task
+  versions, and structural delete/restore conflicts
+- server-authoritative focus/break sessions with controller/follower behavior,
+  heartbeats, pause/resume, break transitions, explicit takeover, exact lease
+  expiry, retained interval history, and restart-safe idempotency
+- projects, case-folded tags, one-level revisioned subtasks, task assignment,
+  and task estimates on the daily-use surface
+- persistent-profile browser qualification proving offline create/edit across
+  close/reopen, reconnect without duplication, a visible same-field conflict,
+  two-client takeover, and authoritative session recovery after server restart
+
+This evidence is local disposable-Compose qualification. Clock-controlled
+expiry and duplicate-interval matrices run through the injected server clock;
+the production Compose stack has no test-time clock backdoor. Foreground sync
+does not claim closed-application background execution or offline calendar and
+focus mutation.
 
 ### User outcome
 
