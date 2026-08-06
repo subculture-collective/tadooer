@@ -14,11 +14,14 @@
     "format:check": "prettier --check apps packages *.json *.js *.yaml",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:e2e:phase1": "node deploy/phase1-browser.mjs",
+    "verify:phase1": "./deploy/verify-phase1-compose.sh",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.1",
     "@types/node": "24.10.13",
     "esbuild": "0.28.1",
     "eslint": "10.8.0",
