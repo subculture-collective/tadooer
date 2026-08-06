@@ -3,18 +3,26 @@ import type {
   BaikalStatusResponse,
   SessionResponse,
   Task,
+  PlannerResponse,
 } from "@suite/contracts";
 import {
   ApiRequestError,
   connectBaikal,
   createTask,
+  deleteTask,
   getBaikalStatus,
   getSetupStatus,
   getTasks,
+  getPlanner,
+  getRecoveryTasks,
   login,
   logout,
+  patchTask,
+  putTaskTimeBlock,
+  restoreTask,
   resumeSession,
   setupOwner,
+  transitionTask,
 } from "./api.ts";
 
 export type AppState =
@@ -30,6 +38,8 @@ export type AppState =
       readonly session: SessionResponse;
       readonly baikal: BaikalStatusResponse;
       readonly tasks: readonly Task[];
+      readonly recovery: readonly Task[];
+      readonly planner: PlannerResponse | null;
     }
   | { readonly kind: "error"; readonly message: string };
 
@@ -45,6 +55,18 @@ const messageFor = (error: unknown): string =>
 const formValue = (data: FormData, name: string): string => {
   const value = data.get(name);
   return typeof value === "string" ? value : "";
+};
+
+const plannerWindow = (): { readonly from: string; readonly to: string } => {
+  const from = new Date();
+  from.setUTCHours(0, 0, 0, 0);
+  const to = new Date(from.getTime() + 7 * 24 * 60 * 60 * 1000);
+  return { from: from.toISOString(), to: to.toISOString() };
+};
+
+const localInputToIso = (value: string): string | undefined => {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
 };
 
 const Field = ({
@@ -85,11 +107,23 @@ export const App = ({ initialState }: AppProps) => {
   const [formError, setFormError] = useState<string | null>(null);
 
   const loadAuthenticated = useCallback(async (session: SessionResponse) => {
-    const [baikal, taskList] = await Promise.all([
+    const [baikal, taskList, recoveryList] = await Promise.all([
       getBaikalStatus(),
       getTasks(),
+      getRecoveryTasks(),
     ]);
-    setState({ kind: "authenticated", session, baikal, tasks: taskList.tasks });
+    const window = plannerWindow();
+    const planner = baikal.connected
+      ? await getPlanner(window.from, window.to)
+      : null;
+    setState({
+      kind: "authenticated",
+      session,
+      baikal,
+      tasks: taskList.tasks,
+      recovery: recoveryList.tasks,
+      planner,
+    });
   }, []);
 
   useEffect(() => {
@@ -180,14 +214,14 @@ export const App = ({ initialState }: AppProps) => {
     setBusy(true);
     setFormError(null);
     try {
-      const baikal = await connectBaikal(
+      await connectBaikal(
         {
           username: formValue(data, "username"),
           password: formValue(data, "password"),
         },
         state.session.csrfToken,
       );
-      setState({ ...state, baikal });
+      await loadAuthenticated(state.session);
       form.reset();
     } catch (error: unknown) {
       setFormError(messageFor(error));
@@ -211,10 +245,198 @@ export const App = ({ initialState }: AppProps) => {
         state.session.csrfToken,
         crypto.randomUUID(),
       );
-      setState({ ...state, tasks: [result.task, ...state.tasks] });
+      setState({
+        ...state,
+        tasks: [result.task, ...state.tasks],
+        planner:
+          state.planner === null
+            ? null
+            : {
+                ...state.planner,
+                tasks: [result.task, ...state.planner.tasks],
+              },
+      });
       form.reset();
     } catch (error: unknown) {
       setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const replaceTask = (task: Task): void => {
+    if (state.kind !== "authenticated") return;
+    setState({
+      ...state,
+      tasks: state.tasks.map((candidate) =>
+        candidate.id === task.id ? task : candidate,
+      ),
+      planner:
+        state.planner === null
+          ? null
+          : {
+              ...state.planner,
+              tasks: state.planner.tasks.map((candidate) =>
+                candidate.id === task.id ? task : candidate,
+              ),
+            },
+    });
+  };
+
+  const handleTaskError = (error: unknown): void => {
+    if (
+      error instanceof ApiRequestError &&
+      (error.status === 412 || error.code === "CALENDAR_EVENT_CONFLICT")
+    ) {
+      setFormError(
+        error.code === "CALENDAR_EVENT_CONFLICT"
+          ? "Calendar changed elsewhere. Refresh before updating this block."
+          : "This task changed elsewhere. Reload before editing it.",
+      );
+      return;
+    }
+    setFormError(messageFor(error));
+  };
+
+  const submitTaskEdit = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated") return;
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await patchTask(
+        task.id,
+        task.revision,
+        {
+          title: formValue(data, "title"),
+          notes: formValue(data, "notes"),
+        },
+        state.session.csrfToken,
+      );
+      replaceTask(result.task);
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeTaskStatus = async (
+    task: Task,
+    action: "complete" | "reopen",
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await transitionTask(
+        task.id,
+        task.revision,
+        action,
+        state.session.csrfToken,
+      );
+      replaceTask(result.task);
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeTask = async (task: Task): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await deleteTask(
+        task.id,
+        task.revision,
+        state.session.csrfToken,
+      );
+      setState({
+        ...state,
+        tasks: state.tasks.filter((candidate) => candidate.id !== task.id),
+        recovery: [result.task, ...state.recovery],
+        planner:
+          state.planner === null
+            ? null
+            : {
+                ...state.planner,
+                tasks: state.planner.tasks.filter(
+                  (candidate) => candidate.id !== task.id,
+                ),
+              },
+      });
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recoverTask = async (task: Task): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await restoreTask(
+        task.id,
+        task.revision,
+        state.session.csrfToken,
+      );
+      setState({
+        ...state,
+        tasks: [result.task, ...state.tasks],
+        recovery: state.recovery.filter(
+          (candidate) => candidate.id !== task.id,
+        ),
+      });
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitTimeBlock = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated") return;
+    const data = new FormData(event.currentTarget);
+    const startsAt = localInputToIso(formValue(data, "startsAt"));
+    const durationMinutes = Number(formValue(data, "durationMinutes"));
+    if (startsAt === undefined) {
+      setFormError("Choose a valid start time.");
+      return;
+    }
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await putTaskTimeBlock(
+        task.id,
+        task.revision,
+        {
+          calendarId: formValue(data, "calendarId"),
+          startsAt,
+          durationMinutes,
+        },
+        state.session.csrfToken,
+        crypto.randomUUID(),
+      );
+      replaceTask(result.task);
+      const window = plannerWindow();
+      const planner = await getPlanner(window.from, window.to);
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, planner } : current,
+      );
+    } catch (error: unknown) {
+      handleTaskError(error);
     } finally {
       setBusy(false);
     }
@@ -242,7 +464,7 @@ export const App = ({ initialState }: AppProps) => {
           One quiet place for tasks, real calendar time, focused work, and
           deliberate automation.
         </p>
-        <p className="phase">Contract lab · Phase 0C</p>
+        <p className="phase">Self-hosted planning · Phase 1</p>
       </section>
 
       <section className="panel" aria-live="polite">
@@ -368,7 +590,7 @@ export const App = ({ initialState }: AppProps) => {
           <div>
             <div className="panel-heading">
               <div>
-                <p className="step">Foundation connected</p>
+                <p className="step">Planner connected</p>
                 <h2>Hello, {state.session.owner.displayName}</h2>
               </div>
               <button
@@ -383,6 +605,39 @@ export const App = ({ initialState }: AppProps) => {
               Baïkal is verified as {state.baikal.username}. Credentials remain
               server-side.
             </p>
+            {formError !== null && <p className="form-error">{formError}</p>}
+            <section className="week-plan" aria-labelledby="week-plan-title">
+              <div className="section-heading">
+                <div>
+                  <p className="step">Real calendar context</p>
+                  <h3 id="week-plan-title">Week plan</h3>
+                </div>
+                {state.planner !== null && (
+                  <span
+                    className={`freshness freshness--${state.planner.freshness.state}`}
+                  >
+                    {state.planner.freshness.message}
+                  </span>
+                )}
+              </div>
+              {state.planner === null || state.planner.events.length === 0 ? (
+                <p className="muted">No supported events in this week.</p>
+              ) : (
+                <ol className="timeline">
+                  {state.planner.events.map((event) => (
+                    <li key={`${event.identity.calendarId}:${event.href}`}>
+                      <time dateTime={event.startsAt}>
+                        {new Date(event.startsAt).toLocaleString()}
+                      </time>
+                      <strong>{event.summary || "Untitled event"}</strong>
+                      <span>
+                        until {new Date(event.endsAt).toLocaleTimeString()}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
             <form
               className="task-capture"
               onSubmit={(event) => void submitTask(event)}
@@ -399,7 +654,6 @@ export const App = ({ initialState }: AppProps) => {
                 autoComplete="off"
                 required={false}
               />
-              {formError !== null && <p className="form-error">{formError}</p>}
               <button disabled={busy}>
                 {busy ? "Capturing…" : "Capture task"}
               </button>
@@ -410,14 +664,134 @@ export const App = ({ initialState }: AppProps) => {
             ) : (
               <ul className="tasks">
                 {state.tasks.map((task) => (
-                  <li key={task.id}>
-                    <strong>{task.title}</strong>
+                  <li
+                    key={task.id}
+                    className={
+                      task.status === "completed" ? "task--completed" : ""
+                    }
+                  >
+                    <div className="task-heading">
+                      <strong>{task.title}</strong>
+                      <small>
+                        {task.status === "completed" ? "Completed" : "Open"} ·
+                        Revision {task.revision}
+                      </small>
+                    </div>
                     {task.notes !== "" && <span>{task.notes}</span>}
-                    <small>Revision {task.revision}</small>
+                    {task.plannedStart != null && (
+                      <p className="planned-time">
+                        Planned {new Date(task.plannedStart).toLocaleString()} ·{" "}
+                        {task.estimateMinutes} minutes
+                      </p>
+                    )}
+                    <form
+                      className="task-edit"
+                      onSubmit={(event) => void submitTaskEdit(event, task)}
+                    >
+                      <Field
+                        label="Title"
+                        name="title"
+                        autoComplete="off"
+                        defaultValue={task.title}
+                      />
+                      <Field
+                        label="Notes"
+                        name="notes"
+                        autoComplete="off"
+                        defaultValue={task.notes}
+                        required={false}
+                      />
+                      <button disabled={busy}>Save task</button>
+                    </form>
+                    <form
+                      className="time-block"
+                      onSubmit={(event) => void submitTimeBlock(event, task)}
+                    >
+                      <label className="field">
+                        <span>Calendar</span>
+                        <select name="calendarId" required>
+                          {state.baikal.calendars
+                            .filter((calendar) => calendar.supportsEvents)
+                            .map((calendar) => (
+                              <option key={calendar.id} value={calendar.id}>
+                                {calendar.displayName}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>Start</span>
+                        <input name="startsAt" type="datetime-local" required />
+                      </label>
+                      <label className="field">
+                        <span>Minutes</span>
+                        <input
+                          name="durationMinutes"
+                          type="number"
+                          min="1"
+                          max="720"
+                          defaultValue={task.estimateMinutes ?? 30}
+                          required
+                        />
+                      </label>
+                      <p className="hint">
+                        Manual placement stays explicit even when times overlap.
+                      </p>
+                      <button disabled={busy}>
+                        {task.plannedStart == null
+                          ? "Place in calendar"
+                          : "Move calendar block"}
+                      </button>
+                    </form>
+                    <div className="task-actions">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void changeTaskStatus(
+                            task,
+                            task.status === "completed" ? "reopen" : "complete",
+                          )
+                        }
+                      >
+                        {task.status === "completed" ? "Reopen" : "Complete"}
+                      </button>
+                      <button
+                        className="danger-button"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void removeTask(task)}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
             )}
+            <details className="recovery">
+              <summary>
+                Recently deleted tasks ({state.recovery.length})
+              </summary>
+              {state.recovery.length === 0 ? (
+                <p className="muted">Nothing needs recovery.</p>
+              ) : (
+                <ul className="tasks">
+                  {state.recovery.map((task) => (
+                    <li key={task.id}>
+                      <strong>{task.title}</strong>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void recoverTask(task)}
+                      >
+                        Restore task
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </details>
             <h3>Discovered calendars</h3>
             {state.baikal.calendars.length === 0 ? (
               <p className="muted">No calendar collections were returned.</p>
@@ -439,8 +813,9 @@ export const App = ({ initialState }: AppProps) => {
               </ul>
             )}
             <p className="boundary-note">
-              Task capture and calendar discovery are active. Task editing and
-              calendar event reads or writes remain Phase 1 capabilities.
+              Calendar reads and Suite-created time blocks are conditional and
+              bounded. Recurrence editing, offline writes, Google, and broad
+              calendar mutation remain later-phase capabilities.
             </p>
           </div>
         )}

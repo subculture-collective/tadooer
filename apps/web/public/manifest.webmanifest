@@ -1,0 +1,17 @@
+{
+  "name": "Productivity Suite",
+  "short_name": "Suite",
+  "description": "Private, self-hosted task and calendar planning",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ece9df",
+  "theme_color": "#173f32",
+  "icons": [
+    {
+      "src": "/suite-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -3,6 +3,9 @@ import {
   baikalStatusResponseSchema,
   taskListResponseSchema,
   taskMutationResponseSchema,
+  conditionalTaskMutationResponseSchema,
+  plannerResponseSchema,
+  taskTimeBlockMutationResponseSchema,
   sessionResponseSchema,
   setupStatusResponseSchema,
   type BaikalConnectRequest,
@@ -14,6 +17,11 @@ import {
   type SetupStatusResponse,
   type TaskListResponse,
   type TaskMutationResponse,
+  type TaskPatchRequest,
+  type ConditionalTaskMutationResponse,
+  type PlannerResponse,
+  type CreateTaskTimeBlockRequest,
+  type TaskTimeBlockMutationResponse,
 } from "@suite/contracts";
 import { z } from "zod";
 
@@ -109,3 +117,87 @@ export const createTask = (
     },
     body: JSON.stringify(input),
   });
+
+export const getRecoveryTasks = (): Promise<TaskListResponse> =>
+  request("/api/tasks/recovery", taskListResponseSchema);
+
+export const getPlanner = (
+  from: string,
+  to: string,
+): Promise<PlannerResponse> =>
+  request(
+    `/api/planner?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    plannerResponseSchema,
+  );
+
+const conditionalTask = (
+  path: string,
+  method: "PATCH" | "POST" | "DELETE",
+  revision: number,
+  csrfToken: string,
+  body: unknown = {},
+): Promise<ConditionalTaskMutationResponse> =>
+  request(path, conditionalTaskMutationResponseSchema, {
+    method,
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      "If-Match": `"${String(revision)}"`,
+    },
+    body: JSON.stringify(body),
+  });
+
+export const patchTask = (
+  taskId: string,
+  revision: number,
+  input: TaskPatchRequest,
+  csrfToken: string,
+): Promise<ConditionalTaskMutationResponse> =>
+  conditionalTask(`/api/tasks/${taskId}`, "PATCH", revision, csrfToken, input);
+
+export const transitionTask = (
+  taskId: string,
+  revision: number,
+  action: "complete" | "reopen",
+  csrfToken: string,
+): Promise<ConditionalTaskMutationResponse> =>
+  conditionalTask(
+    `/api/tasks/${taskId}/${action}`,
+    "POST",
+    revision,
+    csrfToken,
+  );
+
+export const deleteTask = (
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<ConditionalTaskMutationResponse> =>
+  conditionalTask(`/api/tasks/${taskId}`, "DELETE", revision, csrfToken);
+
+export const restoreTask = (
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<ConditionalTaskMutationResponse> =>
+  conditionalTask(`/api/tasks/${taskId}/restore`, "POST", revision, csrfToken);
+
+export const putTaskTimeBlock = (
+  taskId: string,
+  revision: number,
+  input: CreateTaskTimeBlockRequest,
+  csrfToken: string,
+  idempotencyKey: string,
+): Promise<TaskTimeBlockMutationResponse> =>
+  request(
+    `/api/tasks/${taskId}/time-block`,
+    taskTimeBlockMutationResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"${String(revision)}"`,
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
