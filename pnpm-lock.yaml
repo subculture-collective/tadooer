@@ -47,6 +47,9 @@ importers:
       '@suite/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@suite/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@suite/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
@@ -82,6 +85,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.0.5
         version: 6.0.5(vite@8.2.0(@types/node@24.10.13)(esbuild@0.28.1)(tsx@4.23.8))
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
       vite:
         specifier: 8.2.0
         version: 8.2.0(@types/node@24.10.13)(esbuild@0.28.1)(tsx@4.23.8)
@@ -678,6 +684,10 @@ packages:
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
+
+  fake-indexeddb@6.2.5:
+    resolution: {integrity: sha512-CGnyrvbhPlWYMngksqrSSUT1BAVP49dZocrHuK0SvtR0D5TMs5wP0o3j7jexDJW01KSadjBp1M/71o/KR3nD1w==}
+    engines: {node: '>=18'}
 
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
@@ -1613,6 +1623,8 @@ snapshots:
   esutils@2.0.3: {}
 
   expect-type@1.4.0: {}
+
+  fake-indexeddb@6.2.5: {}
 
   fast-deep-equal@3.1.3: {}
 
