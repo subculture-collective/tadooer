@@ -1,0 +1,16 @@
+{
+  "identity": {
+    "providerId": "d1054acd-c04d-4bd8-a814-254b007154ba",
+    "calendarId": "1b34cc57-972c-42e8-bafa-0ba455dced20",
+    "eventId": "/dav.php/calendars/owner/work/repeating.ics"
+  },
+  "href": "/dav.php/calendars/owner/work/repeating.ics",
+  "uid": "repeating@example.invalid",
+  "etag": "\"baikal-etag-2\"",
+  "summary": "Unsupported repeating event",
+  "startsAt": "2026-08-06T16:00:00.000Z",
+  "endsAt": "2026-08-06T15:00:00.000Z",
+  "allDay": false,
+  "recurrence": "weekly",
+  "projectedAt": "2026-08-06T14:55:00.000Z"
+}

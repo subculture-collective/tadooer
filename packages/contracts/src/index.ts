@@ -50,6 +50,8 @@ export const idempotencyKeySchema = z
 
 export const revisionSchema = z.number().int().positive();
 export const entityIdSchema = z.uuid();
+export const quotedRevisionEtagSchema = z.string().regex(/^"[1-9][0-9]*"$/);
+export const strongDavEtagSchema = z.string().regex(/^"[^"\r\n]+"$/);
 
 export const setupStatusResponseSchema = z.object({
   setupRequired: z.boolean(),
@@ -139,6 +141,10 @@ export const taskSchema = z.object({
   revision: revisionSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().nullable().optional(),
+  deletedAt: z.iso.datetime().nullable().optional(),
+  plannedStart: z.iso.datetime().nullable().optional(),
+  estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
 });
 
 export const createTaskRequestSchema = z.object({
@@ -153,6 +159,111 @@ export const taskMutationResponseSchema = z.object({
 
 export const taskListResponseSchema = z.object({
   tasks: z.array(taskSchema),
+});
+
+export const taskPatchRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240).optional(),
+    notes: z.string().max(20_000).optional(),
+    plannedStart: z.iso.datetime().nullable().optional(),
+    estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
+  })
+  .refine((input) => Object.keys(input).length > 0, {
+    message: "At least one mutable task field is required",
+  });
+
+export const conditionalRequestHeadersSchema = z.object({
+  ifMatch: quotedRevisionEtagSchema,
+});
+
+export const conditionalTaskMutationResponseSchema = z.object({
+  task: taskSchema,
+});
+
+export const taskRestoreRequestSchema = z.object({}).strict();
+
+export const taskRecoveryListResponseSchema = z.object({
+  tasks: z.array(taskSchema),
+});
+
+export const plannerWindowSchema = z
+  .object({
+    from: z.iso.datetime(),
+    to: z.iso.datetime(),
+  })
+  .refine(
+    ({ from, to }) => {
+      const fromTime = Date.parse(from);
+      const toTime = Date.parse(to);
+      return (
+        Number.isFinite(fromTime) &&
+        Number.isFinite(toTime) &&
+        toTime > fromTime &&
+        toTime - fromTime <= 31 * 24 * 60 * 60 * 1000
+      );
+    },
+    { message: "Planner window must be positive and no longer than 31 days" },
+  );
+
+export const calendarEventProjectionSchema = z
+  .object({
+    identity: calendarEventIdentitySchema,
+    href: z.string().trim().min(1).max(1024),
+    uid: z.string().trim().min(1).max(1024),
+    etag: strongDavEtagSchema,
+    summary: z.string().max(1024),
+    startsAt: z.iso.datetime(),
+    endsAt: z.iso.datetime(),
+    allDay: z.literal(false),
+    recurrence: z.literal("none"),
+    projectedAt: z.iso.datetime(),
+  })
+  .refine(({ startsAt, endsAt }) => Date.parse(endsAt) > Date.parse(startsAt), {
+    message: "Event end must be after event start",
+  });
+
+export const calendarProjectionFreshnessSchema = z.object({
+  state: z.enum(["fresh", "stale", "unavailable"]),
+  projectedAt: z.iso.datetime().nullable(),
+  message: z.string().trim().min(1).max(240),
+});
+
+export const plannerResponseSchema = z.object({
+  window: plannerWindowSchema,
+  tasks: z.array(taskSchema),
+  events: z.array(calendarEventProjectionSchema),
+  freshness: calendarProjectionFreshnessSchema,
+});
+
+export const createTaskTimeBlockRequestSchema = z.object({
+  calendarId: entityIdSchema,
+  startsAt: z.iso.datetime(),
+  durationMinutes: z.number().int().min(1).max(720),
+});
+
+export const taskEventMappingSchema = z.object({
+  id: entityIdSchema,
+  taskId: entityIdSchema,
+  event: calendarEventIdentitySchema,
+  href: z.string().trim().min(1).max(1024),
+  uid: z.string().trim().min(1).max(1024),
+  etag: strongDavEtagSchema,
+  state: z.enum(["active", "needs_reconciliation", "released"]),
+  createdBySuite: z.literal(true),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const taskTimeBlockMutationResponseSchema = z.object({
+  task: taskSchema,
+  mapping: taskEventMappingSchema,
+  replayed: z.boolean(),
+});
+
+export const calendarEventConflictSchema = apiErrorSchema.extend({
+  code: z.literal("CALENDAR_EVENT_CONFLICT"),
+  action: z.literal("refresh_and_replan"),
+  mappingId: entityIdSchema.nullable(),
 });
 
 export const importTaskCandidateSchema = z.object({
@@ -180,3 +291,27 @@ export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
+export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
+export type ConditionalRequestHeaders = z.infer<
+  typeof conditionalRequestHeadersSchema
+>;
+export type ConditionalTaskMutationResponse = z.infer<
+  typeof conditionalTaskMutationResponseSchema
+>;
+export type TaskRestoreRequest = z.infer<typeof taskRestoreRequestSchema>;
+export type PlannerWindow = z.infer<typeof plannerWindowSchema>;
+export type CalendarEventProjection = z.infer<
+  typeof calendarEventProjectionSchema
+>;
+export type CalendarProjectionFreshness = z.infer<
+  typeof calendarProjectionFreshnessSchema
+>;
+export type PlannerResponse = z.infer<typeof plannerResponseSchema>;
+export type CreateTaskTimeBlockRequest = z.infer<
+  typeof createTaskTimeBlockRequestSchema
+>;
+export type TaskEventMapping = z.infer<typeof taskEventMappingSchema>;
+export type TaskTimeBlockMutationResponse = z.infer<
+  typeof taskTimeBlockMutationResponseSchema
+>;
+export type CalendarEventConflict = z.infer<typeof calendarEventConflictSchema>;
