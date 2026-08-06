@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 5,
-        expectedMigrationCount: 5,
+        appliedMigrationCount: 6,
+        expectedMigrationCount: 6,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(5);
-      expect(reopenedState.expectedMigrationCount).toBe(5);
+      expect(reopenedState.appliedMigrationCount).toBe(6);
+      expect(reopenedState.expectedMigrationCount).toBe(6);
     });
   });
 
@@ -216,6 +216,189 @@ describe("SuiteDatabase", () => {
         ),
       ).toEqual({ kind: "conflict" });
       expect(database.listTasks("owner-1")).toHaveLength(1);
+      database.close();
+    });
+  });
+
+  it("conditionally updates, completes, deletes, and restores a task", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      database.createOwner({
+        id: "owner-1",
+        username: "owner",
+        displayName: "Owner",
+        passwordHash: "hash",
+        createdAt: "2026-08-06T00:00:00.000Z",
+      });
+      database.createTaskIdempotently("owner-1", "request-001", "hash", {
+        id: "task-1",
+        title: "Draft",
+        notes: "",
+        status: "open",
+        revision: 1,
+        createdAt: "2026-08-06T00:00:00.000Z",
+        updatedAt: "2026-08-06T00:00:00.000Z",
+      });
+      const patched = database.patchTask(
+        "owner-1",
+        "task-1",
+        1,
+        {
+          title: "Plan Phase 1",
+          plannedStart: "2026-08-06T14:00:00.000Z",
+          estimateMinutes: 45,
+        },
+        "2026-08-06T00:01:00.000Z",
+      );
+      expect(patched).toMatchObject({
+        kind: "updated",
+        task: { title: "Plan Phase 1", revision: 2, estimateMinutes: 45 },
+      });
+      expect(
+        database.patchTask(
+          "owner-1",
+          "task-1",
+          1,
+          { title: "Stale overwrite" },
+          "2026-08-06T00:02:00.000Z",
+        ),
+      ).toMatchObject({
+        kind: "precondition-failed",
+        task: { title: "Plan Phase 1", revision: 2 },
+      });
+      expect(
+        database.setTaskCompleted(
+          "owner-1",
+          "task-1",
+          2,
+          true,
+          "2026-08-06T00:03:00.000Z",
+        ),
+      ).toMatchObject({
+        kind: "updated",
+        task: { status: "completed", revision: 3 },
+      });
+      expect(
+        database.deleteTask("owner-1", "task-1", 3, "2026-08-06T00:04:00.000Z"),
+      ).toMatchObject({ kind: "updated", task: { revision: 4 } });
+      expect(database.listTasks("owner-1")).toEqual([]);
+      expect(database.listDeletedTasks("owner-1")).toHaveLength(1);
+      expect(
+        database.restoreTask(
+          "owner-1",
+          "task-1",
+          4,
+          "2026-08-06T00:05:00.000Z",
+        ),
+      ).toMatchObject({
+        kind: "updated",
+        task: { deletedAt: null, revision: 5 },
+      });
+      database.close();
+    });
+  });
+
+  it("reserves and completes one retry-safe task calendar block", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      database.createOwner({
+        id: "owner-1",
+        username: "owner",
+        displayName: "Owner",
+        passwordHash: "hash",
+        createdAt: "2026-08-06T00:00:00.000Z",
+      });
+      database.createTaskIdempotently("owner-1", "request-001", "hash", {
+        id: "task-1",
+        title: "Calendar task",
+        notes: "",
+        status: "open",
+        revision: 1,
+        createdAt: "2026-08-06T00:00:00.000Z",
+        updatedAt: "2026-08-06T00:00:00.000Z",
+      });
+      const provider = database.ensureCalendarProvider(
+        "owner-1",
+        "baikal",
+        "connector-1",
+        "2026-08-06T00:00:00.000Z",
+      );
+      const calendar = database.putCalendarCollections(
+        provider.id,
+        [
+          {
+            href: "/dav.php/calendars/owner/default/",
+            displayName: "Default",
+            supportsEvents: true,
+            supportsTodos: false,
+          },
+        ],
+        "2026-08-06T00:00:00.000Z",
+      )[0];
+      if (calendar === undefined) throw new Error("Calendar was not persisted");
+      const reservation = database.reserveCalendarWrite({
+        ownerId: "owner-1",
+        taskId: "task-1",
+        expectedTaskRevision: 1,
+        idempotencyKey: "planning-request-001",
+        requestHash: "planning-hash",
+        calendarId: calendar.id,
+        reservedHref: "/dav.php/calendars/owner/default/suite-task.ics",
+        reservedUid: "suite-task",
+        now: "2026-08-06T00:01:00.000Z",
+      });
+      expect(reservation).toMatchObject({ kind: "reserved" });
+      expect(
+        database.reserveCalendarWrite({
+          ownerId: "owner-1",
+          taskId: "task-1",
+          expectedTaskRevision: 1,
+          idempotencyKey: "planning-request-001",
+          requestHash: "planning-hash",
+          calendarId: calendar.id,
+          reservedHref: "ignored-on-replay.ics",
+          reservedUid: "ignored-on-replay",
+          now: "2026-08-06T00:02:00.000Z",
+        }),
+      ).toMatchObject({
+        kind: "replayed",
+        operation: { reservedUid: "suite-task" },
+      });
+      const completed = database.completeCalendarWrite({
+        ownerId: "owner-1",
+        idempotencyKey: "planning-request-001",
+        event: {
+          id: "event-projection-1",
+          providerId: provider.id,
+          calendarId: calendar.id,
+          href: "/dav.php/calendars/owner/default/suite-task.ics",
+          uid: "suite-task",
+          etag: '"v1"',
+          rawIcs: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+          summary: "Calendar task",
+          startsAt: "2026-08-06T14:00:00.000Z",
+          endsAt: "2026-08-06T14:45:00.000Z",
+          allDay: false,
+          freshness: "current",
+          mutable: true,
+          revision: 1,
+          projectedAt: "2026-08-06T00:03:00.000Z",
+        },
+        plannedStart: "2026-08-06T14:00:00.000Z",
+        estimateMinutes: 45,
+        now: "2026-08-06T00:03:00.000Z",
+      });
+      expect(completed).toMatchObject({
+        task: { revision: 2, estimateMinutes: 45 },
+        block: { eventUid: "suite-task", state: "active" },
+      });
+      expect(
+        database.listCalendarEvents(
+          "owner-1",
+          "2026-08-06T00:00:00.000Z",
+          "2026-08-07T00:00:00.000Z",
+        ),
+      ).toHaveLength(1);
       database.close();
     });
   });

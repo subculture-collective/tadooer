@@ -18,6 +18,21 @@ interface InstallRow {
   readonly created_at: string;
 }
 
+interface TaskRow {
+  readonly id: string;
+  readonly owner_id: string;
+  readonly title: string;
+  readonly notes: string;
+  readonly status: "open" | "completed";
+  readonly revision: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly completed_at: string | null;
+  readonly deleted_at: string | null;
+  readonly planned_start: string | null;
+  readonly estimate_minutes: number | null;
+}
+
 export interface InstallMetadata {
   readonly instanceId: string;
   readonly createdAt: string;
@@ -85,7 +100,92 @@ export interface TaskRecord {
   readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly completedAt: string | null;
+  readonly deletedAt: string | null;
+  readonly plannedStart: string | null;
+  readonly estimateMinutes: number | null;
 }
+
+export interface TaskPatch {
+  readonly title?: string;
+  readonly notes?: string;
+  readonly plannedStart?: string | null;
+  readonly estimateMinutes?: number | null;
+}
+
+export type ConditionalTaskResult =
+  | { readonly kind: "updated"; readonly task: TaskRecord }
+  | { readonly kind: "not-found" }
+  | { readonly kind: "precondition-failed"; readonly task: TaskRecord };
+
+export interface CalendarEventProjectionRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly providerId: string;
+  readonly calendarId: string;
+  readonly href: string;
+  readonly uid: string;
+  readonly etag: string;
+  readonly rawIcs: string;
+  readonly summary: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly allDay: boolean;
+  readonly freshness: "current" | "stale" | "unavailable" | "unsupported";
+  readonly mutable: boolean;
+  readonly revision: number;
+  readonly projectedAt: string;
+}
+
+export interface TaskCalendarBlockRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly taskId: string;
+  readonly providerId: string;
+  readonly calendarId: string;
+  readonly eventHref: string;
+  readonly eventUid: string;
+  readonly remoteEtag: string;
+  readonly state: "active" | "conflict" | "needs_reconciliation";
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CalendarWriteOperationRecord {
+  readonly ownerId: string;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+  readonly taskId: string;
+  readonly providerId: string;
+  readonly calendarId: string;
+  readonly reservedHref: string;
+  readonly reservedUid: string;
+  readonly state: "pending_remote" | "completed" | "needs_reconciliation";
+  readonly blockId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface OwnedCalendarRecord extends CalendarCollectionRecord {
+  readonly ownerId: string;
+  readonly kind: CalendarProviderRecord["kind"];
+  readonly connectorId: string;
+}
+
+export type CalendarWriteReservationResult =
+  | {
+      readonly kind: "reserved";
+      readonly operation: CalendarWriteOperationRecord;
+    }
+  | {
+      readonly kind: "replayed";
+      readonly operation: CalendarWriteOperationRecord;
+    }
+  | { readonly kind: "conflict" }
+  | { readonly kind: "task-not-found" }
+  | { readonly kind: "task-precondition-failed"; readonly task: TaskRecord }
+  | { readonly kind: "calendar-not-found" };
 
 export type IdempotentTaskCreateResult =
   | { readonly kind: "created"; readonly task: TaskRecord }
@@ -211,6 +311,73 @@ const migrations: readonly Migration[] = [
         resource_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
         PRIMARY KEY (owner_id, operation, idempotency_key)
+      ) STRICT;
+    `,
+  },
+  {
+    id: "0006_phase_1_planning",
+    sql: `
+      ALTER TABLE tasks ADD COLUMN planned_start TEXT;
+      ALTER TABLE tasks ADD COLUMN estimate_minutes INTEGER
+        CHECK (estimate_minutes IS NULL OR estimate_minutes BETWEEN 1 AND 1440);
+      ALTER TABLE tasks ADD COLUMN completed_at TEXT;
+
+      CREATE TABLE calendar_event_projections (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        provider_id TEXT NOT NULL REFERENCES calendar_providers(id) ON DELETE CASCADE,
+        calendar_id TEXT NOT NULL REFERENCES calendar_collections(id) ON DELETE CASCADE,
+        href TEXT NOT NULL,
+        uid TEXT NOT NULL,
+        etag TEXT NOT NULL,
+        raw_ics TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        starts_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        all_day INTEGER NOT NULL CHECK (all_day IN (0, 1)),
+        freshness TEXT NOT NULL
+          CHECK (freshness IN ('current', 'stale', 'unavailable', 'unsupported')),
+        mutable INTEGER NOT NULL CHECK (mutable IN (0, 1)),
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        projected_at TEXT NOT NULL,
+        UNIQUE (calendar_id, href)
+      ) STRICT;
+
+      CREATE INDEX calendar_events_by_owner_time
+        ON calendar_event_projections(owner_id, starts_at, ends_at);
+
+      CREATE TABLE task_calendar_blocks (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+        provider_id TEXT NOT NULL REFERENCES calendar_providers(id) ON DELETE CASCADE,
+        calendar_id TEXT NOT NULL REFERENCES calendar_collections(id) ON DELETE CASCADE,
+        event_href TEXT NOT NULL,
+        event_uid TEXT NOT NULL,
+        remote_etag TEXT NOT NULL,
+        state TEXT NOT NULL
+          CHECK (state IN ('active', 'conflict', 'needs_reconciliation')),
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (calendar_id, event_href)
+      ) STRICT;
+
+      CREATE TABLE calendar_write_operations (
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        provider_id TEXT NOT NULL REFERENCES calendar_providers(id) ON DELETE CASCADE,
+        calendar_id TEXT NOT NULL REFERENCES calendar_collections(id) ON DELETE CASCADE,
+        reserved_href TEXT NOT NULL,
+        reserved_uid TEXT NOT NULL,
+        state TEXT NOT NULL
+          CHECK (state IN ('pending_remote', 'completed', 'needs_reconciliation')),
+        block_id TEXT REFERENCES task_calendar_blocks(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (owner_id, idempotency_key)
       ) STRICT;
     `,
   },
@@ -611,11 +778,462 @@ export class SuiteDatabase {
     });
   }
 
+  getOwnedCalendar(
+    ownerId: string,
+    calendarId: string,
+  ): OwnedCalendarRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT c.id, c.provider_id, c.href, c.display_name,
+                c.supports_events, c.supports_todos,
+                p.owner_id, p.kind, p.connector_id
+         FROM calendar_collections c
+         JOIN calendar_providers p ON p.id = c.provider_id
+         WHERE p.owner_id = ? AND c.id = ?`,
+      )
+      .get(ownerId, calendarId) as unknown as
+      | {
+          readonly id: string;
+          readonly provider_id: string;
+          readonly href: string;
+          readonly display_name: string;
+          readonly supports_events: number;
+          readonly supports_todos: number;
+          readonly owner_id: string;
+          readonly kind: CalendarProviderRecord["kind"];
+          readonly connector_id: string;
+        }
+      | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          id: row.id,
+          providerId: row.provider_id,
+          href: row.href,
+          displayName: row.display_name,
+          supportsEvents: row.supports_events === 1,
+          supportsTodos: row.supports_todos === 1,
+          ownerId: row.owner_id,
+          kind: row.kind,
+          connectorId: row.connector_id,
+        };
+  }
+
+  replaceCalendarEventWindow(
+    ownerId: string,
+    calendarId: string,
+    from: string,
+    to: string,
+    events: readonly Omit<CalendarEventProjectionRecord, "ownerId">[],
+  ): void {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.#database
+        .prepare(
+          `DELETE FROM calendar_event_projections
+           WHERE owner_id = ? AND calendar_id = ?
+             AND starts_at < ? AND ends_at > ?`,
+        )
+        .run(ownerId, calendarId, to, from);
+      for (const event of events) this.#putCalendarEvent(ownerId, event);
+      this.#database.exec("COMMIT;");
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  listCalendarEvents(
+    ownerId: string,
+    from: string,
+    to: string,
+  ): readonly CalendarEventProjectionRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM calendar_event_projections
+         WHERE owner_id = ? AND starts_at < ? AND ends_at > ?
+         ORDER BY starts_at, calendar_id, href`,
+      )
+      .all(ownerId, to, from) as unknown as readonly Record<
+      string,
+      string | number
+    >[];
+    return rows.map((row) => this.#calendarEventFromRow(row));
+  }
+
+  getTaskCalendarBlock(
+    ownerId: string,
+    taskId: string,
+  ): TaskCalendarBlockRecord | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT * FROM task_calendar_blocks WHERE owner_id = ? AND task_id = ?",
+      )
+      .get(ownerId, taskId) as unknown as
+      Record<string, string | number> | undefined;
+    return row === undefined ? undefined : this.#calendarBlockFromRow(row);
+  }
+
+  reserveCalendarWrite(input: {
+    readonly ownerId: string;
+    readonly taskId: string;
+    readonly expectedTaskRevision: number;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+    readonly calendarId: string;
+    readonly reservedHref: string;
+    readonly reservedUid: string;
+    readonly now: string;
+  }): CalendarWriteReservationResult {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const prior = this.#getCalendarWriteOperation(
+        input.ownerId,
+        input.idempotencyKey,
+      );
+      if (prior !== undefined) {
+        this.#database.exec("COMMIT;");
+        return prior.requestHash === input.requestHash
+          ? { kind: "replayed", operation: prior }
+          : { kind: "conflict" };
+      }
+      const task = this.getTask(input.ownerId, input.taskId);
+      if (task === undefined) {
+        this.#database.exec("COMMIT;");
+        return { kind: "task-not-found" };
+      }
+      if (task.revision !== input.expectedTaskRevision) {
+        this.#database.exec("COMMIT;");
+        return { kind: "task-precondition-failed", task };
+      }
+      const calendar = this.getOwnedCalendar(input.ownerId, input.calendarId);
+      if (calendar?.supportsEvents !== true) {
+        this.#database.exec("COMMIT;");
+        return { kind: "calendar-not-found" };
+      }
+      const operation: CalendarWriteOperationRecord = {
+        ownerId: input.ownerId,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: input.requestHash,
+        taskId: input.taskId,
+        providerId: calendar.providerId,
+        calendarId: calendar.id,
+        reservedHref: input.reservedHref,
+        reservedUid: input.reservedUid,
+        state: "pending_remote",
+        blockId: null,
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+      this.#database
+        .prepare(
+          `INSERT INTO calendar_write_operations
+            (owner_id, idempotency_key, request_hash, task_id, provider_id,
+             calendar_id, reserved_href, reserved_uid, state, block_id,
+             created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        )
+        .run(
+          operation.ownerId,
+          operation.idempotencyKey,
+          operation.requestHash,
+          operation.taskId,
+          operation.providerId,
+          operation.calendarId,
+          operation.reservedHref,
+          operation.reservedUid,
+          operation.state,
+          operation.createdAt,
+          operation.updatedAt,
+        );
+      this.#database.exec("COMMIT;");
+      return { kind: "reserved", operation };
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  completeCalendarWrite(input: {
+    readonly ownerId: string;
+    readonly idempotencyKey: string;
+    readonly event: Omit<CalendarEventProjectionRecord, "ownerId">;
+    readonly plannedStart: string;
+    readonly estimateMinutes: number;
+    readonly now: string;
+  }):
+    | {
+        readonly task: TaskRecord;
+        readonly block: TaskCalendarBlockRecord;
+        readonly event: CalendarEventProjectionRecord;
+      }
+    | undefined {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const operation = this.#getCalendarWriteOperation(
+        input.ownerId,
+        input.idempotencyKey,
+      );
+      if (operation === undefined) {
+        this.#database.exec("COMMIT;");
+        return undefined;
+      }
+      const currentTask = this.getTask(input.ownerId, operation.taskId);
+      if (currentTask === undefined)
+        throw new Error("Planning task is missing");
+      const event: CalendarEventProjectionRecord = {
+        ownerId: input.ownerId,
+        ...input.event,
+      };
+      this.#putCalendarEvent(input.ownerId, input.event);
+      const existing = this.getTaskCalendarBlock(
+        input.ownerId,
+        operation.taskId,
+      );
+      const block: TaskCalendarBlockRecord = {
+        id: existing?.id ?? randomUUID(),
+        ownerId: input.ownerId,
+        taskId: operation.taskId,
+        providerId: operation.providerId,
+        calendarId: operation.calendarId,
+        eventHref: event.href,
+        eventUid: event.uid,
+        remoteEtag: event.etag,
+        state: "active",
+        revision: (existing?.revision ?? 0) + 1,
+        createdAt: existing?.createdAt ?? input.now,
+        updatedAt: input.now,
+      };
+      this.#database
+        .prepare(
+          `INSERT INTO task_calendar_blocks
+            (id, owner_id, task_id, provider_id, calendar_id, event_href,
+             event_uid, remote_etag, state, revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(task_id) DO UPDATE SET
+             provider_id = excluded.provider_id,
+             calendar_id = excluded.calendar_id,
+             event_href = excluded.event_href,
+             event_uid = excluded.event_uid,
+             remote_etag = excluded.remote_etag,
+             state = excluded.state,
+             revision = excluded.revision,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          block.id,
+          block.ownerId,
+          block.taskId,
+          block.providerId,
+          block.calendarId,
+          block.eventHref,
+          block.eventUid,
+          block.remoteEtag,
+          block.state,
+          block.revision,
+          block.createdAt,
+          block.updatedAt,
+        );
+      this.#database
+        .prepare(
+          `UPDATE calendar_write_operations
+           SET state = 'completed', block_id = ?, updated_at = ?
+           WHERE owner_id = ? AND idempotency_key = ?`,
+        )
+        .run(block.id, input.now, input.ownerId, input.idempotencyKey);
+      const task: TaskRecord = {
+        ...currentTask,
+        plannedStart: input.plannedStart,
+        estimateMinutes: input.estimateMinutes,
+        revision: currentTask.revision + 1,
+        updatedAt: input.now,
+      };
+      this.#database
+        .prepare(
+          `UPDATE tasks SET planned_start = ?, estimate_minutes = ?,
+             revision = ?, updated_at = ? WHERE owner_id = ? AND id = ?`,
+        )
+        .run(
+          task.plannedStart,
+          task.estimateMinutes,
+          task.revision,
+          task.updatedAt,
+          task.ownerId,
+          task.id,
+        );
+      this.#database.exec("COMMIT;");
+      return { task, block, event };
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  markCalendarWriteConflict(
+    ownerId: string,
+    idempotencyKey: string,
+    now: string,
+  ): void {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const operation = this.#getCalendarWriteOperation(
+        ownerId,
+        idempotencyKey,
+      );
+      if (operation !== undefined) {
+        this.#database
+          .prepare(
+            `UPDATE calendar_write_operations
+             SET state = 'needs_reconciliation', updated_at = ?
+             WHERE owner_id = ? AND idempotency_key = ?`,
+          )
+          .run(now, ownerId, idempotencyKey);
+        this.#database
+          .prepare(
+            `UPDATE task_calendar_blocks
+             SET state = 'conflict', revision = revision + 1, updated_at = ?
+             WHERE owner_id = ? AND task_id = ?`,
+          )
+          .run(now, ownerId, operation.taskId);
+      }
+      this.#database.exec("COMMIT;");
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  getCalendarWriteOperation(
+    ownerId: string,
+    idempotencyKey: string,
+  ): CalendarWriteOperationRecord | undefined {
+    return this.#getCalendarWriteOperation(ownerId, idempotencyKey);
+  }
+
+  #putCalendarEvent(
+    ownerId: string,
+    event: Omit<CalendarEventProjectionRecord, "ownerId">,
+  ): void {
+    this.#database
+      .prepare(
+        `INSERT INTO calendar_event_projections
+          (id, owner_id, provider_id, calendar_id, href, uid, etag, raw_ics,
+           summary, starts_at, ends_at, all_day, freshness, mutable, revision,
+           projected_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(calendar_id, href) DO UPDATE SET
+           uid = excluded.uid, etag = excluded.etag, raw_ics = excluded.raw_ics,
+           summary = excluded.summary, starts_at = excluded.starts_at,
+           ends_at = excluded.ends_at, all_day = excluded.all_day,
+           freshness = excluded.freshness, mutable = excluded.mutable,
+           revision = calendar_event_projections.revision + 1,
+           projected_at = excluded.projected_at`,
+      )
+      .run(
+        event.id,
+        ownerId,
+        event.providerId,
+        event.calendarId,
+        event.href,
+        event.uid,
+        event.etag,
+        event.rawIcs,
+        event.summary,
+        event.startsAt,
+        event.endsAt,
+        event.allDay ? 1 : 0,
+        event.freshness,
+        event.mutable ? 1 : 0,
+        event.revision,
+        event.projectedAt,
+      );
+  }
+
+  #getCalendarWriteOperation(
+    ownerId: string,
+    idempotencyKey: string,
+  ): CalendarWriteOperationRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM calendar_write_operations
+         WHERE owner_id = ? AND idempotency_key = ?`,
+      )
+      .get(ownerId, idempotencyKey) as unknown as
+      Record<string, string | null> | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          ownerId: String(row.owner_id),
+          idempotencyKey: String(row.idempotency_key),
+          requestHash: String(row.request_hash),
+          taskId: String(row.task_id),
+          providerId: String(row.provider_id),
+          calendarId: String(row.calendar_id),
+          reservedHref: String(row.reserved_href),
+          reservedUid: String(row.reserved_uid),
+          state: row.state as CalendarWriteOperationRecord["state"],
+          blockId: row.block_id === null ? null : String(row.block_id),
+          createdAt: String(row.created_at),
+          updatedAt: String(row.updated_at),
+        };
+  }
+
+  #calendarEventFromRow(
+    row: Record<string, string | number>,
+  ): CalendarEventProjectionRecord {
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      providerId: String(row.provider_id),
+      calendarId: String(row.calendar_id),
+      href: String(row.href),
+      uid: String(row.uid),
+      etag: String(row.etag),
+      rawIcs: String(row.raw_ics),
+      summary: String(row.summary),
+      startsAt: String(row.starts_at),
+      endsAt: String(row.ends_at),
+      allDay: Number(row.all_day) === 1,
+      freshness: String(
+        row.freshness,
+      ) as CalendarEventProjectionRecord["freshness"],
+      mutable: Number(row.mutable) === 1,
+      revision: Number(row.revision),
+      projectedAt: String(row.projected_at),
+    };
+  }
+
+  #calendarBlockFromRow(
+    row: Record<string, string | number>,
+  ): TaskCalendarBlockRecord {
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      taskId: String(row.task_id),
+      providerId: String(row.provider_id),
+      calendarId: String(row.calendar_id),
+      eventHref: String(row.event_href),
+      eventUid: String(row.event_uid),
+      remoteEtag: String(row.remote_etag),
+      state: String(row.state) as TaskCalendarBlockRecord["state"],
+      revision: Number(row.revision),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
   createTaskIdempotently(
     ownerId: string,
     idempotencyKey: string,
     requestHash: string,
-    task: Omit<TaskRecord, "ownerId">,
+    task: Omit<
+      TaskRecord,
+      | "ownerId"
+      | "completedAt"
+      | "deletedAt"
+      | "plannedStart"
+      | "estimateMinutes"
+    >,
   ): IdempotentTaskCreateResult {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -640,7 +1258,14 @@ export class SuiteDatabase {
         return { kind: "replayed", task: replayed };
       }
 
-      const created: TaskRecord = { ownerId, ...task };
+      const created: TaskRecord = {
+        ownerId,
+        ...task,
+        completedAt: null,
+        deletedAt: null,
+        plannedStart: null,
+        estimateMinutes: null,
+      };
       this.#database
         .prepare(
           `INSERT INTO tasks
@@ -681,7 +1306,8 @@ export class SuiteDatabase {
   listTasks(ownerId: string): readonly TaskRecord[] {
     const rows = this.#database
       .prepare(
-        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at
+        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
+                completed_at, deleted_at, planned_start, estimate_minutes
          FROM tasks WHERE owner_id = ? AND deleted_at IS NULL
          ORDER BY created_at DESC, id DESC`,
       )
@@ -694,14 +1320,187 @@ export class SuiteDatabase {
       readonly revision: number;
       readonly created_at: string;
       readonly updated_at: string;
+      readonly completed_at: string | null;
+      readonly deleted_at: string | null;
+      readonly planned_start: string | null;
+      readonly estimate_minutes: number | null;
     }[];
     return rows.map((row) => this.#taskFromRow(row));
+  }
+
+  listDeletedTasks(ownerId: string): readonly TaskRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
+                completed_at, deleted_at, planned_start, estimate_minutes
+         FROM tasks WHERE owner_id = ? AND deleted_at IS NOT NULL
+         ORDER BY deleted_at DESC, id DESC`,
+      )
+      .all(ownerId) as unknown as readonly TaskRow[];
+    return rows.map((row) => this.#taskFromRow(row));
+  }
+
+  getTask(
+    ownerId: string,
+    taskId: string,
+    includeDeleted = false,
+  ): TaskRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
+                completed_at, deleted_at, planned_start, estimate_minutes
+         FROM tasks WHERE owner_id = ? AND id = ?
+           AND (? = 1 OR deleted_at IS NULL)`,
+      )
+      .get(ownerId, taskId, includeDeleted ? 1 : 0) as unknown as
+      TaskRow | undefined;
+    return row === undefined ? undefined : this.#taskFromRow(row);
+  }
+
+  patchTask(
+    ownerId: string,
+    taskId: string,
+    expectedRevision: number,
+    patch: TaskPatch,
+    now: string,
+  ): ConditionalTaskResult {
+    return this.#conditionallyUpdateTask(
+      ownerId,
+      taskId,
+      expectedRevision,
+      false,
+      (task) => ({
+        ...task,
+        ...(patch.title === undefined ? {} : { title: patch.title }),
+        ...(patch.notes === undefined ? {} : { notes: patch.notes }),
+        ...(patch.plannedStart === undefined
+          ? {}
+          : { plannedStart: patch.plannedStart }),
+        ...(patch.estimateMinutes === undefined
+          ? {}
+          : { estimateMinutes: patch.estimateMinutes }),
+      }),
+      now,
+    );
+  }
+
+  setTaskCompleted(
+    ownerId: string,
+    taskId: string,
+    expectedRevision: number,
+    completed: boolean,
+    now: string,
+  ): ConditionalTaskResult {
+    return this.#conditionallyUpdateTask(
+      ownerId,
+      taskId,
+      expectedRevision,
+      false,
+      (task) => ({
+        ...task,
+        status: completed ? "completed" : "open",
+        completedAt: completed ? now : null,
+      }),
+      now,
+    );
+  }
+
+  deleteTask(
+    ownerId: string,
+    taskId: string,
+    expectedRevision: number,
+    now: string,
+  ): ConditionalTaskResult {
+    return this.#conditionallyUpdateTask(
+      ownerId,
+      taskId,
+      expectedRevision,
+      false,
+      (task) => ({ ...task, deletedAt: now }),
+      now,
+    );
+  }
+
+  restoreTask(
+    ownerId: string,
+    taskId: string,
+    expectedRevision: number,
+    now: string,
+  ): ConditionalTaskResult {
+    return this.#conditionallyUpdateTask(
+      ownerId,
+      taskId,
+      expectedRevision,
+      true,
+      (task) => ({ ...task, deletedAt: null }),
+      now,
+    );
+  }
+
+  #conditionallyUpdateTask(
+    ownerId: string,
+    taskId: string,
+    expectedRevision: number,
+    requireDeleted: boolean,
+    update: (task: TaskRecord) => TaskRecord,
+    now: string,
+  ): ConditionalTaskResult {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const current = this.getTask(ownerId, taskId, true);
+      if (
+        current === undefined ||
+        (requireDeleted
+          ? current.deletedAt === null
+          : current.deletedAt !== null)
+      ) {
+        this.#database.exec("COMMIT;");
+        return { kind: "not-found" };
+      }
+      if (current.revision !== expectedRevision) {
+        this.#database.exec("COMMIT;");
+        return { kind: "precondition-failed", task: current };
+      }
+      const next = {
+        ...update(current),
+        revision: current.revision + 1,
+        updatedAt: now,
+      };
+      const changed = this.#database
+        .prepare(
+          `UPDATE tasks SET title = ?, notes = ?, status = ?, revision = ?,
+             updated_at = ?, completed_at = ?, deleted_at = ?,
+             planned_start = ?, estimate_minutes = ?
+           WHERE owner_id = ? AND id = ? AND revision = ?`,
+        )
+        .run(
+          next.title,
+          next.notes,
+          next.status,
+          next.revision,
+          next.updatedAt,
+          next.completedAt,
+          next.deletedAt,
+          next.plannedStart,
+          next.estimateMinutes,
+          ownerId,
+          taskId,
+          expectedRevision,
+        ).changes;
+      if (changed !== 1) throw new Error("Conditional task update was lost");
+      this.#database.exec("COMMIT;");
+      return { kind: "updated", task: next };
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   #findTask(ownerId: string, taskId: string): TaskRecord | undefined {
     const row = this.#database
       .prepare(
-        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at
+        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
+                completed_at, deleted_at, planned_start, estimate_minutes
          FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL`,
       )
       .get(ownerId, taskId) as unknown as
@@ -714,6 +1513,10 @@ export class SuiteDatabase {
           readonly revision: number;
           readonly created_at: string;
           readonly updated_at: string;
+          readonly completed_at: string | null;
+          readonly deleted_at: string | null;
+          readonly planned_start: string | null;
+          readonly estimate_minutes: number | null;
         }
       | undefined;
     return row === undefined ? undefined : this.#taskFromRow(row);
@@ -728,6 +1531,10 @@ export class SuiteDatabase {
     readonly revision: number;
     readonly created_at: string;
     readonly updated_at: string;
+    readonly completed_at: string | null;
+    readonly deleted_at: string | null;
+    readonly planned_start: string | null;
+    readonly estimate_minutes: number | null;
   }): TaskRecord {
     return {
       id: row.id,
@@ -738,6 +1545,10 @@ export class SuiteDatabase {
       revision: row.revision,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+      deletedAt: row.deleted_at,
+      plannedStart: row.planned_start,
+      estimateMinutes: row.estimate_minutes,
     };
   }
 
