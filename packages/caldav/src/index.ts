@@ -5,7 +5,6 @@ import {
 } from "@xmldom/xmldom";
 
 export interface CalendarCollectionIdentity {
-  readonly providerId: string;
   readonly href: string;
 }
 
@@ -267,7 +266,6 @@ const collections = (
         }
       }
       result.push({
-        providerId: "baikal",
         href,
         displayName,
         color: null,

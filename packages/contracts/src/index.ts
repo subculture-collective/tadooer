@@ -31,10 +31,25 @@ export type HealthResponse = z.infer<typeof healthResponseSchema>;
 export type ReadinessResponse = z.infer<typeof readinessResponseSchema>;
 export type BuildResponse = z.infer<typeof buildResponseSchema>;
 
+export const apiErrorCodeSchema = z
+  .string()
+  .regex(/^[A-Z][A-Z0-9_]*$/)
+  .max(64);
+
 export const apiErrorSchema = z.object({
-  code: z.string().min(1),
+  code: apiErrorCodeSchema,
   message: z.string().min(1),
+  requestId: z.uuid(),
 });
+
+export const idempotencyKeySchema = z
+  .string()
+  .min(8)
+  .max(128)
+  .regex(/^[A-Za-z0-9._~-]+$/);
+
+export const revisionSchema = z.number().int().positive();
+export const entityIdSchema = z.uuid();
 
 export const setupStatusResponseSchema = z.object({
   setupRequired: z.boolean(),
@@ -73,6 +88,8 @@ export const baikalConnectRequestSchema = z.object({
 });
 
 export const calendarCollectionSchema = z.object({
+  id: entityIdSchema,
+  providerId: entityIdSchema,
   href: z.string().min(1),
   displayName: z.string().min(1),
   supportsEvents: z.boolean(),
@@ -81,10 +98,72 @@ export const calendarCollectionSchema = z.object({
 
 export const baikalStatusResponseSchema = z.object({
   connected: z.boolean(),
+  providerId: entityIdSchema.nullable(),
   endpoint: z.url(),
   username: z.string().nullable(),
   verifiedAt: z.iso.datetime().nullable(),
   calendars: z.array(calendarCollectionSchema),
+});
+
+export const calendarProviderKindSchema = z.enum([
+  "baikal",
+  "caldav",
+  "google",
+]);
+
+export const clientIdentitySchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  label: z.string().trim().min(1).max(100),
+});
+
+export const calendarProviderSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  kind: calendarProviderKindSchema,
+});
+
+export const calendarEventIdentitySchema = z.object({
+  providerId: entityIdSchema,
+  calendarId: entityIdSchema,
+  eventId: z.string().trim().min(1).max(1024),
+});
+
+export const taskStatusSchema = z.enum(["open", "completed"]);
+
+export const taskSchema = z.object({
+  id: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  notes: z.string().max(20_000),
+  status: taskStatusSchema,
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const createTaskRequestSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  notes: z.string().max(20_000).default(""),
+});
+
+export const taskMutationResponseSchema = z.object({
+  task: taskSchema,
+  replayed: z.boolean(),
+});
+
+export const taskListResponseSchema = z.object({
+  tasks: z.array(taskSchema),
+});
+
+export const importTaskCandidateSchema = z.object({
+  externalId: z.string().trim().min(1).max(1024),
+  title: z.string().trim().min(1).max(240),
+  notes: z.string().max(20_000).default(""),
+  completed: z.boolean(),
+  provenance: z.object({
+    source: z.string().trim().min(1).max(100),
+    sourceRevision: z.string().trim().min(1).max(1024),
+  }),
 });
 
 export type ApiError = z.infer<typeof apiErrorSchema>;
@@ -96,3 +175,8 @@ export type SessionResponse = z.infer<typeof sessionResponseSchema>;
 export type BaikalConnectRequest = z.infer<typeof baikalConnectRequestSchema>;
 export type CalendarCollection = z.infer<typeof calendarCollectionSchema>;
 export type BaikalStatusResponse = z.infer<typeof baikalStatusResponseSchema>;
+export type CalendarEventIdentity = z.infer<typeof calendarEventIdentitySchema>;
+export type Task = z.infer<typeof taskSchema>;
+export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
+export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
+export type TaskListResponse = z.infer<typeof taskListResponseSchema>;

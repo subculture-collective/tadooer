@@ -58,6 +58,40 @@ export interface BaikalConnectorRecord {
   readonly verifiedAt: string;
 }
 
+export interface CalendarProviderRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly kind: "baikal" | "caldav" | "google";
+  readonly connectorId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CalendarCollectionRecord {
+  readonly id: string;
+  readonly providerId: string;
+  readonly href: string;
+  readonly displayName: string;
+  readonly supportsEvents: boolean;
+  readonly supportsTodos: boolean;
+}
+
+export interface TaskRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly notes: string;
+  readonly status: "open" | "completed";
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export type IdempotentTaskCreateResult =
+  | { readonly kind: "created"; readonly task: TaskRecord }
+  | { readonly kind: "replayed"; readonly task: TaskRecord }
+  | { readonly kind: "conflict" };
+
 const migrations: readonly Migration[] = [
   {
     id: "0001_install_metadata",
@@ -118,6 +152,65 @@ const migrations: readonly Migration[] = [
         verified_at TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
+  {
+    id: "0005_phase_0c_identities_and_tasks",
+    sql: `
+      CREATE TABLE calendar_providers (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('baikal', 'caldav', 'google')),
+        connector_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (owner_id, kind, connector_id)
+      ) STRICT;
+
+      CREATE TABLE calendar_collections (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL REFERENCES calendar_providers(id) ON DELETE CASCADE,
+        href TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        supports_events INTEGER NOT NULL CHECK (supports_events IN (0, 1)),
+        supports_todos INTEGER NOT NULL CHECK (supports_todos IN (0, 1)),
+        last_discovered_at TEXT NOT NULL,
+        UNIQUE (provider_id, href)
+      ) STRICT;
+
+      CREATE TABLE client_identities (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 100),
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        revoked_at TEXT
+      ) STRICT;
+
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 240),
+        notes TEXT NOT NULL CHECK (length(notes) <= 20000),
+        status TEXT NOT NULL CHECK (status IN ('open', 'completed')),
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      ) STRICT;
+
+      CREATE INDEX tasks_by_owner_updated
+        ON tasks(owner_id, updated_at DESC) WHERE deleted_at IS NULL;
+
+      CREATE TABLE idempotency_records (
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        operation TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (owner_id, operation, idempotency_key)
       ) STRICT;
     `,
   },
@@ -416,6 +509,236 @@ export class SuiteDatabase {
           credentialTag: row.credential_tag as Uint8Array,
           verifiedAt: String(row.verified_at),
         };
+  }
+
+  ensureCalendarProvider(
+    ownerId: string,
+    kind: CalendarProviderRecord["kind"],
+    connectorId: string,
+    now: string,
+  ): CalendarProviderRecord {
+    const existing = this.#database
+      .prepare(
+        `SELECT id, owner_id, kind, connector_id, created_at, updated_at
+         FROM calendar_providers
+         WHERE owner_id = ? AND kind = ? AND connector_id = ?`,
+      )
+      .get(ownerId, kind, connectorId) as unknown as
+      | {
+          readonly id: string;
+          readonly owner_id: string;
+          readonly kind: CalendarProviderRecord["kind"];
+          readonly connector_id: string;
+          readonly created_at: string;
+          readonly updated_at: string;
+        }
+      | undefined;
+    if (existing !== undefined) {
+      return {
+        id: existing.id,
+        ownerId: existing.owner_id,
+        kind: existing.kind,
+        connectorId: existing.connector_id,
+        createdAt: existing.created_at,
+        updatedAt: existing.updated_at,
+      };
+    }
+
+    const provider: CalendarProviderRecord = {
+      id: randomUUID(),
+      ownerId,
+      kind,
+      connectorId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#database
+      .prepare(
+        `INSERT INTO calendar_providers
+          (id, owner_id, kind, connector_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        provider.id,
+        provider.ownerId,
+        provider.kind,
+        provider.connectorId,
+        provider.createdAt,
+        provider.updatedAt,
+      );
+    return provider;
+  }
+
+  putCalendarCollections(
+    providerId: string,
+    collections: readonly Omit<CalendarCollectionRecord, "id" | "providerId">[],
+    discoveredAt: string,
+  ): readonly CalendarCollectionRecord[] {
+    return collections.map((collection) => {
+      const existing = this.#database
+        .prepare(
+          "SELECT id FROM calendar_collections WHERE provider_id = ? AND href = ?",
+        )
+        .get(providerId, collection.href) as unknown as
+        { readonly id: string } | undefined;
+      const record: CalendarCollectionRecord = {
+        id: existing?.id ?? randomUUID(),
+        providerId,
+        ...collection,
+      };
+      this.#database
+        .prepare(
+          `INSERT INTO calendar_collections
+            (id, provider_id, href, display_name, supports_events,
+             supports_todos, last_discovered_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(provider_id, href) DO UPDATE SET
+             display_name = excluded.display_name,
+             supports_events = excluded.supports_events,
+             supports_todos = excluded.supports_todos,
+             last_discovered_at = excluded.last_discovered_at`,
+        )
+        .run(
+          record.id,
+          record.providerId,
+          record.href,
+          record.displayName,
+          record.supportsEvents ? 1 : 0,
+          record.supportsTodos ? 1 : 0,
+          discoveredAt,
+        );
+      return record;
+    });
+  }
+
+  createTaskIdempotently(
+    ownerId: string,
+    idempotencyKey: string,
+    requestHash: string,
+    task: Omit<TaskRecord, "ownerId">,
+  ): IdempotentTaskCreateResult {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const prior = this.#database
+        .prepare(
+          `SELECT request_hash, resource_id FROM idempotency_records
+           WHERE owner_id = ? AND operation = 'task.create'
+             AND idempotency_key = ?`,
+        )
+        .get(ownerId, idempotencyKey) as unknown as
+        | { readonly request_hash: string; readonly resource_id: string }
+        | undefined;
+      if (prior !== undefined) {
+        if (prior.request_hash !== requestHash) {
+          this.#database.exec("COMMIT;");
+          return { kind: "conflict" };
+        }
+        const replayed = this.#findTask(ownerId, prior.resource_id);
+        if (replayed === undefined)
+          throw new Error("Idempotency record refers to a missing task");
+        this.#database.exec("COMMIT;");
+        return { kind: "replayed", task: replayed };
+      }
+
+      const created: TaskRecord = { ownerId, ...task };
+      this.#database
+        .prepare(
+          `INSERT INTO tasks
+            (id, owner_id, title, notes, status, revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          created.id,
+          created.ownerId,
+          created.title,
+          created.notes,
+          created.status,
+          created.revision,
+          created.createdAt,
+          created.updatedAt,
+        );
+      this.#database
+        .prepare(
+          `INSERT INTO idempotency_records
+            (owner_id, operation, idempotency_key, request_hash, resource_id, created_at)
+           VALUES (?, 'task.create', ?, ?, ?, ?)`,
+        )
+        .run(
+          ownerId,
+          idempotencyKey,
+          requestHash,
+          created.id,
+          created.createdAt,
+        );
+      this.#database.exec("COMMIT;");
+      return { kind: "created", task: created };
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  listTasks(ownerId: string): readonly TaskRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at
+         FROM tasks WHERE owner_id = ? AND deleted_at IS NULL
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all(ownerId) as unknown as readonly {
+      readonly id: string;
+      readonly owner_id: string;
+      readonly title: string;
+      readonly notes: string;
+      readonly status: "open" | "completed";
+      readonly revision: number;
+      readonly created_at: string;
+      readonly updated_at: string;
+    }[];
+    return rows.map((row) => this.#taskFromRow(row));
+  }
+
+  #findTask(ownerId: string, taskId: string): TaskRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at
+         FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL`,
+      )
+      .get(ownerId, taskId) as unknown as
+      | {
+          readonly id: string;
+          readonly owner_id: string;
+          readonly title: string;
+          readonly notes: string;
+          readonly status: "open" | "completed";
+          readonly revision: number;
+          readonly created_at: string;
+          readonly updated_at: string;
+        }
+      | undefined;
+    return row === undefined ? undefined : this.#taskFromRow(row);
+  }
+
+  #taskFromRow(row: {
+    readonly id: string;
+    readonly owner_id: string;
+    readonly title: string;
+    readonly notes: string;
+    readonly status: "open" | "completed";
+    readonly revision: number;
+    readonly created_at: string;
+    readonly updated_at: string;
+  }): TaskRecord {
+    return {
+      id: row.id,
+      ownerId: row.owner_id,
+      title: row.title,
+      notes: row.notes,
+      status: row.status,
+      revision: row.revision,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 
   #migrate(): void {

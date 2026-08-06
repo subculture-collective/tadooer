@@ -70,8 +70,16 @@ describe("BaikalConnectorService", () => {
       );
       expect(connected).toMatchObject({
         ok: true,
-        status: { connected: true, calendars: [{ displayName: "Default" }] },
+        status: {
+          connected: true,
+          calendars: [{ displayName: "Default" }],
+        },
       });
+      if (!connected.ok) throw new Error("Connector did not connect");
+      const providerId = connected.status.providerId;
+      const calendarId = connected.status.calendars[0]?.id;
+      expect(providerId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(calendarId).toMatch(/^[0-9a-f-]{36}$/);
       expect((statSync(keyPath).mode & 0o777).toString(8)).toBe("600");
       database.close();
 
@@ -86,11 +94,17 @@ describe("BaikalConnectorService", () => {
         keyPath,
         discoveryFetch,
       );
-      expect(
-        await restoredConnector.status("d1054acd-c04d-4bd8-a814-254b007154ba"),
-      ).toMatchObject({
+      const restored = await restoredConnector.status(
+        "d1054acd-c04d-4bd8-a814-254b007154ba",
+      );
+      expect(restored).toMatchObject({
         ok: true,
-        status: { connected: true, username: "alice" },
+        status: {
+          connected: true,
+          username: "alice",
+          providerId,
+          calendars: [{ id: calendarId }],
+        },
       });
 
       const wrongKeyConnector = new BaikalConnectorService(

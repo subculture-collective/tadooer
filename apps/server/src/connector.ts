@@ -16,7 +16,10 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
-import type { BaikalStatusResponse } from "@suite/contracts";
+import type {
+  BaikalStatusResponse,
+  CalendarCollection,
+} from "@suite/contracts";
 import {
   discoverCalDavCalendars,
   type CalDavDiscoveryFailure,
@@ -125,8 +128,9 @@ export class BaikalConnectorService {
     ]);
     const tag = cipher.getAuthTag();
     const now = new Date().toISOString();
+    const connectorId = randomUUID();
     this.database.putBaikalConnector({
-      id: randomUUID(),
+      id: connectorId,
       ownerId,
       endpoint: this.endpoint.href,
       username,
@@ -137,16 +141,16 @@ export class BaikalConnectorService {
       verifiedAt: now,
       updatedAt: now,
     });
-    return {
-      ok: true,
-      status: {
-        connected: true,
-        endpoint: this.endpoint.href,
-        username,
-        verifiedAt: now,
-        calendars: discovery.calendars,
-      },
-    };
+    const stored = this.database.getBaikalConnector(ownerId);
+    if (stored === undefined)
+      throw new Error("Stored Baikal connector could not be read");
+    return this.#connectedStatus(
+      ownerId,
+      stored.id,
+      username,
+      now,
+      discovery.calendars,
+    );
   }
 
   async status(ownerId: string): Promise<ConnectorResult> {
@@ -156,6 +160,7 @@ export class BaikalConnectorService {
         ok: true,
         status: {
           connected: false,
+          providerId: null,
           endpoint: this.endpoint.href,
           username: null,
           verifiedAt: null,
@@ -185,16 +190,13 @@ export class BaikalConnectorService {
       ]).toString("utf8");
       const discovery = await this.#discover(connector.username, password);
       if (!discovery.ok) return discovery;
-      return {
-        ok: true,
-        status: {
-          connected: true,
-          endpoint: connector.endpoint,
-          username: connector.username,
-          verifiedAt: connector.verifiedAt,
-          calendars: discovery.calendars,
-        },
-      };
+      return this.#connectedStatus(
+        ownerId,
+        connector.id,
+        connector.username,
+        connector.verifiedAt,
+        discovery.calendars,
+      );
     } catch {
       return { ok: false, reason: "credential-unavailable" };
     }
@@ -206,7 +208,10 @@ export class BaikalConnectorService {
   ): Promise<
     | {
         readonly ok: true;
-        readonly calendars: BaikalStatusResponse["calendars"];
+        readonly calendars: readonly Omit<
+          CalendarCollection,
+          "id" | "providerId"
+        >[];
       }
     | { readonly ok: false; readonly reason: CalDavDiscoveryFailure }
   > {
@@ -234,5 +239,44 @@ export class BaikalConnectorService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  #connectedStatus(
+    ownerId: string,
+    connectorId: string,
+    username: string,
+    verifiedAt: string,
+    calendars: readonly Omit<CalendarCollection, "id" | "providerId">[],
+  ): ConnectorResult {
+    const now = new Date().toISOString();
+    const provider = this.database.ensureCalendarProvider(
+      ownerId,
+      "baikal",
+      connectorId,
+      now,
+    );
+    const storedCalendars = this.database.putCalendarCollections(
+      provider.id,
+      calendars,
+      now,
+    );
+    return {
+      ok: true,
+      status: {
+        connected: true,
+        providerId: provider.id,
+        endpoint: this.endpoint.href,
+        username,
+        verifiedAt,
+        calendars: storedCalendars.map((calendar) => ({
+          id: calendar.id,
+          providerId: calendar.providerId,
+          href: calendar.href,
+          displayName: calendar.displayName,
+          supportsEvents: calendar.supportsEvents,
+          supportsTodos: calendar.supportsTodos,
+        })),
+      },
+    };
   }
 }

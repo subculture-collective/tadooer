@@ -1,4 +1,5 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import {
   createServer,
   type IncomingMessage,
@@ -13,10 +14,14 @@ import type {
   HealthResponse,
   SessionResponse,
   SetupStatusResponse,
+  TaskListResponse,
+  TaskMutationResponse,
   ReadinessResponse,
 } from "@suite/contracts";
 import {
   baikalConnectRequestSchema,
+  createTaskRequestSchema,
+  idempotencyKeySchema,
   loginRequestSchema,
   ownerSetupRequestSchema,
 } from "@suite/contracts";
@@ -49,6 +54,8 @@ const securityHeaders = {
   "X-Frame-Options": "DENY",
 } as const;
 
+const maxJsonBytes = 128 * 1024;
+
 const sendJson = (
   response: ServerResponse,
   status: number,
@@ -70,7 +77,7 @@ const sendError = (
   code: string,
   message: string,
 ): void => {
-  const body: ApiError = { code, message };
+  const body: ApiError = { code, message, requestId: randomUUID() };
   sendJson(response, status, body);
 };
 
@@ -101,7 +108,7 @@ const readJson = async (request: IncomingMessage): Promise<unknown> => {
       ? chunk
       : Buffer.from(chunk as Uint8Array);
     bytes += buffer.byteLength;
-    if (bytes > 16 * 1024) throw new Error("BODY_TOO_LARGE");
+    if (bytes > maxJsonBytes) throw new Error("BODY_TOO_LARGE");
     chunks.push(buffer);
   }
   try {
@@ -462,11 +469,136 @@ export const startSuiteServer = async (
           return;
         }
 
-        if (url.pathname.startsWith("/api/")) {
-          sendJson(response, 404, {
-            code: "NOT_FOUND",
-            message: "API route not found",
+        if (method === "GET" && url.pathname === "/api/tasks") {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          const body: TaskListResponse = {
+            tasks: database.listTasks(session.owner.id).map((task) => ({
+              id: task.id,
+              title: task.title,
+              notes: task.notes,
+              status: task.status,
+              revision: task.revision,
+              createdAt: task.createdAt,
+              updatedAt: task.updatedAt,
+            })),
+          };
+          sendJson(response, 200, body);
+          return;
+        }
+
+        if (method === "POST" && url.pathname === "/api/tasks") {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          const idempotencyKey = request.headers["idempotency-key"];
+          const parsedKey = idempotencyKeySchema.safeParse(idempotencyKey);
+          if (!parsedKey.success) {
+            sendError(
+              response,
+              400,
+              "IDEMPOTENCY_KEY_REQUIRED",
+              "A valid Idempotency-Key header is required",
+            );
+            return;
+          }
+          const parsed = createTaskRequestSchema.safeParse(
+            await readJson(request),
+          );
+          if (!parsed.success) {
+            sendError(response, 400, "INVALID_TASK", "Task input is invalid");
+            return;
+          }
+          const requestHash = createHash("sha256")
+            .update(JSON.stringify(parsed.data))
+            .digest("hex");
+          const now = new Date().toISOString();
+          const result = database.createTaskIdempotently(
+            session.owner.id,
+            parsedKey.data,
+            requestHash,
+            {
+              id: randomUUID(),
+              title: parsed.data.title,
+              notes: parsed.data.notes,
+              status: "open",
+              revision: 1,
+              createdAt: now,
+              updatedAt: now,
+            },
+          );
+          if (result.kind === "conflict") {
+            sendError(
+              response,
+              409,
+              "IDEMPOTENCY_CONFLICT",
+              "The idempotency key was already used for a different request",
+            );
+            return;
+          }
+          const body: TaskMutationResponse = {
+            replayed: result.kind === "replayed",
+            task: {
+              id: result.task.id,
+              title: result.task.title,
+              notes: result.task.notes,
+              status: result.task.status,
+              revision: result.task.revision,
+              createdAt: result.task.createdAt,
+              updatedAt: result.task.updatedAt,
+            },
+          };
+          console.info(
+            result.kind === "replayed"
+              ? "task.create.replayed"
+              : "task.create.completed",
+          );
+          sendJson(response, result.kind === "created" ? 201 : 200, body, {
+            ETag: `"${String(body.task.revision)}"`,
           });
+          return;
+        }
+
+        if (url.pathname.startsWith("/api/")) {
+          sendError(response, 404, "NOT_FOUND", "API route not found");
           return;
         }
 
@@ -492,10 +624,12 @@ export const startSuiteServer = async (
             : join(webRoot, "index.html");
 
         if (!isInside(webRoot, file) || !existsSync(file)) {
-          sendJson(response, 404, {
-            code: "WEB_BUILD_NOT_FOUND",
-            message: "Web build not found",
-          });
+          sendError(
+            response,
+            404,
+            "WEB_BUILD_NOT_FOUND",
+            "Web build not found",
+          );
           return;
         }
 

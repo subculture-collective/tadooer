@@ -1,0 +1,10 @@
+{
+  "externalId": "fixture-task-001",
+  "title": "Review the captured plan",
+  "notes": "Synthetic import candidate only",
+  "completed": false,
+  "provenance": {
+    "source": "synthetic-json",
+    "sourceRevision": "fixture-v1"
+  }
+}

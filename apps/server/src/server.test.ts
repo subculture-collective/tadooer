@@ -8,6 +8,8 @@ import {
   readinessResponseSchema,
   sessionResponseSchema,
   setupStatusResponseSchema,
+  taskListResponseSchema,
+  taskMutationResponseSchema,
 } from "@suite/contracts";
 import { withTemporaryDirectory } from "@suite/test-support";
 import type { ServerConfig } from "./config.ts";
@@ -48,7 +50,7 @@ describe("Suite HTTP server", () => {
           database: "ok",
           migrations: "current",
         });
-        expect(readiness.migrationCount).toBe(4);
+        expect(readiness.migrationCount).toBe(5);
 
         const build = await fetch(`${server.baseUrl}/api/build`);
         expect(build.status).toBe(200);
@@ -122,6 +124,9 @@ describe("Suite HTTP server", () => {
         });
         expect(duplicate.status).toBe(409);
 
+        const unauthenticatedTasks = await fetch(`${server.baseUrl}/api/tasks`);
+        expect(unauthenticatedTasks.status).toBe(401);
+
         const login = await fetch(`${server.baseUrl}/api/auth/login`, {
           method: "POST",
           headers: { ...jsonHeaders, Origin: server.baseUrl },
@@ -159,6 +164,147 @@ describe("Suite HTTP server", () => {
           connected: false,
           calendars: [],
         });
+
+        const rejectedTaskRequests = [
+          {
+            headers: {
+              ...jsonHeaders,
+              Origin: server.baseUrl,
+              "X-CSRF-Token": resumed.csrfToken,
+              "Idempotency-Key": "capture-request-no-session",
+            },
+            expectedCode: "AUTH_REQUIRED",
+          },
+          {
+            headers: {
+              ...jsonHeaders,
+              Cookie: cookie ?? "",
+              "X-CSRF-Token": resumed.csrfToken,
+              "Idempotency-Key": "capture-request-cross-origin",
+            },
+            expectedCode: "ORIGIN_REQUIRED",
+          },
+          {
+            headers: {
+              ...jsonHeaders,
+              Cookie: cookie ?? "",
+              Origin: server.baseUrl,
+              "Idempotency-Key": "capture-request-no-csrf",
+            },
+            expectedCode: "CSRF_INVALID",
+          },
+          {
+            headers: {
+              ...jsonHeaders,
+              Cookie: cookie ?? "",
+              Origin: server.baseUrl,
+              "X-CSRF-Token": "B".repeat(43),
+              "Idempotency-Key": "capture-request-stale-csrf",
+            },
+            expectedCode: "CSRF_INVALID",
+          },
+          {
+            headers: {
+              ...jsonHeaders,
+              Cookie: cookie ?? "",
+              Origin: server.baseUrl,
+              "X-CSRF-Token": resumed.csrfToken,
+            },
+            expectedCode: "IDEMPOTENCY_KEY_REQUIRED",
+          },
+          {
+            headers: {
+              ...jsonHeaders,
+              Cookie: cookie ?? "",
+              Origin: server.baseUrl,
+              "X-CSRF-Token": resumed.csrfToken,
+              "Idempotency-Key": "bad key",
+            },
+            expectedCode: "IDEMPOTENCY_KEY_REQUIRED",
+          },
+        ];
+        for (const rejected of rejectedTaskRequests) {
+          const response = await fetch(`${server.baseUrl}/api/tasks`, {
+            method: "POST",
+            headers: rejected.headers,
+            body: JSON.stringify({ title: "Must not be created" }),
+          });
+          expect([400, 401, 403]).toContain(response.status);
+          expect(await response.json()).toMatchObject({
+            code: rejected.expectedCode,
+          });
+        }
+
+        const taskHeaders = {
+          ...jsonHeaders,
+          Cookie: cookie ?? "",
+          Origin: server.baseUrl,
+          "X-CSRF-Token": resumed.csrfToken,
+          "Idempotency-Key": "capture-request-0001",
+        };
+        const taskBody = JSON.stringify({
+          title: "Capture the first task",
+          notes: "Prove the Phase 0 contract",
+        });
+        const createdTask = await fetch(`${server.baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: taskHeaders,
+          body: taskBody,
+        });
+        expect(createdTask.status).toBe(201);
+        expect(createdTask.headers.get("etag")).toBe('"1"');
+        const created = taskMutationResponseSchema.parse(
+          await createdTask.json(),
+        );
+        expect(created.replayed).toBe(false);
+
+        const replayedTask = await fetch(`${server.baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: taskHeaders,
+          body: taskBody,
+        });
+        expect(replayedTask.status).toBe(200);
+        const replayed = taskMutationResponseSchema.parse(
+          await replayedTask.json(),
+        );
+        expect(replayed).toEqual({ ...created, replayed: true });
+
+        const idempotencyConflict = await fetch(`${server.baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: taskHeaders,
+          body: JSON.stringify({ title: "A different task" }),
+        });
+        expect(idempotencyConflict.status).toBe(409);
+        expect(await idempotencyConflict.json()).toMatchObject({
+          code: "IDEMPOTENCY_CONFLICT",
+        });
+
+        const maximumNotes = "n".repeat(20_000);
+        const taskAtContractLimit = await fetch(`${server.baseUrl}/api/tasks`, {
+          method: "POST",
+          headers: {
+            ...taskHeaders,
+            "Idempotency-Key": "capture-request-maximum-notes",
+          },
+          body: JSON.stringify({
+            title: "Task at the notes boundary",
+            notes: maximumNotes,
+          }),
+        });
+        expect(taskAtContractLimit.status).toBe(201);
+        expect(
+          taskMutationResponseSchema.parse(await taskAtContractLimit.json())
+            .task.notes,
+        ).toHaveLength(20_000);
+
+        const tasks = await fetch(`${server.baseUrl}/api/tasks`, {
+          headers: { Cookie: cookie ?? "" },
+        });
+        const listedTasks = taskListResponseSchema.parse(
+          await tasks.json(),
+        ).tasks;
+        expect(listedTasks).toHaveLength(2);
+        expect(listedTasks).toContainEqual(created.task);
 
         const staleCsrf = await fetch(`${server.baseUrl}/api/auth/logout`, {
           method: "POST",

@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 4,
-        expectedMigrationCount: 4,
+        appliedMigrationCount: 5,
+        expectedMigrationCount: 5,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(4);
-      expect(reopenedState.expectedMigrationCount).toBe(4);
+      expect(reopenedState.appliedMigrationCount).toBe(5);
+      expect(reopenedState.expectedMigrationCount).toBe(5);
     });
   });
 
@@ -122,6 +122,101 @@ describe("SuiteDatabase", () => {
       const restored = SuiteDatabase.open(backupPath);
       expect(restored.state()).toEqual(sourceState);
       restored.close();
+    });
+  });
+
+  it("keeps provider and calendar identities stable across discovery", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      expect(
+        database.createOwner({
+          id: "owner-1",
+          username: "owner",
+          displayName: "Owner",
+          passwordHash: "not-a-real-hash",
+          createdAt: "2026-08-05T00:00:00.000Z",
+        }),
+      ).toBe(true);
+      const firstProvider = database.ensureCalendarProvider(
+        "owner-1",
+        "baikal",
+        "connector-1",
+        "2026-08-05T00:00:00.000Z",
+      );
+      const secondProvider = database.ensureCalendarProvider(
+        "owner-1",
+        "baikal",
+        "connector-1",
+        "2026-08-05T01:00:00.000Z",
+      );
+      expect(secondProvider.id).toBe(firstProvider.id);
+
+      const workCalendar = {
+        href: "/calendars/owner/work/",
+        displayName: "Work",
+        supportsEvents: true,
+        supportsTodos: false,
+      };
+      const input = [workCalendar];
+      const first = database.putCalendarCollections(
+        firstProvider.id,
+        input,
+        "2026-08-05T00:00:00.000Z",
+      );
+      const second = database.putCalendarCollections(
+        firstProvider.id,
+        [{ ...workCalendar, displayName: "Work renamed" }],
+        "2026-08-05T01:00:00.000Z",
+      );
+      expect(second[0]?.id).toBe(first[0]?.id);
+      expect(second[0]?.displayName).toBe("Work renamed");
+      database.close();
+    });
+  });
+
+  it("creates a task once for an idempotency key and rejects key reuse", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      database.createOwner({
+        id: "owner-1",
+        username: "owner",
+        displayName: "Owner",
+        passwordHash: "not-a-real-hash",
+        createdAt: "2026-08-05T00:00:00.000Z",
+      });
+      const task = {
+        id: "task-1",
+        title: "First task",
+        notes: "Captured safely",
+        status: "open" as const,
+        revision: 1,
+        createdAt: "2026-08-05T00:00:00.000Z",
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      };
+      expect(
+        database.createTaskIdempotently(
+          "owner-1",
+          "request-0001",
+          "hash-1",
+          task,
+        ).kind,
+      ).toBe("created");
+      expect(
+        database.createTaskIdempotently("owner-1", "request-0001", "hash-1", {
+          ...task,
+          id: "task-2",
+        }),
+      ).toMatchObject({ kind: "replayed", task: { id: "task-1" } });
+      expect(
+        database.createTaskIdempotently(
+          "owner-1",
+          "request-0001",
+          "different-hash",
+          { ...task, id: "task-3" },
+        ),
+      ).toEqual({ kind: "conflict" });
+      expect(database.listTasks("owner-1")).toHaveLength(1);
+      database.close();
     });
   });
 });
