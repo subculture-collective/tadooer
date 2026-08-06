@@ -38,6 +38,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@suite/caldav':
+        specifier: workspace:*
+        version: link:../../packages/caldav
       '@suite/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -80,7 +83,11 @@ importers:
         specifier: 8.2.0
         version: 8.2.0(@types/node@24.10.13)(esbuild@0.28.1)(tsx@4.23.8)
 
-  packages/caldav: {}
+  packages/caldav:
+    dependencies:
+      '@xmldom/xmldom':
+        specifier: 0.9.10
+        version: 0.9.10
 
   packages/contracts:
     dependencies:
@@ -543,6 +550,10 @@ packages:
 
   '@vitest/utils@4.1.10':
     resolution: {integrity: sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA==}
+
+  '@xmldom/xmldom@0.9.10':
+    resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
+    engines: {node: '>=14.6'}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1429,6 +1440,8 @@ snapshots:
       '@vitest/pretty-format': 4.1.10
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
+
+  '@xmldom/xmldom@0.9.10': {}
 
   acorn-jsx@5.3.2(acorn@8.18.0):
     dependencies:

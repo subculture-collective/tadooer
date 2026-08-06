@@ -5,6 +5,9 @@ export interface ServerConfig {
   readonly port: number;
   readonly databasePath: string;
   readonly webRoot: string;
+  readonly baikalEndpoint: string;
+  readonly credentialKeyPath: string;
+  readonly secureCookies: boolean;
   readonly build: {
     readonly version: string;
     readonly revision: string;
@@ -30,6 +33,26 @@ const optionalIsoDate = (value: string | undefined): string | null => {
   return new Date(value).toISOString();
 };
 
+const parseBoolean = (name: string, value: string | undefined): boolean => {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error(`${name} must be true or false`);
+};
+
+const parseBaikalEndpoint = (value: string | undefined): string => {
+  const endpoint = new URL(value ?? "http://baikal/dav.php/");
+  if (
+    (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") ||
+    endpoint.username !== "" ||
+    endpoint.password !== "" ||
+    endpoint.search !== "" ||
+    endpoint.hash !== ""
+  ) {
+    throw new Error("BAIKAL_ENDPOINT is invalid");
+  }
+  return endpoint.href;
+};
+
 export const loadConfig = (
   environment: NodeJS.ProcessEnv = process.env,
 ): ServerConfig => ({
@@ -39,6 +62,14 @@ export const loadConfig = (
     environment.SUITE_DATABASE_PATH ?? "./data/suite.sqlite",
   ),
   webRoot: resolve(environment.SUITE_WEB_ROOT ?? "./apps/web/dist"),
+  baikalEndpoint: parseBaikalEndpoint(environment.BAIKAL_ENDPOINT),
+  credentialKeyPath: resolve(
+    environment.SUITE_CREDENTIAL_KEY_PATH ?? "./data/credential.key",
+  ),
+  secureCookies: parseBoolean(
+    "SUITE_SECURE_COOKIES",
+    environment.SUITE_SECURE_COOKIES,
+  ),
   build: {
     version: environment.SUITE_VERSION ?? "0.0.0-dev",
     revision: environment.SUITE_REVISION ?? "development",

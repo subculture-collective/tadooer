@@ -29,6 +29,35 @@ export interface DatabaseState {
   readonly expectedMigrationCount: number;
 }
 
+export interface OwnerRecord {
+  readonly id: string;
+  readonly username: string;
+  readonly displayName: string;
+  readonly passwordHash: string;
+  readonly createdAt: string;
+}
+
+export interface SessionRecord {
+  readonly tokenHash: string;
+  readonly ownerId: string;
+  readonly csrfHash: string;
+  readonly idleExpiresAt: string;
+  readonly absoluteExpiresAt: string;
+  readonly revokedAt: string | null;
+}
+
+export interface BaikalConnectorRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly endpoint: string;
+  readonly username: string;
+  readonly credentialKeyId: string;
+  readonly credentialNonce: Uint8Array;
+  readonly credentialCiphertext: Uint8Array;
+  readonly credentialTag: Uint8Array;
+  readonly verifiedAt: string;
+}
+
 const migrations: readonly Migration[] = [
   {
     id: "0001_install_metadata",
@@ -37,6 +66,58 @@ const migrations: readonly Migration[] = [
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         instance_id TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
+  {
+    id: "0002_owner_accounts",
+    sql: `
+      CREATE TABLE owner_accounts (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        display_name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        disabled_at TEXT
+      ) STRICT;
+
+      CREATE UNIQUE INDEX one_active_owner
+        ON owner_accounts ((1)) WHERE disabled_at IS NULL;
+    `,
+  },
+  {
+    id: "0003_web_sessions",
+    sql: `
+      CREATE TABLE web_sessions (
+        token_hash TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        csrf_hash TEXT NOT NULL,
+        issued_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        idle_expires_at TEXT NOT NULL,
+        absolute_expires_at TEXT NOT NULL,
+        revoked_at TEXT
+      ) STRICT;
+
+      CREATE INDEX web_sessions_by_owner ON web_sessions(owner_id);
+      CREATE INDEX web_sessions_by_expiry ON web_sessions(absolute_expires_at);
+    `,
+  },
+  {
+    id: "0004_baikal_connectors",
+    sql: `
+      CREATE TABLE baikal_connectors (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL UNIQUE REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL,
+        username TEXT NOT NULL,
+        credential_key_id TEXT NOT NULL,
+        credential_nonce BLOB NOT NULL,
+        credential_ciphertext BLOB NOT NULL,
+        credential_tag BLOB NOT NULL,
+        verified_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       ) STRICT;
     `,
   },
@@ -104,6 +185,237 @@ export class SuiteDatabase {
   backup(destination: string): void {
     mkdirSync(dirname(destination), { recursive: true });
     this.#database.exec(`VACUUM INTO '${escapeSqliteString(destination)}'`);
+  }
+
+  setupRequired(): boolean {
+    return (
+      this.#database
+        .prepare("SELECT 1 FROM owner_accounts WHERE disabled_at IS NULL")
+        .get() === undefined
+    );
+  }
+
+  createOwner(owner: OwnerRecord): boolean {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (!this.setupRequired()) {
+        this.#database.exec("ROLLBACK;");
+        return false;
+      }
+      this.#database
+        .prepare(
+          `INSERT INTO owner_accounts
+            (id, username, display_name, password_hash, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          owner.id,
+          owner.username,
+          owner.displayName,
+          owner.passwordHash,
+          owner.createdAt,
+        );
+      this.#database.exec("COMMIT;");
+      return true;
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  findOwnerByUsername(username: string): OwnerRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, username, display_name, password_hash, created_at
+         FROM owner_accounts WHERE username = ? COLLATE NOCASE AND disabled_at IS NULL`,
+      )
+      .get(username) as unknown as
+      | {
+          readonly id: string;
+          readonly username: string;
+          readonly display_name: string;
+          readonly password_hash: string;
+          readonly created_at: string;
+        }
+      | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          id: row.id,
+          username: row.username,
+          displayName: row.display_name,
+          passwordHash: row.password_hash,
+          createdAt: row.created_at,
+        };
+  }
+
+  findOwnerById(
+    ownerId: string,
+  ): Omit<OwnerRecord, "passwordHash"> | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, username, display_name, created_at
+         FROM owner_accounts WHERE id = ? AND disabled_at IS NULL`,
+      )
+      .get(ownerId) as unknown as
+      | {
+          readonly id: string;
+          readonly username: string;
+          readonly display_name: string;
+          readonly created_at: string;
+        }
+      | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          id: row.id,
+          username: row.username,
+          displayName: row.display_name,
+          createdAt: row.created_at,
+        };
+  }
+
+  createSession(session: SessionRecord & { readonly issuedAt: string }): void {
+    this.#database
+      .prepare(
+        `INSERT INTO web_sessions
+          (token_hash, owner_id, csrf_hash, issued_at, last_seen_at,
+           idle_expires_at, absolute_expires_at, revoked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+      )
+      .run(
+        session.tokenHash,
+        session.ownerId,
+        session.csrfHash,
+        session.issuedAt,
+        session.issuedAt,
+        session.idleExpiresAt,
+        session.absoluteExpiresAt,
+      );
+  }
+
+  findSession(tokenHash: string): SessionRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT token_hash, owner_id, csrf_hash, idle_expires_at,
+                absolute_expires_at, revoked_at
+         FROM web_sessions WHERE token_hash = ?`,
+      )
+      .get(tokenHash) as unknown as
+      | {
+          readonly token_hash: string;
+          readonly owner_id: string;
+          readonly csrf_hash: string;
+          readonly idle_expires_at: string;
+          readonly absolute_expires_at: string;
+          readonly revoked_at: string | null;
+        }
+      | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          tokenHash: row.token_hash,
+          ownerId: row.owner_id,
+          csrfHash: row.csrf_hash,
+          idleExpiresAt: row.idle_expires_at,
+          absoluteExpiresAt: row.absolute_expires_at,
+          revokedAt: row.revoked_at,
+        };
+  }
+
+  refreshSession(
+    tokenHash: string,
+    lastSeenAt: string,
+    idleExpiresAt: string,
+  ): void {
+    this.#database
+      .prepare(
+        `UPDATE web_sessions SET last_seen_at = ?, idle_expires_at = ?
+         WHERE token_hash = ? AND revoked_at IS NULL`,
+      )
+      .run(lastSeenAt, idleExpiresAt, tokenHash);
+  }
+
+  rotateSessionCsrf(tokenHash: string, csrfHash: string): void {
+    this.#database
+      .prepare(
+        "UPDATE web_sessions SET csrf_hash = ? WHERE token_hash = ? AND revoked_at IS NULL",
+      )
+      .run(csrfHash, tokenHash);
+  }
+
+  revokeSession(tokenHash: string, revokedAt: string): boolean {
+    return (
+      this.#database
+        .prepare(
+          `UPDATE web_sessions SET revoked_at = ?
+           WHERE token_hash = ? AND revoked_at IS NULL`,
+        )
+        .run(revokedAt, tokenHash).changes === 1
+    );
+  }
+
+  deleteExpiredSessions(now: string): void {
+    this.#database
+      .prepare(
+        "DELETE FROM web_sessions WHERE absolute_expires_at <= ? OR revoked_at IS NOT NULL",
+      )
+      .run(now);
+  }
+
+  putBaikalConnector(
+    connector: BaikalConnectorRecord & { readonly updatedAt: string },
+  ): void {
+    this.#database
+      .prepare(
+        `INSERT INTO baikal_connectors (
+          id, owner_id, endpoint, username, credential_key_id,
+          credential_nonce, credential_ciphertext, credential_tag,
+          verified_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(owner_id) DO UPDATE SET
+          endpoint = excluded.endpoint,
+          username = excluded.username,
+          credential_key_id = excluded.credential_key_id,
+          credential_nonce = excluded.credential_nonce,
+          credential_ciphertext = excluded.credential_ciphertext,
+          credential_tag = excluded.credential_tag,
+          verified_at = excluded.verified_at,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        connector.id,
+        connector.ownerId,
+        connector.endpoint,
+        connector.username,
+        connector.credentialKeyId,
+        connector.credentialNonce,
+        connector.credentialCiphertext,
+        connector.credentialTag,
+        connector.verifiedAt,
+        connector.updatedAt,
+        connector.updatedAt,
+      );
+  }
+
+  getBaikalConnector(ownerId: string): BaikalConnectorRecord | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM baikal_connectors WHERE owner_id = ?")
+      .get(ownerId) as unknown as
+      Record<string, string | Uint8Array> | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          id: String(row.id),
+          ownerId: String(row.owner_id),
+          endpoint: String(row.endpoint),
+          username: String(row.username),
+          credentialKeyId: String(row.credential_key_id),
+          credentialNonce: row.credential_nonce as Uint8Array,
+          credentialCiphertext: row.credential_ciphertext as Uint8Array,
+          credentialTag: row.credential_tag as Uint8Array,
+          verifiedAt: String(row.verified_at),
+        };
   }
 
   #migrate(): void {
