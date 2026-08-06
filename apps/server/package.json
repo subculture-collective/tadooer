@@ -12,6 +12,7 @@
   "dependencies": {
     "@suite/caldav": "workspace:*",
     "@suite/contracts": "workspace:*",
+    "@suite/domain": "workspace:*",
     "@suite/persistence": "workspace:*"
   },
   "devDependencies": {

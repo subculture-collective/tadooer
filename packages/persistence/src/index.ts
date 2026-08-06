@@ -271,6 +271,12 @@ export interface ActiveSessionEventRecord {
   readonly createdAt: string;
 }
 
+export interface ActiveSessionPersistenceSnapshot {
+  readonly session: ActiveSessionRecord;
+  readonly intervals: readonly ActiveSessionIntervalRecord[];
+  readonly events: readonly ActiveSessionEventRecord[];
+}
+
 const migrations: readonly Migration[] = [
   {
     id: "0001_install_metadata",
@@ -507,12 +513,12 @@ const migrations: readonly Migration[] = [
 
       CREATE TABLE projects (
         id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
-        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 120), revision INTEGER NOT NULL CHECK(revision > 0),
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 240), revision INTEGER NOT NULL CHECK(revision > 0),
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT
       ) STRICT;
       CREATE TABLE tags (
         id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
-        display_name TEXT NOT NULL CHECK(length(display_name) BETWEEN 1 AND 80), normalized_name TEXT NOT NULL,
+        display_name TEXT NOT NULL CHECK(length(display_name) BETWEEN 1 AND 100), normalized_name TEXT NOT NULL,
         revision INTEGER NOT NULL CHECK(revision > 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT,
         UNIQUE(owner_id, normalized_name)
       ) STRICT;
@@ -2364,6 +2370,8 @@ export class SuiteDatabase {
   }): {
     readonly kind: "applied" | "replayed" | "conflict" | "stale";
     readonly session?: ActiveSessionRecord;
+    readonly intervals?: readonly ActiveSessionIntervalRecord[];
+    readonly events?: readonly ActiveSessionEventRecord[];
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -2382,7 +2390,9 @@ export class SuiteDatabase {
         return prior.request_hash === input.requestHash
           ? {
               kind: "replayed",
-              session: JSON.parse(prior.response_json) as ActiveSessionRecord,
+              ...(JSON.parse(
+                prior.response_json,
+              ) as ActiveSessionPersistenceSnapshot),
             }
           : { kind: "conflict" };
       }
@@ -2444,7 +2454,11 @@ export class SuiteDatabase {
           input.requestHash,
           input.session.id,
           input.session.revision,
-          JSON.stringify(input.session),
+          JSON.stringify({
+            session: input.session,
+            intervals: input.intervals,
+            events: input.events,
+          } satisfies ActiveSessionPersistenceSnapshot),
           input.now,
         );
       this.#appendSyncChangeInTransaction(
@@ -2456,7 +2470,12 @@ export class SuiteDatabase {
         input.now,
       );
       this.#database.exec("COMMIT;");
-      return { kind: "applied", session: input.session };
+      return {
+        kind: "applied",
+        session: input.session,
+        intervals: input.intervals,
+        events: input.events,
+      };
     } catch (error) {
       this.#database.exec("ROLLBACK;");
       throw error;
@@ -2516,11 +2535,12 @@ export class SuiteDatabase {
         readonly sessionId: string;
         readonly revision: number;
         readonly requestHash: string;
+        readonly snapshot: ActiveSessionPersistenceSnapshot;
       }
     | undefined {
     const row = this.#database
       .prepare(
-        "SELECT session_id,revision,request_hash FROM active_session_operation_outcomes WHERE owner_id=? AND client_id=? AND idempotency_key=?",
+        "SELECT session_id,revision,request_hash,response_json FROM active_session_operation_outcomes WHERE owner_id=? AND client_id=? AND idempotency_key=?",
       )
       .get(ownerId, clientId, idempotencyKey) as unknown as
       Record<string, string | number> | undefined;
@@ -2530,6 +2550,9 @@ export class SuiteDatabase {
           sessionId: String(row.session_id),
           revision: Number(row.revision),
           requestHash: String(row.request_hash),
+          snapshot: JSON.parse(
+            String(row.response_json),
+          ) as ActiveSessionPersistenceSnapshot,
         };
   }
 
@@ -2871,10 +2894,15 @@ export class SuiteDatabase {
         return { kind: "replayed", ...(task === undefined ? {} : { task }) };
       }
       const task = this.getTask(input.ownerId, input.taskId, true);
+      const activeSession = input.restore
+        ? undefined
+        : this.getActiveSession(input.ownerId);
       if (
         task === undefined ||
         task.revision !== input.baseRevision ||
-        (input.restore ? task.deletedAt === null : task.deletedAt !== null)
+        (input.restore ? task.deletedAt === null : task.deletedAt !== null) ||
+        (activeSession?.endedAt === null &&
+          activeSession.taskId === input.taskId)
       ) {
         this.#database
           .prepare(

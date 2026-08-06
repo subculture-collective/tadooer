@@ -485,20 +485,29 @@ export const activeSessionSchema = z
     id: entityIdSchema,
     ownerId: entityIdSchema,
     taskId: entityIdSchema,
-    controllerClientId: entityIdSchema,
+    controllerClientId: entityIdSchema.nullable(),
     state: activeSessionStateSchema,
     phase: activeSessionPhaseSchema,
     revision: revisionSchema,
     startedAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
     leaseExpiresAt: z.iso.datetime().nullable(),
-    hardExpiresAt: z.iso.datetime(),
+    hardExpiresAt: z.iso.datetime().nullable(),
     currentIntervalId: entityIdSchema.nullable(),
   })
   .refine(
-    ({ state, leaseExpiresAt, currentIntervalId }) =>
+    ({
+      state,
+      controllerClientId,
+      leaseExpiresAt,
+      hardExpiresAt,
+      currentIntervalId,
+    }) =>
       state !== "running" ||
-      (leaseExpiresAt !== null && currentIntervalId !== null),
+      (controllerClientId !== null &&
+        leaseExpiresAt !== null &&
+        hardExpiresAt !== null &&
+        currentIntervalId !== null),
     { message: "Running sessions require a lease and open interval" },
   );
 
