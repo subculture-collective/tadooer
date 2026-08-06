@@ -1,14 +1,19 @@
 import {
   apiErrorSchema,
   baikalStatusResponseSchema,
+  taskListResponseSchema,
+  taskMutationResponseSchema,
   sessionResponseSchema,
   setupStatusResponseSchema,
   type BaikalConnectRequest,
   type BaikalStatusResponse,
+  type CreateTaskRequest,
   type LoginRequest,
   type OwnerSetupRequest,
   type SessionResponse,
   type SetupStatusResponse,
+  type TaskListResponse,
+  type TaskMutationResponse,
 } from "@suite/contracts";
 import { z } from "zod";
 
@@ -85,5 +90,22 @@ export const connectBaikal = (
   request("/api/connectors/baikal", baikalStatusResponseSchema, {
     method: "PUT",
     headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(input),
+  });
+
+export const getTasks = (): Promise<TaskListResponse> =>
+  request("/api/tasks", taskListResponseSchema);
+
+export const createTask = (
+  input: CreateTaskRequest,
+  csrfToken: string,
+  idempotencyKey: string,
+): Promise<TaskMutationResponse> =>
+  request("/api/tasks", taskMutationResponseSchema, {
+    method: "POST",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      "Idempotency-Key": idempotencyKey,
+    },
     body: JSON.stringify(input),
   });

@@ -28,11 +28,14 @@ describe("App", () => {
           },
           baikal: {
             connected: true,
+            providerId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
             endpoint: "http://baikal/dav.php/",
             username: "alice",
             verifiedAt: "2026-08-05T00:00:00.000Z",
             calendars: [
               {
+                id: "4519c805-e478-486b-a918-616fc6d9ea98",
+                providerId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
                 href: "/dav.php/calendars/alice/work/",
                 displayName: "Work",
                 supportsEvents: true,
@@ -40,13 +43,27 @@ describe("App", () => {
               },
             ],
           },
+          tasks: [
+            {
+              id: "afcab502-2199-43fd-b9d3-c8b556c6f25b",
+              title: "Capture the first task",
+              notes: "Retry-safe and owner-scoped",
+              status: "open",
+              revision: 1,
+              createdAt: "2026-08-05T12:00:00.000Z",
+              updatedAt: "2026-08-05T12:00:00.000Z",
+            },
+          ],
         }}
       />,
     );
     expect(markup).toContain("Foundation connected");
     expect(markup).toContain("Events · Todos");
     expect(markup).toContain(
-      "Reading and changing events remains a Phase 1 capability",
+      "Task editing and calendar event reads or writes remain Phase 1 capabilities",
     );
+    expect(markup).toContain("Capture a task");
+    expect(markup).toContain("Capture the first task");
+    expect(markup).toContain("Revision 1");
   });
 });

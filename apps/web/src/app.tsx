@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
-import type { BaikalStatusResponse, SessionResponse } from "@suite/contracts";
+import type {
+  BaikalStatusResponse,
+  SessionResponse,
+  Task,
+} from "@suite/contracts";
 import {
   ApiRequestError,
   connectBaikal,
+  createTask,
   getBaikalStatus,
   getSetupStatus,
+  getTasks,
   login,
   logout,
   resumeSession,
@@ -23,6 +29,7 @@ export type AppState =
       readonly kind: "authenticated";
       readonly session: SessionResponse;
       readonly baikal: BaikalStatusResponse;
+      readonly tasks: readonly Task[];
     }
   | { readonly kind: "error"; readonly message: string };
 
@@ -47,6 +54,7 @@ const Field = ({
   autoComplete,
   minLength,
   defaultValue,
+  required = true,
 }: {
   readonly label: string;
   readonly name: string;
@@ -54,6 +62,7 @@ const Field = ({
   readonly autoComplete: string;
   readonly minLength?: number;
   readonly defaultValue?: string;
+  readonly required?: boolean;
 }) => (
   <label className="field">
     <span>{label}</span>
@@ -63,7 +72,7 @@ const Field = ({
       autoComplete={autoComplete}
       minLength={minLength}
       defaultValue={defaultValue}
-      required
+      required={required}
     />
   </label>
 );
@@ -76,8 +85,11 @@ export const App = ({ initialState }: AppProps) => {
   const [formError, setFormError] = useState<string | null>(null);
 
   const loadAuthenticated = useCallback(async (session: SessionResponse) => {
-    const baikal = await getBaikalStatus();
-    setState({ kind: "authenticated", session, baikal });
+    const [baikal, taskList] = await Promise.all([
+      getBaikalStatus(),
+      getTasks(),
+    ]);
+    setState({ kind: "authenticated", session, baikal, tasks: taskList.tasks });
   }, []);
 
   useEffect(() => {
@@ -184,6 +196,30 @@ export const App = ({ initialState }: AppProps) => {
     }
   };
 
+  const submitTask = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+  ): Promise<void> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated") return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await createTask(
+        { title: formValue(data, "title"), notes: formValue(data, "notes") },
+        state.session.csrfToken,
+        crypto.randomUUID(),
+      );
+      setState({ ...state, tasks: [result.task, ...state.tasks] });
+      form.reset();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signOut = async (): Promise<void> => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
@@ -206,7 +242,7 @@ export const App = ({ initialState }: AppProps) => {
           One quiet place for tasks, real calendar time, focused work, and
           deliberate automation.
         </p>
-        <p className="phase">Foundation · Phase 0B</p>
+        <p className="phase">Contract lab · Phase 0C</p>
       </section>
 
       <section className="panel" aria-live="polite">
@@ -347,6 +383,41 @@ export const App = ({ initialState }: AppProps) => {
               Baïkal is verified as {state.baikal.username}. Credentials remain
               server-side.
             </p>
+            <form
+              className="task-capture"
+              onSubmit={(event) => void submitTask(event)}
+            >
+              <h3>Capture a task</h3>
+              <Field
+                label="What needs doing?"
+                name="title"
+                autoComplete="off"
+              />
+              <Field
+                label="Notes"
+                name="notes"
+                autoComplete="off"
+                required={false}
+              />
+              {formError !== null && <p className="form-error">{formError}</p>}
+              <button disabled={busy}>
+                {busy ? "Capturing…" : "Capture task"}
+              </button>
+            </form>
+            <h3>Captured tasks</h3>
+            {state.tasks.length === 0 ? (
+              <p className="muted">No tasks captured yet.</p>
+            ) : (
+              <ul className="tasks">
+                {state.tasks.map((task) => (
+                  <li key={task.id}>
+                    <strong>{task.title}</strong>
+                    {task.notes !== "" && <span>{task.notes}</span>}
+                    <small>Revision {task.revision}</small>
+                  </li>
+                ))}
+              </ul>
+            )}
             <h3>Discovered calendars</h3>
             {state.baikal.calendars.length === 0 ? (
               <p className="muted">No calendar collections were returned.</p>
@@ -368,8 +439,8 @@ export const App = ({ initialState }: AppProps) => {
               </ul>
             )}
             <p className="boundary-note">
-              Calendar discovery is active. Reading and changing events remains
-              a Phase 1 capability.
+              Task capture and calendar discovery are active. Task editing and
+              calendar event reads or writes remain Phase 1 capabilities.
             </p>
           </div>
         )}

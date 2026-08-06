@@ -241,7 +241,8 @@ button:disabled {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.calendars {
+.calendars,
+.tasks {
   display: grid;
   gap: 0.6rem;
   margin: 0;
@@ -249,7 +250,8 @@ button:disabled {
   list-style: none;
 }
 
-.calendars li {
+.calendars li,
+.tasks li {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -259,9 +261,27 @@ button:disabled {
   background: #fff;
 }
 
-.calendars span {
+.calendars span,
+.tasks span,
+.tasks small {
   color: #71837c;
   font-size: 0.76rem;
+}
+
+.task-capture {
+  margin: 2rem 0;
+  padding: 1rem;
+  border: 1px solid rgb(16 37 30 / 12%);
+  background: rgb(228 234 223 / 44%);
+}
+
+.task-capture h3 {
+  margin-top: 0;
+}
+
+.tasks li {
+  align-items: flex-start;
+  flex-direction: column;
 }
 
 .boundary-note {
