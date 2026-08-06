@@ -5,13 +5,13 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phase 0 is complete. The runnable repository foundation now includes secure
-single-owner authentication, encrypted Baïkal connection and collection
-discovery, stable provider/calendar identities, and the first retry-safe task
-capture/list slice. It does not yet claim calendar event reads or writes, task
-editing/completion, focus, synchronization, Google, or MCP product functionality.
+Phase 1 is complete. The runnable self-hosted planning slice now includes secure
+single-owner authentication, encrypted Baïkal connection, a bounded week event
+projection, the basic task lifecycle, and one explicit conditional calendar
+time block per task. It does not claim recurrence editing, offline multi-writer
+sync, focus sessions, Google Calendar, or MCP product functionality.
 
-## Run Phase 0
+## Run Phase 1
 
 Requirements: Docker with Compose, or Node.js 24+ and pnpm 11.15.1 for local
 development.
@@ -31,10 +31,18 @@ On first load, create the single Suite owner, sign in, and enter the credentials
 for the Baïkal user you created in Baïkal's admin interface. The Suite connects
 only to its server-configured `http://baikal/dav.php/` endpoint, verifies the
 credentials through CalDAV, encrypts the password, and displays discovered
-calendar collections with separate Events and Todos capabilities. After Baïkal
-is connected, the owner can capture and list Suite-owned tasks. Task creation is
-stored in SQLite with a stable UUID, revision 1, and a durable idempotency
-result. Event content is not read or changed in Phase 0.
+calendar collections with separate Events and Todos capabilities. A server
+administrator may point `BAIKAL_ENDPOINT` at a different CalDAV deployment;
+arbitrary browser-entered connector origins are intentionally unsupported.
+
+After Baïkal is connected, the owner sees supported non-recurring UTC-timed
+events in the current seven-day window. They can capture, rename, annotate,
+complete, reopen, soft-delete, and recover Suite-owned tasks, then choose an
+event-capable calendar, start, and duration for one task time block. A move uses
+the previously observed strong DAV ETag; if the event changed elsewhere, the UI
+shows a conflict and does not overwrite it. Removing a time block likewise uses
+its stored ETag; a task with an active block must be cleaned up before it can be
+soft-deleted.
 
 For the public HTTPS deployment, set `SUITE_SECURE_COOKIES=true` so the opaque
 session cookie is sent only over TLS. Preserve the original public `Host` header
@@ -47,13 +55,25 @@ Persistent data lives in three named volumes:
 - `baikal-specific`: authoritative Baïkal DAV database/resources
 - `baikal-config`: Baïkal configuration
 
-Create a consistent online SQLite and connector-key backup pair with
+Create a Suite-only online SQLite and connector-key backup pair with
 `./deploy/backup.sh`. Restore one with
 `./deploy/restore.sh <database-backup-basename>`; restore stops only the Suite
-service and retains pre-restore database and key copies. Treat the mode-0600 key
-backup as a secret: the encrypted DAV password cannot be recovered without it.
-Back up the two Baïkal volumes separately before upgrades; Suite backups never
-claim to contain authoritative calendar or address-book resources.
+service and retains pre-restore database and key copies.
+
+For a coherent Phase 1 recovery point containing all three volumes, use:
+
+```bash
+./deploy/backup-stack.sh /absolute/new/backup-directory
+./deploy/restore-stack.sh /absolute/backup-directory
+```
+
+The full-stack backup stops both SQLite writers briefly, copies Suite data and
+Baïkal's authoritative database/configuration, records SHA-256 checksums, then
+restarts and waits for both services. `restore-stack.sh` verifies every checksum
+before intentionally replacing the selected Compose project's volumes. Select
+the project with `COMPOSE_PROJECT_NAME` when it is not the default. Protect the
+backup directory as a secret: it contains the mode-0600 Suite credential key,
+encrypted connector material, Baïkal users, and calendar resources.
 
 ## Develop and verify
 
@@ -62,20 +82,29 @@ pnpm install --frozen-lockfile
 pnpm dev
 pnpm verify
 ./deploy/verify-compose.sh
+pnpm verify:phase1
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
 slower disposable deployment check: it builds both services, validates rendered
 HTTP/API output, proves installation identity across restart, replaces the
 database and credential key, restores the matched backup pair, and removes its
-test volumes.
+test volumes. `pnpm verify:phase1` additionally requires Docker Compose and a
+Chromium binary at `/usr/bin/chromium` (override with
+`PLAYWRIGHT_CHROMIUM_PATH`). It provisions only synthetic data in a disposable
+Baïkal instance, drives the real UI, proves conditional VEVENT CRUD and visible
+conflict handling, restarts the Suite, restores all state into fresh volumes,
+repeats task placement, and removes the verification volumes.
 
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
+The bounded Phase 1 projection, write, and recovery rules are recorded in
+[`docs/adr/0009-phase-1-planning-and-caldav.md`](docs/adr/0009-phase-1-planning-and-caldav.md).
 The Google connector and MCP work remain deliberately deferred; Phase 0 records
 their feasibility boundaries in [`docs/spikes/`](docs/spikes/) without creating
 production credentials, using real calendar/task data, or exposing an automation
-transport.
+transport. The disposable Phase 1 gate is local verification, not a production
+deployment or a universal CalDAV compatibility claim.
 
 ## Existing systems under consideration
 

@@ -53,8 +53,8 @@ Phase 0C was completed on 2026-08-05 on `codex/phase-0-foundation`:
 - an authoritative-store decision covering Suite, Baïkal, Google, imports, and
   future automation state
 
-Phase 0 is complete. Phase 1 is next: bounded Baïkal event projection followed
-by the remaining task lifecycle and explicit task-to-event planning slice.
+Phase 0 is complete. Phase 1 was subsequently completed as the first bounded,
+self-hosted planning slice; Phase 2 is next.
 
 ### Outcome
 
@@ -86,6 +86,29 @@ discovery only until Phase 1.
 
 ## Phase 1: First self-hosted planning slice
 
+### Implementation checkpoint
+
+Phase 1 was completed on 2026-08-06 on `codex/phase-1-planning-slice`:
+
+- bounded, non-recurring UTC VEVENT projection with explicit freshness and
+  qualified provider/calendar/event identity
+- task rename/notes, complete/reopen, soft-delete/recovery, planned start, and
+  positive duration under revision preconditions
+- one explicit Suite-created time block per task using durable idempotency,
+  `If-None-Match: *` creation, strong-ETag moves, and visible conflicts
+- a unified current-week React planner and PWA app shell
+- test-only Baïkal installer/user provisioning plus real conditional VEVENT
+  create, query, read, update-conflict, and delete qualification
+- checksummed quiescent backup and fresh-volume restore of Suite data/key and
+  Baïkal's authoritative database/configuration
+- a disposable system gate that drives the complete browser outcome, proves no
+  duplicate event across restart, preserves an external edit, repeats placement
+  after restore, and removes all synthetic volumes
+
+This evidence is local disposable-Compose qualification. It does not claim a
+production deployment or compatibility beyond the pinned Baïkal release and
+the Phase 1 CalDAV subset.
+
 ### User outcome
 
 One owner deploys the suite and Baikal, signs in, sees an existing Baikal
@@ -94,7 +117,8 @@ calendar, creates a task, and places it into a calendar interval.
 ### Scope
 
 - First-run owner setup and session security
-- Automatic/default Baikal connector setup plus explicit external-CalDAV option
+- bundled Baikal by default, with a server-admin endpoint override for an
+  external CalDAV deployment
 - Calendar discovery and bounded event projection
 - Basic tasks: create, rename, notes, complete, reopen, delete with recovery
 - Planned start and estimate/duration
