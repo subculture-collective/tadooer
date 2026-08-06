@@ -5,11 +5,13 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phase 0A provides the runnable repository foundation. It deliberately does not
-claim task, calendar, focus, synchronization, authentication, or MCP product
-functionality yet.
+Phase 0 is complete. The runnable repository foundation now includes secure
+single-owner authentication, encrypted Baïkal connection and collection
+discovery, stable provider/calendar identities, and the first retry-safe task
+capture/list slice. It does not yet claim calendar event reads or writes, task
+editing/completion, focus, synchronization, Google, or MCP product functionality.
 
-## Run the foundation
+## Run Phase 0
 
 Requirements: Docker with Compose, or Node.js 24+ and pnpm 11.15.1 for local
 development.
@@ -21,7 +23,7 @@ docker compose up --detach --build --wait
 
 The React first-run application is available at `http://127.0.0.1:18080`. Baïkal's
 installer/admin interface is available at `http://127.0.0.1:18086/admin/` until
-the first-run owner flow connects it in Phase 0B. Change either loopback port
+the first-run owner flow connects it. Change either loopback port
 with `SUITE_PORT` or `BAIKAL_PORT`; public TLS and routing belong at the edge and
 are intentionally not embedded in this local Compose file.
 
@@ -29,8 +31,10 @@ On first load, create the single Suite owner, sign in, and enter the credentials
 for the Baïkal user you created in Baïkal's admin interface. The Suite connects
 only to its server-configured `http://baikal/dav.php/` endpoint, verifies the
 credentials through CalDAV, encrypts the password, and displays discovered
-calendar collections with separate Events and Todos capabilities. Event content
-is not read or changed in Phase 0B.
+calendar collections with separate Events and Todos capabilities. After Baïkal
+is connected, the owner can capture and list Suite-owned tasks. Task creation is
+stored in SQLite with a stable UUID, revision 1, and a durable idempotency
+result. Event content is not read or changed in Phase 0.
 
 For the public HTTPS deployment, set `SUITE_SECURE_COOKIES=true` so the opaque
 session cookie is sent only over TLS. Preserve the original public `Host` header
@@ -65,6 +69,13 @@ slower disposable deployment check: it builds both services, validates rendered
 HTTP/API output, proves installation identity across restart, replaces the
 database and credential key, restores the matched backup pair, and removes its
 test volumes.
+
+The Phase 0 contract and authority decisions are recorded in
+[`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
+The Google connector and MCP work remain deliberately deferred; Phase 0 records
+their feasibility boundaries in [`docs/spikes/`](docs/spikes/) without creating
+production credentials, using real calendar/task data, or exposing an automation
+transport.
 
 ## Existing systems under consideration
 

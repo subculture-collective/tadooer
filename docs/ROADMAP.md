@@ -40,15 +40,28 @@ Phase 0B was completed on 2026-08-05 on `codex/phase-0-foundation`:
 - first-run, login, connector, discovered-calendar, and logout React states
 - paired SQLite/key backup and restore drill with fail-closed key mismatch tests
 
-Phase 0C is the next contract slice: stable task and calendar-provider identities,
-API error/idempotency/revision conventions, and the first Phase 1 task-capture
-vertical slice. Google OAuth and MCP catalog feasibility spikes remain open until
-consumed by a dependency-ready slice.
+Phase 0C was completed on 2026-08-05 on `codex/phase-0-foundation`:
+
+- stable persisted UUIDs for tasks, calendar providers, and discovered calendars;
+  a reserved client-identity table; and qualified provider-native event contracts
+- owner-scoped API authorization plus client-visible error request IDs, durable create
+  idempotency, positive revisions, and the conditional-mutation convention
+- first task-capture vertical slice: authenticated create/list API, persistent
+  task state, retry-safe capture, and rendered React capture/list states
+- committed synthetic CalDAV and import fixtures with invalid-contract rejection
+- current Google OAuth/Calendar feasibility and source-pinned MCP catalog mapping
+- an authoritative-store decision covering Suite, Baïkal, Google, imports, and
+  future automation state
+
+Phase 0 is complete. Phase 1 is next: bounded Baïkal event projection followed
+by the remaining task lifecycle and explicit task-to-event planning slice.
 
 ### Outcome
 
-The suite repository can build and test a React shell, application API, shared
-contracts, and Compose topology without claiming product functionality.
+The suite repository builds and tests a React application, application API,
+shared contracts, and Compose topology. One owner can securely capture and list
+retry-safe tasks after setup; calendar functionality remains collection
+discovery only until Phase 1.
 
 ### Scope
 
