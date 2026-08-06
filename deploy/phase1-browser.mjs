@@ -58,13 +58,14 @@ const placeTask = async (
   const item = taskItem(title);
   await item.getByLabel("Start").fill(start);
   await item.getByLabel("Minutes").fill("45");
-  const responsePromise = page.waitForResponse(
-    (response) =>
-      response.url().includes("/time-block") &&
-      response.request().method() === "POST",
-  );
-  await item.getByRole("button", { name: expectedButton }).click();
-  const response = await responsePromise;
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (candidate) =>
+        candidate.url().includes("/time-block") &&
+        candidate.request().method() === "POST",
+    ),
+    item.getByRole("button", { name: expectedButton, exact: true }).click(),
+  ]);
   return { response, body: await response.json() };
 };
 
@@ -124,6 +125,12 @@ try {
 
     const placed = await placeTask("Phase 1 planned task", localDateTime(24));
     expect(placed.response.status()).toBe(201);
+    const moved = await placeTask(
+      "Phase 1 planned task",
+      localDateTime(30),
+      "Move calendar block",
+    );
+    expect(moved.response.status()).toBe(201);
     await expect(
       taskItem("Phase 1 planned task").getByText(/45 minutes/),
     ).toBeVisible();
@@ -131,9 +138,9 @@ try {
       statePath,
       JSON.stringify({
         title: "Phase 1 planned task",
-        taskId: placed.body.task.id,
-        taskRevision: placed.body.task.revision,
-        mapping: placed.body.mapping,
+        taskId: moved.body.task.id,
+        taskRevision: moved.body.task.revision,
+        mapping: moved.body.mapping,
       }),
       { mode: 0o600 },
     );
@@ -194,8 +201,14 @@ try {
     await page.getByRole("button", { name: "Capture task" }).click();
     const placed = await placeTask("Post-restore task", localDateTime(72));
     expect(placed.response.status()).toBe(201);
+    const restoredTask = taskItem("Post-restore task");
+    await expect(restoredTask.getByText(/45 minutes/)).toBeVisible();
+    await restoredTask
+      .getByRole("button", { name: "Remove calendar block" })
+      .click();
+    await expect(restoredTask.getByText(/45 minutes/)).toHaveCount(0);
     await expect(
-      taskItem("Post-restore task").getByText(/45 minutes/),
+      restoredTask.getByRole("button", { name: "Place in calendar" }),
     ).toBeVisible();
   }
 } finally {

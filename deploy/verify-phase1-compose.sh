@@ -23,7 +23,11 @@ compose() {
 }
 
 cleanup() {
-  compose down --volumes --remove-orphans
+  status="$?"
+  trap - 0 1 2 15
+  compose down --volumes --remove-orphans || status=1
+  rm -rf -- "$work_directory" || status=1
+  exit "$status"
 }
 trap cleanup 0 1 2 15
 
@@ -71,7 +75,7 @@ SUITE_PORT="$suite_port" ./deploy/smoke.sh >/dev/null
 test "$(event_count)" = "2"
 
 node deploy/phase1-browser.mjs restore "$base_url" "$state_path"
-test "$(event_count)" = "3"
+test "$(event_count)" = "2"
 
 node -e '
   const fs=require("node:fs");
@@ -84,6 +88,6 @@ node -e '
     ifMatch: seed.etag
   }));
 ' "$work_directory/seed.json" | node deploy/baikal-disposable.mjs delete "$baikal_url" >/dev/null
-test "$(event_count)" = "2"
+test "$(event_count)" = "1"
 
 echo "Phase 1 browser journey, real Baikal CRUD/conflict, restart identity, and fresh-volume full-stack restore verified"

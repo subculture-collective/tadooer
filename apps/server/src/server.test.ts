@@ -34,6 +34,8 @@ const phaseOneCalDav = () => {
     ],
   ]);
   let version = 1;
+  let failNextPutAfterCommit = false;
+  const requests: { method: string; path: string }[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     await Promise.resolve();
     const url =
@@ -41,6 +43,7 @@ const phaseOneCalDav = () => {
         ? input
         : new URL(typeof input === "string" ? input : input.url);
     const method = init?.method ?? "GET";
+    requests.push({ method, path: url.pathname });
     if (method === "PROPFIND" && url.pathname === "/dav.php/") {
       return new Response(
         davMultiStatus(
@@ -105,11 +108,31 @@ const phaseOneCalDav = () => {
       const rawIcs = typeof init?.body === "string" ? init.body : "";
       version += 1;
       resources.set(url.pathname, { rawIcs, etag: `"v${String(version)}"` });
+      if (failNextPutAfterCommit) {
+        failNextPutAfterCommit = false;
+        throw new Error("synthetic response loss after commit");
+      }
+      return new Response(null, { status: 204 });
+    }
+    if (method === "DELETE") {
+      const headers = new Headers(init?.headers);
+      const existing = resources.get(url.pathname);
+      if (existing === undefined) return new Response("", { status: 404 });
+      if (headers.get("if-match") !== existing.etag)
+        return new Response("", { status: 412 });
+      resources.delete(url.pathname);
       return new Response(null, { status: 204 });
     }
     return new Response("", { status: 404 });
   };
-  return { fetcher, resources };
+  return {
+    fetcher,
+    resources,
+    requests,
+    failNextPutAfterCommit: () => {
+      failNextPutAfterCommit = true;
+    },
+  };
 };
 
 describe("Suite HTTP server", () => {
@@ -642,7 +665,7 @@ describe("Suite HTTP server", () => {
             status: 201,
           },
         );
-        const block = taskTimeBlockMutationResponseSchema.parse(blockBody);
+        let block = taskTimeBlockMutationResponseSchema.parse(blockBody);
         expect(block.task).toMatchObject({
           plannedStart: "2026-08-06T14:00:00.000Z",
           estimateMinutes: 45,
@@ -676,6 +699,31 @@ describe("Suite HTTP server", () => {
           mapping: { href: block.mapping.href },
         });
 
+        const moveResponse = await fetch(
+          `${server.baseUrl}/api/tasks/${created.task.id}/time-block`,
+          {
+            method: "POST",
+            headers: {
+              ...unsafeHeaders,
+              "If-Match": '"2"',
+              "Idempotency-Key": "phase1-block-move",
+            },
+            body: JSON.stringify({
+              calendarId,
+              startsAt: "2026-08-06T14:30:00.000Z",
+              durationMinutes: 45,
+            }),
+          },
+        );
+        expect(moveResponse.status).toBe(201);
+        block = taskTimeBlockMutationResponseSchema.parse(
+          await moveResponse.json(),
+        );
+        expect(block.task).toMatchObject({
+          plannedStart: "2026-08-06T14:30:00.000Z",
+          revision: 3,
+        });
+
         const externallyChanged = caldav.resources.get(block.mapping.href);
         if (externallyChanged === undefined)
           throw new Error("Suite event was not written to CalDAV");
@@ -692,7 +740,7 @@ describe("Suite HTTP server", () => {
             method: "POST",
             headers: {
               ...unsafeHeaders,
-              "If-Match": '"2"',
+              "If-Match": '"3"',
               "Idempotency-Key": "phase1-block-reschedule",
             },
             body: JSON.stringify({
@@ -710,6 +758,149 @@ describe("Suite HTTP server", () => {
         expect(caldav.resources.get(block.mapping.href)?.rawIcs).toContain(
           "SUMMARY:External edit",
         );
+
+        const removableTaskResponse = await fetch(
+          `${server.baseUrl}/api/tasks`,
+          {
+            method: "POST",
+            headers: {
+              ...unsafeHeaders,
+              "Idempotency-Key": "phase1-removable-task",
+            },
+            body: JSON.stringify({ title: "Remove my block" }),
+          },
+        );
+        const removableTask = taskMutationResponseSchema.parse(
+          await removableTaskResponse.json(),
+        );
+        const removableBlockResponse = await fetch(
+          `${server.baseUrl}/api/tasks/${removableTask.task.id}/time-block`,
+          {
+            method: "POST",
+            headers: {
+              ...unsafeHeaders,
+              "If-Match": '"1"',
+              "Idempotency-Key": "phase1-removable-block",
+            },
+            body: JSON.stringify({
+              calendarId,
+              startsAt: "2026-08-06T16:00:00.000Z",
+              durationMinutes: 30,
+            }),
+          },
+        );
+        const removableBlock = taskTimeBlockMutationResponseSchema.parse(
+          await removableBlockResponse.json(),
+        );
+        const blockedDelete = await fetch(
+          `${server.baseUrl}/api/tasks/${removableTask.task.id}`,
+          {
+            method: "DELETE",
+            headers: { ...unsafeHeaders, "If-Match": '"2"' },
+            body: "{}",
+          },
+        );
+        expect(blockedDelete.status).toBe(409);
+        expect(await blockedDelete.json()).toMatchObject({
+          code: "TIME_BLOCK_REMOVE_REQUIRED",
+        });
+        const removeBlock = await fetch(
+          `${server.baseUrl}/api/tasks/${removableTask.task.id}/time-block`,
+          {
+            method: "DELETE",
+            headers: { ...unsafeHeaders, "If-Match": '"2"' },
+            body: "{}",
+          },
+        );
+        expect(removeBlock.status).toBe(200);
+        expect(
+          conditionalTaskMutationResponseSchema.parse(await removeBlock.json()),
+        ).toMatchObject({
+          task: { plannedStart: null, estimateMinutes: null, revision: 3 },
+        });
+        expect(caldav.resources.has(removableBlock.mapping.href)).toBe(false);
+        expect(
+          caldav.requests.filter(
+            (request) =>
+              request.method === "DELETE" &&
+              request.path === removableBlock.mapping.href,
+          ),
+        ).toHaveLength(1);
+        const putsAfterRemoval = caldav.requests.filter(
+          (request) => request.method === "PUT",
+        ).length;
+        const releasedReplay = await fetch(
+          `${server.baseUrl}/api/tasks/${removableTask.task.id}/time-block`,
+          {
+            method: "POST",
+            headers: {
+              ...unsafeHeaders,
+              "If-Match": '"1"',
+              "Idempotency-Key": "phase1-removable-block",
+            },
+            body: JSON.stringify({
+              calendarId,
+              startsAt: "2026-08-06T16:00:00.000Z",
+              durationMinutes: 30,
+            }),
+          },
+        );
+        expect(releasedReplay.status).toBe(409);
+        expect(await releasedReplay.json()).toMatchObject({
+          code: "TIME_BLOCK_RELEASED",
+        });
+        expect(
+          caldav.requests.filter((request) => request.method === "PUT"),
+        ).toHaveLength(putsAfterRemoval);
+
+        const uncertainTaskResponse = await fetch(
+          `${server.baseUrl}/api/tasks`,
+          {
+            method: "POST",
+            headers: {
+              ...unsafeHeaders,
+              "Idempotency-Key": "phase1-uncertain-task",
+            },
+            body: JSON.stringify({ title: "Reconcile uncertain block" }),
+          },
+        );
+        const uncertainTask = taskMutationResponseSchema.parse(
+          await uncertainTaskResponse.json(),
+        );
+        caldav.failNextPutAfterCommit();
+        const uncertainInput = JSON.stringify({
+          calendarId,
+          startsAt: "2026-08-06T17:00:00.000Z",
+          durationMinutes: 30,
+        });
+        const uncertainUrl = `${server.baseUrl}/api/tasks/${uncertainTask.task.id}/time-block`;
+        const uncertainHeaders = {
+          ...unsafeHeaders,
+          "If-Match": '"1"',
+          "Idempotency-Key": "phase1-uncertain-block",
+        };
+        const uncertain = await fetch(uncertainUrl, {
+          method: "POST",
+          headers: uncertainHeaders,
+          body: uncertainInput,
+        });
+        expect(uncertain.status).toBe(502);
+        const putCount = caldav.requests.filter(
+          (request) => request.method === "PUT",
+        ).length;
+        const reconciled = await fetch(uncertainUrl, {
+          method: "POST",
+          headers: uncertainHeaders,
+          body: uncertainInput,
+        });
+        expect(reconciled.status).toBe(201);
+        expect(await reconciled.json()).toMatchObject({
+          replayed: true,
+          task: { revision: 2 },
+        });
+        expect(
+          caldav.requests.filter((request) => request.method === "PUT"),
+        ).toHaveLength(putCount);
       } finally {
         await server.close();
       }

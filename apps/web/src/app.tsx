@@ -19,6 +19,7 @@ import {
   logout,
   patchTask,
   putTaskTimeBlock,
+  removeTaskTimeBlock,
   restoreTask,
   resumeSession,
   setupOwner,
@@ -442,6 +443,29 @@ export const App = ({ initialState }: AppProps) => {
     }
   };
 
+  const removeTimeBlock = async (task: Task): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await removeTaskTimeBlock(
+        task.id,
+        task.revision,
+        state.session.csrfToken,
+      );
+      replaceTask(result.task);
+      const window = plannerWindow();
+      const planner = await getPlanner(window.from, window.to);
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, planner } : current,
+      );
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signOut = async (): Promise<void> => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
@@ -742,6 +766,16 @@ export const App = ({ initialState }: AppProps) => {
                           ? "Place in calendar"
                           : "Move calendar block"}
                       </button>
+                      {task.plannedStart != null && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={busy}
+                          onClick={() => void removeTimeBlock(task)}
+                        >
+                          Remove calendar block
+                        </button>
+                      )}
                     </form>
                     <div className="task-actions">
                       <button

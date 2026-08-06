@@ -399,6 +399,28 @@ describe("SuiteDatabase", () => {
           "2026-08-07T00:00:00.000Z",
         ),
       ).toHaveLength(1);
+      const released = database.releaseTaskCalendarBlock({
+        ownerId: "owner-1",
+        taskId: "task-1",
+        expectedTaskRevision: 2,
+        expectedBlockRevision: 1,
+        now: "2026-08-06T00:04:00.000Z",
+      });
+      expect(released).toMatchObject({
+        plannedStart: null,
+        estimateMinutes: null,
+        revision: 3,
+      });
+      expect(
+        database.getTaskCalendarBlock("owner-1", "task-1"),
+      ).toBeUndefined();
+      expect(
+        database.listCalendarEvents(
+          "owner-1",
+          "2026-08-06T00:00:00.000Z",
+          "2026-08-07T00:00:00.000Z",
+        ),
+      ).toHaveLength(0);
       database.close();
     });
   });

@@ -38,6 +38,7 @@ import {
   type TaskRecord,
   type ConditionalTaskResult,
 } from "@suite/persistence";
+import type { CalendarEventResource } from "@suite/caldav";
 import type { ServerConfig } from "./config.ts";
 import {
   AuthService,
@@ -46,7 +47,11 @@ import {
   passwordMeetsPolicy,
   sessionCookie,
 } from "./auth.ts";
-import { BaikalConnectorService, type ConnectorFailure } from "./connector.ts";
+import {
+  BaikalConnectorService,
+  type CalendarOperationResult,
+  type ConnectorFailure,
+} from "./connector.ts";
 
 const mimeTypes: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
@@ -898,6 +903,18 @@ export const startSuiteServer = async (
           }
 
           if (method === "DELETE" && action === undefined) {
+            if (
+              database.getTaskCalendarBlock(session.owner.id, taskId) !==
+              undefined
+            ) {
+              sendError(
+                response,
+                409,
+                "TIME_BLOCK_REMOVE_REQUIRED",
+                "Remove the calendar block before deleting this task",
+              );
+              return;
+            }
             sendConditionalTask(
               response,
               database.deleteTask(
@@ -906,6 +923,94 @@ export const startSuiteServer = async (
                 revision,
                 new Date().toISOString(),
               ),
+            );
+            return;
+          }
+
+          if (method === "DELETE" && action === "time-block") {
+            const task = database.getTask(session.owner.id, taskId);
+            if (task === undefined) {
+              sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+              return;
+            }
+            if (task.revision !== revision) {
+              sendError(
+                response,
+                412,
+                "TASK_REVISION_CONFLICT",
+                "The task changed; reload it before removing its block",
+              );
+              return;
+            }
+            const block = database.getTaskCalendarBlock(
+              session.owner.id,
+              taskId,
+            );
+            if (block === undefined) {
+              sendError(
+                response,
+                404,
+                "TIME_BLOCK_NOT_FOUND",
+                "Task time block not found",
+              );
+              return;
+            }
+            const remote = await connector.deleteTaskBlock({
+              ownerId: session.owner.id,
+              calendarId: block.calendarId,
+              href: block.eventHref,
+              expectedEtag: block.remoteEtag,
+            });
+            if (!remote.ok && remote.reason !== "not-found") {
+              const conflict = remote.reason === "precondition-failed";
+              database.markTaskCalendarBlockState(
+                session.owner.id,
+                taskId,
+                conflict ? "conflict" : "needs_reconciliation",
+                new Date().toISOString(),
+              );
+              if (conflict) {
+                sendJson(response, 409, {
+                  code: "CALENDAR_EVENT_CONFLICT",
+                  message:
+                    "The calendar event changed; refresh before removing it",
+                  requestId: randomUUID(),
+                  action: "refresh_and_replan",
+                  mappingId: block.id,
+                });
+              } else {
+                sendError(
+                  response,
+                  502,
+                  "CALENDAR_DELETE_UNCERTAIN",
+                  "Calendar deletion is uncertain and needs reconciliation",
+                );
+              }
+              return;
+            }
+            const released = database.releaseTaskCalendarBlock({
+              ownerId: session.owner.id,
+              taskId,
+              expectedTaskRevision: revision,
+              expectedBlockRevision: block.revision,
+              now: new Date().toISOString(),
+            });
+            if (released === undefined) {
+              sendError(
+                response,
+                409,
+                "CALENDAR_DELETE_RECONCILIATION_REQUIRED",
+                "Calendar block was removed remotely but local state changed",
+              );
+              return;
+            }
+            sendJson(
+              response,
+              200,
+              { task: taskResponse(released) },
+              {
+                ETag: `"${String(released.revision)}"`,
+              },
             );
             return;
           }
@@ -1048,8 +1153,19 @@ export const startSuiteServer = async (
                 session.owner.id,
                 taskId,
               );
-              if (task === undefined || block === undefined)
-                throw new Error("Completed planning operation is incomplete");
+              if (block === undefined) {
+                sendError(
+                  response,
+                  409,
+                  "TIME_BLOCK_RELEASED",
+                  "This completed planning operation was subsequently released",
+                );
+                return;
+              }
+              if (task === undefined) {
+                sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+                return;
+              }
               const body: TaskTimeBlockMutationResponse = {
                 task: taskResponse(task),
                 replayed: true,
@@ -1083,18 +1199,62 @@ export const startSuiteServer = async (
               Date.parse(input.data.startsAt) +
                 input.data.durationMinutes * 60 * 1000,
             ).toISOString();
-            const remote = await connector.putTaskBlock({
-              ownerId: session.owner.id,
-              calendarId: operation.calendarId,
-              href: operation.reservedHref,
-              uid: operation.reservedUid,
-              summary: task.title,
-              startsAt: input.data.startsAt,
-              endsAt,
-              ...(existingBlock === undefined
-                ? {}
-                : { expectedEtag: existingBlock.remoteEtag }),
-            });
+            let remote: CalendarOperationResult<CalendarEventResource>;
+            if (reservation.kind === "replayed") {
+              const projection = await connector.projectEvents(
+                session.owner.id,
+                operation.calendarId,
+                new Date(
+                  Date.parse(input.data.startsAt) - 60 * 60 * 1000,
+                ).toISOString(),
+                new Date(Date.parse(endsAt) + 60 * 60 * 1000).toISOString(),
+              );
+              if (!projection.ok) {
+                remote = projection;
+              } else {
+                const reconciled = projection.value.find(
+                  (candidate) =>
+                    candidate.href === operation.reservedHref &&
+                    candidate.event.uid === operation.reservedUid &&
+                    candidate.event.summary === task.title &&
+                    Date.parse(candidate.event.startsAt) ===
+                      Date.parse(input.data.startsAt) &&
+                    Date.parse(candidate.event.endsAt) === Date.parse(endsAt) &&
+                    !candidate.event.allDay,
+                );
+                remote =
+                  reconciled === undefined
+                    ? { ok: false, reason: "outcome-unknown" }
+                    : { ok: true, value: reconciled };
+              }
+            } else {
+              remote = await connector.putTaskBlock({
+                ownerId: session.owner.id,
+                calendarId: operation.calendarId,
+                href: operation.reservedHref,
+                uid: operation.reservedUid,
+                summary: task.title,
+                startsAt: input.data.startsAt,
+                endsAt,
+                ...(existingBlock === undefined
+                  ? {}
+                  : { expectedEtag: existingBlock.remoteEtag }),
+              });
+            }
+            if (reservation.kind === "replayed" && !remote.ok) {
+              database.markCalendarWriteConflict(
+                session.owner.id,
+                idempotencyKey.data,
+                new Date().toISOString(),
+              );
+              sendError(
+                response,
+                409,
+                "CALENDAR_WRITE_RECONCILIATION_REQUIRED",
+                "The prior calendar write could not be safely reconciled",
+              );
+              return;
+            }
             if (!remote.ok) {
               if (remote.reason === "precondition-failed") {
                 database.markCalendarWriteConflict(
@@ -1125,6 +1285,7 @@ export const startSuiteServer = async (
               );
               return;
             }
+            const remoteEvent = remote.value;
             const completed = database.completeCalendarWrite({
               ownerId: session.owner.id,
               idempotencyKey: idempotencyKey.data,
@@ -1132,13 +1293,13 @@ export const startSuiteServer = async (
                 id: randomUUID(),
                 providerId: operation.providerId,
                 calendarId: operation.calendarId,
-                href: remote.value.href,
-                uid: remote.value.event.uid,
-                etag: remote.value.etag,
-                rawIcs: remote.value.rawIcs,
-                summary: remote.value.event.summary,
-                startsAt: new Date(remote.value.event.startsAt).toISOString(),
-                endsAt: new Date(remote.value.event.endsAt).toISOString(),
+                href: remoteEvent.href,
+                uid: remoteEvent.event.uid,
+                etag: remoteEvent.etag,
+                rawIcs: remoteEvent.rawIcs,
+                summary: remoteEvent.event.summary,
+                startsAt: new Date(remoteEvent.event.startsAt).toISOString(),
+                endsAt: new Date(remoteEvent.event.endsAt).toISOString(),
                 allDay: false,
                 freshness: "current",
                 mutable: true,

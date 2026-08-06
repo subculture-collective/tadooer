@@ -201,3 +201,15 @@ export const putTaskTimeBlock = (
       body: JSON.stringify(input),
     },
   );
+
+export const removeTaskTimeBlock = (
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<ConditionalTaskMutationResponse> =>
+  conditionalTask(
+    `/api/tasks/${taskId}/time-block`,
+    "DELETE",
+    revision,
+    csrfToken,
+  );

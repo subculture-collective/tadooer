@@ -874,6 +874,77 @@ export class SuiteDatabase {
     return row === undefined ? undefined : this.#calendarBlockFromRow(row);
   }
 
+  releaseTaskCalendarBlock(input: {
+    readonly ownerId: string;
+    readonly taskId: string;
+    readonly expectedTaskRevision: number;
+    readonly expectedBlockRevision: number;
+    readonly now: string;
+  }): TaskRecord | undefined {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const task = this.getTask(input.ownerId, input.taskId);
+      const block = this.getTaskCalendarBlock(input.ownerId, input.taskId);
+      if (
+        task === undefined ||
+        block === undefined ||
+        task.revision !== input.expectedTaskRevision ||
+        block.revision !== input.expectedBlockRevision
+      ) {
+        this.#database.exec("COMMIT;");
+        return undefined;
+      }
+      this.#database
+        .prepare(
+          `DELETE FROM calendar_event_projections
+           WHERE owner_id = ? AND calendar_id = ? AND href = ?`,
+        )
+        .run(input.ownerId, block.calendarId, block.eventHref);
+      this.#database
+        .prepare(
+          "DELETE FROM task_calendar_blocks WHERE owner_id = ? AND task_id = ?",
+        )
+        .run(input.ownerId, input.taskId);
+      const released: TaskRecord = {
+        ...task,
+        plannedStart: null,
+        estimateMinutes: null,
+        revision: task.revision + 1,
+        updatedAt: input.now,
+      };
+      this.#database
+        .prepare(
+          `UPDATE tasks SET planned_start = NULL, estimate_minutes = NULL,
+             revision = ?, updated_at = ? WHERE owner_id = ? AND id = ?`,
+        )
+        .run(
+          released.revision,
+          released.updatedAt,
+          released.ownerId,
+          released.id,
+        );
+      this.#database.exec("COMMIT;");
+      return released;
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  markTaskCalendarBlockState(
+    ownerId: string,
+    taskId: string,
+    state: "conflict" | "needs_reconciliation",
+    now: string,
+  ): void {
+    this.#database
+      .prepare(
+        `UPDATE task_calendar_blocks SET state = ?, revision = revision + 1,
+           updated_at = ? WHERE owner_id = ? AND task_id = ?`,
+      )
+      .run(state, now, ownerId, taskId);
+  }
+
   reserveCalendarWrite(input: {
     readonly ownerId: string;
     readonly taskId: string;

@@ -64,10 +64,12 @@ before another event can be created.
 ## Recovery and backup boundary
 
 Task deletion is soft deletion and has a dedicated recovery flow. It is never
-implemented as completion. Deleting a mapped task may conditionally delete only
-the Suite-created DAV event; it must not alter an existing foreign event. If
-the DAV precondition fails, the user sees the conflict and no external event is
-overwritten or silently removed.
+implemented as completion. A task with an active mapping cannot be deleted
+until the owner explicitly removes its Suite-created time block. Block removal
+uses the stored DAV ETag and conditionally deletes only that Suite-created DAV
+resource; it must not alter an existing foreign event. If the DAV precondition
+fails, the user sees the conflict and no external event is overwritten or
+silently removed.
 
 Suite backup covers task state, projections, mappings, and operation recovery
 state. It does not contain authoritative Baikal resources. The Phase 1 restore
