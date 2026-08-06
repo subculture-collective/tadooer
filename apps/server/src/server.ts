@@ -16,16 +16,28 @@ import type {
   SetupStatusResponse,
   TaskListResponse,
   TaskMutationResponse,
+  Task,
+  ConditionalTaskMutationResponse,
+  PlannerResponse,
+  TaskTimeBlockMutationResponse,
   ReadinessResponse,
 } from "@suite/contracts";
 import {
   baikalConnectRequestSchema,
   createTaskRequestSchema,
+  createTaskTimeBlockRequestSchema,
+  conditionalRequestHeadersSchema,
   idempotencyKeySchema,
   loginRequestSchema,
   ownerSetupRequestSchema,
+  plannerWindowSchema,
+  taskPatchRequestSchema,
 } from "@suite/contracts";
-import { SuiteDatabase } from "@suite/persistence";
+import {
+  SuiteDatabase,
+  type TaskRecord,
+  type ConditionalTaskResult,
+} from "@suite/persistence";
 import type { ServerConfig } from "./config.ts";
 import {
   AuthService,
@@ -56,6 +68,20 @@ const securityHeaders = {
 
 const maxJsonBytes = 128 * 1024;
 
+const taskResponse = (task: TaskRecord): Task => ({
+  id: task.id,
+  title: task.title,
+  notes: task.notes,
+  status: task.status,
+  revision: task.revision,
+  createdAt: task.createdAt,
+  updatedAt: task.updatedAt,
+  completedAt: task.completedAt,
+  deletedAt: task.deletedAt,
+  plannedStart: task.plannedStart,
+  estimateMinutes: task.estimateMinutes,
+});
+
 const sendJson = (
   response: ServerResponse,
   status: number,
@@ -79,6 +105,58 @@ const sendError = (
 ): void => {
   const body: ApiError = { code, message, requestId: randomUUID() };
   sendJson(response, status, body);
+};
+
+const expectedRevision = (
+  request: IncomingMessage,
+  response: ServerResponse,
+): number | undefined => {
+  const header = request.headers["if-match"];
+  if (header === undefined) {
+    sendError(
+      response,
+      428,
+      "PRECONDITION_REQUIRED",
+      "A current task If-Match header is required",
+    );
+    return undefined;
+  }
+  const parsed = conditionalRequestHeadersSchema.safeParse({ ifMatch: header });
+  if (!parsed.success) {
+    sendError(
+      response,
+      400,
+      "INVALID_PRECONDITION",
+      "The task If-Match header is invalid",
+    );
+    return undefined;
+  }
+  return Number(parsed.data.ifMatch.slice(1, -1));
+};
+
+const sendConditionalTask = (
+  response: ServerResponse,
+  result: ConditionalTaskResult,
+): void => {
+  if (result.kind === "not-found") {
+    sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+    return;
+  }
+  if (result.kind === "precondition-failed") {
+    sendError(
+      response,
+      412,
+      "TASK_REVISION_CONFLICT",
+      "The task changed; reload it before trying again",
+    );
+    return;
+  }
+  const body: ConditionalTaskMutationResponse = {
+    task: taskResponse(result.task),
+  };
+  sendJson(response, 200, body, {
+    ETag: `"${String(result.task.revision)}"`,
+  });
 };
 
 const sameOrigin = (request: IncomingMessage): boolean => {
@@ -151,8 +229,13 @@ export interface RunningSuiteServer {
   close(): Promise<void>;
 }
 
+export interface SuiteServerOptions {
+  readonly connectorFetch?: typeof fetch;
+}
+
 export const startSuiteServer = async (
   config: ServerConfig,
+  options: SuiteServerOptions = {},
 ): Promise<RunningSuiteServer> => {
   const database = SuiteDatabase.open(config.databasePath);
   const webRoot = resolve(config.webRoot);
@@ -162,6 +245,7 @@ export const startSuiteServer = async (
     database,
     new URL(config.baikalEndpoint),
     config.credentialKeyPath,
+    options.connectorFetch,
   );
 
   const server = createServer(
@@ -481,15 +565,7 @@ export const startSuiteServer = async (
             return;
           }
           const body: TaskListResponse = {
-            tasks: database.listTasks(session.owner.id).map((task) => ({
-              id: task.id,
-              title: task.title,
-              notes: task.notes,
-              status: task.status,
-              revision: task.revision,
-              createdAt: task.createdAt,
-              updatedAt: task.updatedAt,
-            })),
+            tasks: database.listTasks(session.owner.id).map(taskResponse),
           };
           sendJson(response, 200, body);
           return;
@@ -576,15 +652,7 @@ export const startSuiteServer = async (
           }
           const body: TaskMutationResponse = {
             replayed: result.kind === "replayed",
-            task: {
-              id: result.task.id,
-              title: result.task.title,
-              notes: result.task.notes,
-              status: result.task.status,
-              revision: result.task.revision,
-              createdAt: result.task.createdAt,
-              updatedAt: result.task.updatedAt,
-            },
+            task: taskResponse(result.task),
           };
           console.info(
             result.kind === "replayed"
@@ -594,6 +662,522 @@ export const startSuiteServer = async (
           sendJson(response, result.kind === "created" ? 201 : 200, body, {
             ETag: `"${String(body.task.revision)}"`,
           });
+          return;
+        }
+
+        if (method === "GET" && url.pathname === "/api/tasks/recovery") {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          const body: TaskListResponse = {
+            tasks: database
+              .listDeletedTasks(session.owner.id)
+              .map(taskResponse),
+          };
+          sendJson(response, 200, body);
+          return;
+        }
+
+        if (method === "GET" && url.pathname === "/api/planner") {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          const window = plannerWindowSchema.safeParse({
+            from: url.searchParams.get("from"),
+            to: url.searchParams.get("to"),
+          });
+          if (!window.success) {
+            sendError(
+              response,
+              400,
+              "INVALID_PLANNER_WINDOW",
+              "Planner window must be positive and no longer than 31 days",
+            );
+            return;
+          }
+          const status = await connector.status(session.owner.id);
+          let fresh = true;
+          let projectedAt: string | null = null;
+          if (status.ok && status.status.connected) {
+            for (const calendar of status.status.calendars.filter(
+              (candidate) => candidate.supportsEvents,
+            )) {
+              const result = await connector.projectEvents(
+                session.owner.id,
+                calendar.id,
+                window.data.from,
+                window.data.to,
+              );
+              if (!result.ok) {
+                fresh = false;
+                continue;
+              }
+              const now = new Date().toISOString();
+              projectedAt = now;
+              database.replaceCalendarEventWindow(
+                session.owner.id,
+                calendar.id,
+                window.data.from,
+                window.data.to,
+                result.value
+                  .filter((resource) => !resource.event.allDay)
+                  .map((resource) => ({
+                    id: randomUUID(),
+                    providerId: calendar.providerId,
+                    calendarId: calendar.id,
+                    href: resource.href,
+                    uid: resource.event.uid,
+                    etag: resource.etag,
+                    rawIcs: resource.rawIcs,
+                    summary: resource.event.summary,
+                    startsAt: new Date(resource.event.startsAt).toISOString(),
+                    endsAt: new Date(resource.event.endsAt).toISOString(),
+                    allDay: false,
+                    freshness: "current" as const,
+                    mutable: false,
+                    revision: 1,
+                    projectedAt: now,
+                  })),
+              );
+            }
+          } else {
+            fresh = false;
+          }
+          const events = database.listCalendarEvents(
+            session.owner.id,
+            window.data.from,
+            window.data.to,
+          );
+          const body: PlannerResponse = {
+            window: window.data,
+            tasks: database.listTasks(session.owner.id).map(taskResponse),
+            events: events.map((event) => ({
+              identity: {
+                providerId: event.providerId,
+                calendarId: event.calendarId,
+                eventId: event.href,
+              },
+              href: event.href,
+              uid: event.uid,
+              etag: event.etag,
+              summary: event.summary,
+              startsAt: event.startsAt,
+              endsAt: event.endsAt,
+              allDay: false,
+              recurrence: "none",
+              projectedAt: event.projectedAt,
+            })),
+            freshness: fresh
+              ? {
+                  state: "fresh",
+                  projectedAt,
+                  message: "Calendar projection is current",
+                }
+              : {
+                  state: events.length === 0 ? "unavailable" : "stale",
+                  projectedAt: events.at(0)?.projectedAt ?? null,
+                  message:
+                    events.length === 0
+                      ? "Calendar projection is unavailable"
+                      : "Showing the last safe calendar projection",
+                },
+          };
+          sendJson(response, 200, body);
+          return;
+        }
+
+        const taskRoute =
+          /^\/api\/tasks\/([0-9a-f-]{36})(?:\/(complete|reopen|restore|time-block))?$/.exec(
+            url.pathname,
+          );
+        if (
+          taskRoute !== null &&
+          ["PATCH", "POST", "DELETE"].includes(method)
+        ) {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          const revision = expectedRevision(request, response);
+          if (revision === undefined) return;
+          const taskId = taskRoute[1] ?? "";
+          const action = taskRoute[2];
+
+          if (method === "PATCH" && action === undefined) {
+            const parsed = taskPatchRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success) {
+              sendError(response, 400, "INVALID_TASK", "Task input is invalid");
+              return;
+            }
+            sendConditionalTask(
+              response,
+              database.patchTask(
+                session.owner.id,
+                taskId,
+                revision,
+                {
+                  ...(parsed.data.title === undefined
+                    ? {}
+                    : { title: parsed.data.title }),
+                  ...(parsed.data.notes === undefined
+                    ? {}
+                    : { notes: parsed.data.notes }),
+                  ...(parsed.data.plannedStart === undefined
+                    ? {}
+                    : { plannedStart: parsed.data.plannedStart }),
+                  ...(parsed.data.estimateMinutes === undefined
+                    ? {}
+                    : { estimateMinutes: parsed.data.estimateMinutes }),
+                },
+                new Date().toISOString(),
+              ),
+            );
+            return;
+          }
+
+          if (
+            method === "POST" &&
+            (action === "complete" || action === "reopen")
+          ) {
+            sendConditionalTask(
+              response,
+              database.setTaskCompleted(
+                session.owner.id,
+                taskId,
+                revision,
+                action === "complete",
+                new Date().toISOString(),
+              ),
+            );
+            return;
+          }
+
+          if (method === "DELETE" && action === undefined) {
+            sendConditionalTask(
+              response,
+              database.deleteTask(
+                session.owner.id,
+                taskId,
+                revision,
+                new Date().toISOString(),
+              ),
+            );
+            return;
+          }
+
+          if (method === "POST" && action === "restore") {
+            const input = await readJson(request);
+            if (
+              typeof input !== "object" ||
+              input === null ||
+              Object.keys(input).length !== 0
+            ) {
+              sendError(
+                response,
+                400,
+                "INVALID_RESTORE",
+                "Restore input must be empty",
+              );
+              return;
+            }
+            sendConditionalTask(
+              response,
+              database.restoreTask(
+                session.owner.id,
+                taskId,
+                revision,
+                new Date().toISOString(),
+              ),
+            );
+            return;
+          }
+
+          if (method === "POST" && action === "time-block") {
+            const idempotencyKey = idempotencyKeySchema.safeParse(
+              request.headers["idempotency-key"],
+            );
+            const input = createTaskTimeBlockRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!idempotencyKey.success || !input.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_TIME_BLOCK",
+                "Time-block input and idempotency key are required",
+              );
+              return;
+            }
+            const existingBlock = database.getTaskCalendarBlock(
+              session.owner.id,
+              taskId,
+            );
+            if (
+              existingBlock !== undefined &&
+              existingBlock.calendarId !== input.data.calendarId
+            ) {
+              sendError(
+                response,
+                409,
+                "TIME_BLOCK_CALENDAR_FIXED",
+                "Remove the current block before choosing another calendar",
+              );
+              return;
+            }
+            const calendar = database.getOwnedCalendar(
+              session.owner.id,
+              input.data.calendarId,
+            );
+            if (calendar?.supportsEvents !== true) {
+              sendError(
+                response,
+                404,
+                "CALENDAR_NOT_FOUND",
+                "Calendar not found",
+              );
+              return;
+            }
+            const uid =
+              existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;
+            const href =
+              existingBlock?.eventHref ??
+              `${calendar.href.replace(/\/$/, "")}/${randomUUID()}.ics`;
+            const normalized = {
+              taskId,
+              calendarId: input.data.calendarId,
+              startsAt: input.data.startsAt,
+              durationMinutes: input.data.durationMinutes,
+            };
+            const requestHash = createHash("sha256")
+              .update(JSON.stringify(normalized))
+              .digest("hex");
+            const now = new Date().toISOString();
+            const reservation = database.reserveCalendarWrite({
+              ownerId: session.owner.id,
+              taskId,
+              expectedTaskRevision: revision,
+              idempotencyKey: idempotencyKey.data,
+              requestHash,
+              calendarId: input.data.calendarId,
+              reservedHref: href,
+              reservedUid: uid,
+              now,
+            });
+            if (reservation.kind === "conflict") {
+              sendError(
+                response,
+                409,
+                "IDEMPOTENCY_CONFLICT",
+                "The idempotency key was used for another request",
+              );
+              return;
+            }
+            if (reservation.kind === "task-not-found") {
+              sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+              return;
+            }
+            if (reservation.kind === "task-precondition-failed") {
+              sendError(
+                response,
+                412,
+                "TASK_REVISION_CONFLICT",
+                "The task changed; reload it before planning",
+              );
+              return;
+            }
+            if (reservation.kind === "calendar-not-found") {
+              sendError(
+                response,
+                404,
+                "CALENDAR_NOT_FOUND",
+                "Calendar not found",
+              );
+              return;
+            }
+            if (
+              reservation.kind === "replayed" &&
+              reservation.operation.state === "completed"
+            ) {
+              const task = database.getTask(session.owner.id, taskId);
+              const block = database.getTaskCalendarBlock(
+                session.owner.id,
+                taskId,
+              );
+              if (task === undefined || block === undefined)
+                throw new Error("Completed planning operation is incomplete");
+              const body: TaskTimeBlockMutationResponse = {
+                task: taskResponse(task),
+                replayed: true,
+                mapping: {
+                  id: block.id,
+                  taskId: block.taskId,
+                  event: {
+                    providerId: block.providerId,
+                    calendarId: block.calendarId,
+                    eventId: block.eventHref,
+                  },
+                  href: block.eventHref,
+                  uid: block.eventUid,
+                  etag: block.remoteEtag,
+                  state: "active",
+                  createdBySuite: true,
+                  createdAt: block.createdAt,
+                  updatedAt: block.updatedAt,
+                },
+              };
+              sendJson(response, 200, body, {
+                ETag: `"${String(task.revision)}"`,
+              });
+              return;
+            }
+            const operation = reservation.operation;
+            const task = database.getTask(session.owner.id, taskId);
+            if (task === undefined)
+              throw new Error("Reserved planning task is missing");
+            const endsAt = new Date(
+              Date.parse(input.data.startsAt) +
+                input.data.durationMinutes * 60 * 1000,
+            ).toISOString();
+            const remote = await connector.putTaskBlock({
+              ownerId: session.owner.id,
+              calendarId: operation.calendarId,
+              href: operation.reservedHref,
+              uid: operation.reservedUid,
+              summary: task.title,
+              startsAt: input.data.startsAt,
+              endsAt,
+              ...(existingBlock === undefined
+                ? {}
+                : { expectedEtag: existingBlock.remoteEtag }),
+            });
+            if (!remote.ok) {
+              if (remote.reason === "precondition-failed") {
+                database.markCalendarWriteConflict(
+                  session.owner.id,
+                  idempotencyKey.data,
+                  new Date().toISOString(),
+                );
+                sendJson(response, 409, {
+                  code: "CALENDAR_EVENT_CONFLICT",
+                  message:
+                    "The calendar event changed; refresh before replanning",
+                  requestId: randomUUID(),
+                  action: "refresh_and_replan",
+                  mappingId: existingBlock?.id ?? null,
+                });
+                return;
+              }
+              database.markCalendarWriteConflict(
+                session.owner.id,
+                idempotencyKey.data,
+                new Date().toISOString(),
+              );
+              sendError(
+                response,
+                502,
+                "CALENDAR_WRITE_UNCERTAIN",
+                "Calendar outcome is uncertain and needs reconciliation",
+              );
+              return;
+            }
+            const completed = database.completeCalendarWrite({
+              ownerId: session.owner.id,
+              idempotencyKey: idempotencyKey.data,
+              event: {
+                id: randomUUID(),
+                providerId: operation.providerId,
+                calendarId: operation.calendarId,
+                href: remote.value.href,
+                uid: remote.value.event.uid,
+                etag: remote.value.etag,
+                rawIcs: remote.value.rawIcs,
+                summary: remote.value.event.summary,
+                startsAt: new Date(remote.value.event.startsAt).toISOString(),
+                endsAt: new Date(remote.value.event.endsAt).toISOString(),
+                allDay: false,
+                freshness: "current",
+                mutable: true,
+                revision: 1,
+                projectedAt: new Date().toISOString(),
+              },
+              plannedStart: input.data.startsAt,
+              estimateMinutes: input.data.durationMinutes,
+              now: new Date().toISOString(),
+            });
+            if (completed === undefined)
+              throw new Error("Planning operation could not be completed");
+            const body: TaskTimeBlockMutationResponse = {
+              task: taskResponse(completed.task),
+              replayed: reservation.kind === "replayed",
+              mapping: {
+                id: completed.block.id,
+                taskId: completed.block.taskId,
+                event: {
+                  providerId: completed.block.providerId,
+                  calendarId: completed.block.calendarId,
+                  eventId: completed.block.eventHref,
+                },
+                href: completed.block.eventHref,
+                uid: completed.block.eventUid,
+                etag: completed.block.remoteEtag,
+                state: "active",
+                createdBySuite: true,
+                createdAt: completed.block.createdAt,
+                updatedAt: completed.block.updatedAt,
+              },
+            };
+            sendJson(response, 201, body, {
+              ETag: `"${String(completed.task.revision)}"`,
+            });
+            return;
+          }
+
+          sendError(response, 405, "METHOD_NOT_ALLOWED", "Method not allowed");
           return;
         }
 

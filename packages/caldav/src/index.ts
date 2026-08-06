@@ -428,7 +428,7 @@ const validInstant = (value: string): boolean =>
 
 const calendarQuery = (startsAt: string, endsAt: string): string => {
   const compact = (value: string): string =>
-    value.replace(/[-:.]/g, "").replace(".000", "");
+    value.replace(".000Z", "Z").replace(/[-:]/g, "");
   return `<?xml version="1.0" encoding="utf-8"?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
   <D:prop><D:getetag/></D:prop>
@@ -631,7 +631,7 @@ export const serializeBoundedVEvent = (
   )
     return undefined;
   const compact = (value: string): string =>
-    value.replace(/[-:.]/g, "").replace(".000", "");
+    value.replace(".000Z", "Z").replace(/[-:]/g, "");
   return [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
