@@ -31,14 +31,14 @@ backup_output="$(
   COMPOSE_PROJECT_NAME="$project_name" SUITE_PORT="$suite_port" BAIKAL_PORT="$baikal_port" \
     ./deploy/backup.sh
 )"
-backup_name="$(printf '%s\n' "$backup_output" | sed -n 's|.*at /data/backups/||p')"
+backup_name="$(printf '%s\n' "$backup_output" | sed -n 's|.*at /data/backups/\([^ ]*\.sqlite\).*|\1|p')"
 test -n "$backup_name"
 
 SUITE_PORT="$suite_port" BAIKAL_PORT="$baikal_port" \
   docker compose --project-name "$project_name" stop suite
 SUITE_PORT="$suite_port" BAIKAL_PORT="$baikal_port" \
   docker compose --project-name "$project_name" run --rm --no-deps --entrypoint sh suite \
-  -eu -c 'rm -f /data/suite.sqlite /data/suite.sqlite-shm /data/suite.sqlite-wal'
+  -eu -c 'rm -f /data/suite.sqlite /data/suite.sqlite-shm /data/suite.sqlite-wal /data/credential.key'
 SUITE_PORT="$suite_port" BAIKAL_PORT="$baikal_port" \
   docker compose --project-name "$project_name" up --detach --wait suite
 
@@ -52,4 +52,4 @@ restored_ready="$(SUITE_PORT="$suite_port" ./deploy/smoke.sh)"
 restored_instance="$(node -e 'console.log(JSON.parse(process.argv[1]).instanceId)' "$restored_ready")"
 test "$first_instance" = "$restored_instance"
 
-echo "Compose readiness, restart persistence, SQLite backup, and restore verified"
+echo "Compose readiness, restart persistence, paired database/key backup, and restore verified"

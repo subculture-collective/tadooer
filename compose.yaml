@@ -11,8 +11,15 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${SUITE_PORT:-18080}:8080"
+    environment:
+      BAIKAL_ENDPOINT: http://baikal/dav.php/
+      SUITE_CREDENTIAL_KEY_PATH: /data/credential.key
+      SUITE_SECURE_COOKIES: ${SUITE_SECURE_COOKIES:-false}
     volumes:
       - suite-data:/data
+    depends_on:
+      baikal:
+        condition: service_healthy
     healthcheck:
       test:
         [

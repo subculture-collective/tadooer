@@ -14,16 +14,24 @@ case "$backup_name" in
     exit 2
     ;;
 esac
+key_name="${backup_name%.sqlite}.key"
 
 docker compose stop suite
 docker compose run --rm --no-deps --entrypoint sh suite -eu -c '
   backup_path="/data/backups/$1"
+  key_path="/data/backups/$2"
   test -f "$backup_path"
+  test -f "$key_path"
   if [ -f /data/suite.sqlite ]; then
     cp /data/suite.sqlite "/data/backups/pre-restore-$(date -u +%Y%m%dT%H%M%SZ).sqlite"
   fi
+  if [ -f /data/credential.key ]; then
+    cp /data/credential.key "/data/backups/pre-restore-$(date -u +%Y%m%dT%H%M%SZ).key"
+  fi
   cp "$backup_path" /data/suite.sqlite
+  cp "$key_path" /data/credential.key
+  chmod 600 /data/credential.key
   rm -f /data/suite.sqlite-shm /data/suite.sqlite-wal
-' sh "$backup_name"
+' sh "$backup_name" "$key_name"
 docker compose up -d --wait suite
-echo "Restored $backup_name and retained a pre-restore copy in /data/backups"
+echo "Restored $backup_name with its credential key and retained pre-restore copies in /data/backups"

@@ -19,11 +19,23 @@ docker compose up --detach --build --wait
 ./deploy/smoke.sh
 ```
 
-The React readiness screen is available at `http://127.0.0.1:18080`. Baïkal's
+The React first-run application is available at `http://127.0.0.1:18080`. Baïkal's
 installer/admin interface is available at `http://127.0.0.1:18086/admin/` until
 the first-run owner flow connects it in Phase 0B. Change either loopback port
 with `SUITE_PORT` or `BAIKAL_PORT`; public TLS and routing belong at the edge and
 are intentionally not embedded in this local Compose file.
+
+On first load, create the single Suite owner, sign in, and enter the credentials
+for the Baïkal user you created in Baïkal's admin interface. The Suite connects
+only to its server-configured `http://baikal/dav.php/` endpoint, verifies the
+credentials through CalDAV, encrypts the password, and displays discovered
+calendar collections with separate Events and Todos capabilities. Event content
+is not read or changed in Phase 0B.
+
+For the public HTTPS deployment, set `SUITE_SECURE_COOKIES=true` so the opaque
+session cookie is sent only over TLS. Preserve the original public `Host` header
+at the reverse proxy; unsafe API requests compare it with the browser's Origin
+in addition to requiring the session CSRF token.
 
 Persistent data lives in three named volumes:
 
@@ -31,11 +43,13 @@ Persistent data lives in three named volumes:
 - `baikal-specific`: authoritative Baïkal DAV database/resources
 - `baikal-config`: Baïkal configuration
 
-Create a consistent online SQLite backup with `./deploy/backup.sh`. Restore one
-with `./deploy/restore.sh <backup-basename>`; restore stops only the Suite
-service and retains a pre-restore database copy. Back up the two Baïkal volumes
-separately before upgrades; Suite backups never claim to contain authoritative
-calendar or address-book resources.
+Create a consistent online SQLite and connector-key backup pair with
+`./deploy/backup.sh`. Restore one with
+`./deploy/restore.sh <database-backup-basename>`; restore stops only the Suite
+service and retains pre-restore database and key copies. Treat the mode-0600 key
+backup as a secret: the encrypted DAV password cannot be recovered without it.
+Back up the two Baïkal volumes separately before upgrades; Suite backups never
+claim to contain authoritative calendar or address-book resources.
 
 ## Develop and verify
 
@@ -49,7 +63,8 @@ pnpm verify
 `pnpm verify` is the canonical local code gate. The Compose verification is a
 slower disposable deployment check: it builds both services, validates rendered
 HTTP/API output, proves installation identity across restart, replaces the
-database, restores an online SQLite backup, and removes its test volumes.
+database and credential key, restores the matched backup pair, and removes its
+test volumes.
 
 ## Existing systems under consideration
 
