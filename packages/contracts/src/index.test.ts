@@ -11,6 +11,16 @@ import {
   idempotencyKeySchema,
   importTaskCandidateSchema,
   plannerWindowSchema,
+  activeSessionCommandSchema,
+  activeSessionSchema,
+  clientAuthenticationHeadersSchema,
+  clientRegistrationRequestSchema,
+  projectSchema,
+  syncDiagnosticManifestSchema,
+  syncOperationSchema,
+  syncRoundRequestSchema,
+  syncTaskSnapshotSchema,
+  tagSchema,
   taskEventMappingSchema,
   taskPatchRequestSchema,
   taskRestoreRequestSchema,
@@ -194,6 +204,189 @@ describe("Suite contracts", () => {
         requestId: id,
         action: "overwrite",
         mappingId: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts registered-client proofs and bounded Phase 2 task sync", () => {
+    expect(
+      clientRegistrationRequestSchema.parse({ label: "Firefox on Framework" }),
+    ).toEqual({ label: "Firefox on Framework" });
+    expect(
+      clientAuthenticationHeadersSchema.parse({
+        clientId: id,
+        clientCredential: "A".repeat(43),
+      }),
+    ).toBeDefined();
+    expect(
+      syncRoundRequestSchema.parse(fixture("sync-round.valid.json")),
+    ).toBeDefined();
+    expect(
+      syncOperationSchema.parse({
+        operationId: id,
+        clientSequence: 2,
+        createdAt: "2026-08-06T16:00:00.000Z",
+        requestHash: "A".repeat(43),
+        kind: "task.patch",
+        taskId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        fields: { title: "Merged title", notes: "Merged notes" },
+        baseFieldVersions: { title: 2, notes: 4 },
+      }),
+    ).toBeDefined();
+  });
+
+  it("rejects sync operations that could silently overwrite or duplicate", () => {
+    expect(
+      syncOperationSchema.safeParse({
+        operationId: id,
+        clientSequence: 2,
+        createdAt: "2026-08-06T16:00:00.000Z",
+        requestHash: "A".repeat(43),
+        kind: "task.patch",
+        taskId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        fields: { title: "Merged title" },
+        baseFieldVersions: { notes: 4 },
+      }).success,
+    ).toBe(false);
+    expect(
+      syncRoundRequestSchema.safeParse({
+        cursor: null,
+        operations: [
+          {
+            operationId: id,
+            clientSequence: 1,
+            createdAt: "2026-08-06T16:00:00.000Z",
+            requestHash: "A".repeat(43),
+            kind: "task.create",
+            task: {
+              id: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+              title: "Offline capture",
+              notes: "",
+              estimateMinutes: null,
+            },
+          },
+          {
+            operationId: id,
+            clientSequence: 2,
+            createdAt: "2026-08-06T16:00:01.000Z",
+            requestHash: "B".repeat(43),
+            kind: "task.create",
+            task: {
+              id: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+              title: "Second capture",
+              notes: "",
+              estimateMinutes: null,
+            },
+          },
+        ],
+        pullLimit: 100,
+      }).success,
+    ).toBe(false);
+    expect(
+      clientAuthenticationHeadersSchema.safeParse({
+        clientId: id,
+        clientCredential: "short",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("models project, tag, and local cache task state without duplicate tags", () => {
+    expect(
+      projectSchema.parse({
+        id,
+        ownerId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        title: "Home",
+        revision: 1,
+        createdAt: "2026-08-06T16:00:00.000Z",
+        updatedAt: "2026-08-06T16:00:00.000Z",
+        archivedAt: null,
+      }),
+    ).toBeDefined();
+    expect(
+      tagSchema.parse({
+        id,
+        ownerId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        displayName: "Errands",
+        normalizedName: "errands",
+        revision: 1,
+        createdAt: "2026-08-06T16:00:00.000Z",
+        updatedAt: "2026-08-06T16:00:00.000Z",
+        archivedAt: null,
+      }),
+    ).toBeDefined();
+    expect(
+      syncTaskSnapshotSchema.safeParse({
+        task: {
+          id,
+          title: "Tagged task",
+          notes: "",
+          status: "open",
+          revision: 1,
+          createdAt: "2026-08-06T16:00:00.000Z",
+          updatedAt: "2026-08-06T16:00:00.000Z",
+          projectId: null,
+          tagIds: [id, id],
+        },
+        fieldVersions: {
+          title: 1,
+          notes: 1,
+          status: 1,
+          estimateMinutes: 1,
+          projectId: 1,
+          tagIds: 1,
+        },
+        changeSequence: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires a live controller lease for a running active session", () => {
+    expect(
+      activeSessionSchema.safeParse({
+        id,
+        ownerId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        taskId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+        controllerClientId: "4519c805-e478-486b-a918-616fc6d9ea98",
+        state: "running",
+        phase: "focus",
+        revision: 1,
+        startedAt: "2026-08-06T16:00:00.000Z",
+        updatedAt: "2026-08-06T16:00:00.000Z",
+        leaseExpiresAt: null,
+        hardExpiresAt: "2026-08-07T16:00:00.000Z",
+        currentIntervalId: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      activeSessionCommandSchema.parse({
+        command: "takeover",
+        sessionId: id,
+        expectedRevision: 3,
+        idempotencyKey: "takeover-request-0001",
+      }),
+    ).toBeDefined();
+    expect(
+      activeSessionCommandSchema.safeParse({
+        command: "start",
+        taskId: id,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects recovery diagnostics that contain task content or secrets", () => {
+    const validManifest = fixture(
+      "sync-diagnostic-manifest.valid.json",
+    ) as Record<string, unknown>;
+    expect(syncDiagnosticManifestSchema.parse(validManifest)).toBeDefined();
+    expect(
+      syncDiagnosticManifestSchema.safeParse(
+        fixture("sync-diagnostic-manifest.invalid.json"),
+      ).success,
+    ).toBe(false);
+    expect(
+      syncDiagnosticManifestSchema.safeParse({
+        ...validManifest,
+        clientCredential: "A".repeat(43),
       }).success,
     ).toBe(false);
   });

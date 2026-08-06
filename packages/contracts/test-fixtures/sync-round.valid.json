@@ -1,0 +1,19 @@
+{
+  "cursor": null,
+  "operations": [
+    {
+      "operationId": "d1054acd-c04d-4bd8-a814-254b007154ba",
+      "clientSequence": 1,
+      "createdAt": "2026-08-06T16:00:00.000Z",
+      "requestHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "kind": "task.create",
+      "task": {
+        "id": "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        "title": "Offline capture",
+        "notes": "Synthetic contract fixture",
+        "estimateMinutes": null
+      }
+    }
+  ],
+  "pullLimit": 100
+}
