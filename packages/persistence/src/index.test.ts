@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 6,
-        expectedMigrationCount: 6,
+        appliedMigrationCount: 7,
+        expectedMigrationCount: 7,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(6);
-      expect(reopenedState.expectedMigrationCount).toBe(6);
+      expect(reopenedState.appliedMigrationCount).toBe(7);
+      expect(reopenedState.expectedMigrationCount).toBe(7);
     });
   });
 
@@ -421,6 +421,306 @@ describe("SuiteDatabase", () => {
           "2026-08-07T00:00:00.000Z",
         ),
       ).toHaveLength(0);
+      database.close();
+    });
+  });
+
+  it("persists Phase 2 clients, ordered changes, field merges, organization, and sessions", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      const now = "2026-08-06T00:00:00.000Z";
+      database.createOwner({
+        id: "owner-2",
+        username: "sync-owner",
+        displayName: "Sync Owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      expect(
+        database.registerSyncClient({
+          id: "client-1",
+          ownerId: "owner-2",
+          label: "Laptop",
+          credentialHash: "credential-hash",
+          createdAt: now,
+          lastSeenAt: now,
+          revokedAt: null,
+        }),
+      ).toBe("registered");
+      expect(
+        database.authenticateSyncClient(
+          "owner-2",
+          "client-1",
+          "credential-hash",
+          now,
+        )?.label,
+      ).toBe("Laptop");
+      const task = {
+        id: "sync-task",
+        title: "Initial",
+        notes: "Notes",
+        status: "open" as const,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      database.createTaskIdempotently(
+        "owner-2",
+        "task-request",
+        "task-hash",
+        task,
+      );
+      const merged = database.applyTaskFieldSync({
+        ownerId: "owner-2",
+        clientId: "client-1",
+        operationId: "op-1",
+        requestHash: "hash-1",
+        taskId: task.id,
+        baseVersions: { title: 1, notes: 1, status: 1, estimateMinutes: 1 },
+        patch: { title: "Renamed" },
+        now,
+      });
+      expect(merged).toMatchObject({
+        kind: "applied",
+        task: { title: "Renamed", revision: 2 },
+      });
+      const disjoint = database.applyTaskFieldSync({
+        ownerId: "owner-2",
+        clientId: "client-1",
+        operationId: "op-2",
+        requestHash: "hash-2",
+        taskId: task.id,
+        baseVersions: { title: 1, notes: 1, status: 1, estimateMinutes: 1 },
+        patch: { notes: "Merged note" },
+        now,
+      });
+      expect(disjoint).toMatchObject({
+        kind: "applied",
+        task: { title: "Renamed", notes: "Merged note" },
+      });
+      expect(
+        database.applyTaskFieldSync({
+          ownerId: "owner-2",
+          clientId: "client-1",
+          operationId: "op-3",
+          requestHash: "hash-3",
+          taskId: task.id,
+          baseVersions: { title: 1, notes: 1, status: 1, estimateMinutes: 1 },
+          patch: { title: "Stale" },
+          now,
+        }),
+      ).toMatchObject({ kind: "conflict", fields: ["title"] });
+      expect(
+        database.listSyncChanges(
+          "owner-2",
+          database.appendSyncChange(
+            "owner-2",
+            "project",
+            "project-1",
+            "project.create",
+            1,
+            now,
+          ).epoch,
+          0,
+        ).length,
+      ).toBeGreaterThan(0);
+      database.createProject({
+        id: "project-1",
+        ownerId: "owner-2",
+        title: "Home",
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+      });
+      database.createTag({
+        id: "tag-1",
+        ownerId: "owner-2",
+        title: "Today",
+        normalizedName: "today",
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+      });
+      expect(database.setTaskTags("owner-2", task.id, ["tag-1"])).toBe(true);
+      database.createSubtask({
+        id: "sub-1",
+        ownerId: "owner-2",
+        taskId: task.id,
+        title: "First",
+        completed: false,
+        position: 1,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      });
+      expect(database.listSubtasks("owner-2", task.id)).toHaveLength(1);
+      database.putActiveSession({
+        id: "session-1",
+        ownerId: "owner-2",
+        taskId: task.id,
+        controllerClientId: "client-1",
+        state: "running",
+        phase: "focus",
+        revision: 1,
+        startedAt: now,
+        leaseExpiresAt: "2026-08-06T00:01:30.000Z",
+        hardExpiresAt: "2026-08-07T00:00:00.000Z",
+        createdAt: now,
+        updatedAt: now,
+        endedAt: null,
+      });
+      expect(database.getActiveSession("owner-2")).toMatchObject({
+        state: "running",
+        controllerClientId: "client-1",
+      });
+      database.putActiveSession({
+        id: "session-1",
+        ownerId: "owner-2",
+        taskId: task.id,
+        controllerClientId: "client-1",
+        state: "completed",
+        phase: "focus",
+        revision: 2,
+        startedAt: now,
+        leaseExpiresAt: null,
+        hardExpiresAt: "2026-08-07T00:00:00.000Z",
+        createdAt: now,
+        updatedAt: "2026-08-06T00:10:00.000Z",
+        endedAt: "2026-08-06T00:10:00.000Z",
+      });
+      expect(
+        database.applyActiveSessionTransition({
+          session: {
+            id: "session-2",
+            ownerId: "owner-2",
+            taskId: task.id,
+            controllerClientId: "client-1",
+            state: "running",
+            phase: "focus",
+            revision: 1,
+            startedAt: "2026-08-06T00:10:00.000Z",
+            leaseExpiresAt: "2026-08-06T00:12:00.000Z",
+            hardExpiresAt: "2026-08-07T00:00:00.000Z",
+            createdAt: "2026-08-06T00:10:00.000Z",
+            updatedAt: "2026-08-06T00:10:00.000Z",
+            endedAt: null,
+          },
+          clientId: "client-1",
+          idempotencyKey: "session-start-2",
+          requestHash: "session-hash-2",
+          expectedRevision: null,
+          events: [
+            {
+              kind: "started",
+              revision: 1,
+              actorClientId: "client-1",
+              createdAt: "2026-08-06T00:10:00.000Z",
+            },
+          ],
+          intervals: [
+            {
+              id: "interval-2",
+              ordinal: 1,
+              phase: "focus",
+              taskId: task.id,
+              controllerClientId: "client-1",
+              startedAt: "2026-08-06T00:10:00.000Z",
+              endedAt: null,
+              closedBy: null,
+            },
+          ],
+          now: "2026-08-06T00:10:00.000Z",
+        }),
+      ).toMatchObject({ kind: "applied", session: { id: "session-2" } });
+      expect(database.getActiveSession("owner-2")?.id).toBe("session-2");
+      expect(database.listActiveSessionIntervals("session-2")).toHaveLength(1);
+      expect(database.listActiveSessionEvents("session-2")).toHaveLength(1);
+      const breakTransition = {
+        session: {
+          id: "session-2",
+          ownerId: "owner-2",
+          taskId: task.id,
+          controllerClientId: "client-1",
+          state: "running" as const,
+          phase: "break" as const,
+          revision: 2,
+          startedAt: "2026-08-06T00:10:00.000Z",
+          leaseExpiresAt: "2026-08-06T00:12:30.000Z",
+          hardExpiresAt: "2026-08-07T00:00:00.000Z",
+          createdAt: "2026-08-06T00:10:00.000Z",
+          updatedAt: "2026-08-06T00:11:00.000Z",
+          endedAt: null,
+        },
+        expectedRevision: 1,
+        clientId: "client-1",
+        idempotencyKey: "session-break-2",
+        requestHash: "session-break-hash-2",
+        events: [
+          {
+            kind: "started",
+            revision: 1,
+            actorClientId: "client-1",
+            createdAt: "2026-08-06T00:10:00.000Z",
+          },
+          {
+            kind: "break-started",
+            revision: 2,
+            actorClientId: "client-1",
+            createdAt: "2026-08-06T00:11:00.000Z",
+          },
+        ],
+        intervals: [
+          {
+            id: "interval-2",
+            ordinal: 1,
+            phase: "focus" as const,
+            taskId: task.id,
+            controllerClientId: "client-1",
+            startedAt: "2026-08-06T00:10:00.000Z",
+            endedAt: "2026-08-06T00:11:00.000Z",
+            closedBy: "break",
+          },
+          {
+            id: "interval-3",
+            ordinal: 2,
+            phase: "break" as const,
+            taskId: task.id,
+            controllerClientId: "client-1",
+            startedAt: "2026-08-06T00:11:00.000Z",
+            endedAt: null,
+            closedBy: null,
+          },
+        ],
+        now: "2026-08-06T00:11:00.000Z",
+      };
+      expect(
+        database.applyActiveSessionTransition(breakTransition),
+      ).toMatchObject({
+        kind: "applied",
+        session: { revision: 2, phase: "break" },
+      });
+      expect(database.listActiveSessionIntervals("session-2")).toEqual([
+        expect.objectContaining({ ordinal: 1, closedBy: "break" }),
+        expect.objectContaining({ ordinal: 2, endedAt: null }),
+      ]);
+      expect(database.listActiveSessionEvents("session-2")).toHaveLength(2);
+      expect(
+        database.applyActiveSessionTransition(breakTransition),
+      ).toMatchObject({
+        kind: "replayed",
+        session: { revision: 2, phase: "break" },
+      });
+      expect(database.revokeSyncClient("owner-2", "client-1", now)).toBe(true);
+      expect(
+        database.authenticateSyncClient(
+          "owner-2",
+          "client-1",
+          "credential-hash",
+          now,
+        ),
+      ).toBeUndefined();
       database.close();
     });
   });
