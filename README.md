@@ -5,7 +5,7 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phase 5 reusable work is complete on top of the Phase 2 and Phase 4 runtime.
+Phases 5 through 7 are complete on top of the Phase 2 and Phase 4 runtime.
 The runnable
 self-hosted suite includes secure single-owner
 authentication, encrypted Baïkal planning, a durable browser-local task cache,
@@ -20,6 +20,15 @@ instantiation. It does not claim
 offline calendar/focus mutation, closed-application background sync, Google
 Calendar, recurrence editing, or hosted MCP. Phase 3 Google federation is not
 present in this checkout.
+
+Calendar migration accepts either a generic ICS payload or an explicit Google
+Calendar ICS/Takeout export. Preview reports recurrence, attendees, alarms,
+vendor/unknown properties, duplicates, and malformed components without
+writing to Baïkal. Apply is a one-time, replay-safe copy with stable CalDAV
+resource identities. Authenticated exports and opaque capability feeds preserve
+the original VEVENT fields; capability URLs support GET/HEAD only and can be
+revoked immediately. This is migration and read-only publication, not Google
+OAuth, CalDAV write access, or background mirroring.
 
 ## Run the Suite
 
@@ -106,6 +115,7 @@ pnpm verify:phase2
 pnpm verify:phase4
 pnpm verify:phase5
 pnpm verify:phase6
+pnpm verify:phase7
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
@@ -140,6 +150,12 @@ catalog-derived local MCP preview/confirmation, restart replay, and SQLite
 backup/restore. Suggestions are read-only; only confirmation creates ordinary
 subtasks and append-only selection history.
 
+`pnpm verify:phase7` provisions a synthetic owner and real disposable Baïkal
+calendar, previews and applies a recurring Google-export fixture, proves a
+retry and Suite restart leave exactly one remote resource, performs a coherent
+full-stack backup/restore, checks preserved ICS export, and finally revokes the
+GET-only capability feed.
+
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
 The bounded Phase 1 projection, write, and recovery rules are recorded in
@@ -154,6 +170,9 @@ recorded in
 The Phase 6 logical-time policy, placeholder, conflict, and history authority is
 recorded in
 [`docs/adr/0013-phase-6-choice-pool-authority.md`](docs/adr/0013-phase-6-choice-pool-authority.md).
+The Phase 7 preserved-import, stable-identity, and read-only publication rules
+are recorded in
+[`docs/adr/0014-phase-7-import-publication.md`](docs/adr/0014-phase-7-import-publication.md).
 
 An owner issues, inventories, and revokes automation credentials through
 `/api/automation/tokens`; the raw `suite_at_...` credential is returned only at

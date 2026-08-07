@@ -87,6 +87,10 @@ const known = new Set([
   "URL",
   "GEO",
   "PRIORITY",
+  "ACTION",
+  "TRIGGER",
+  "REPEAT",
+  "ATTACH",
   "BEGIN",
   "END",
 ]);
@@ -109,7 +113,7 @@ export const parseIcsImport = (
   const lines = unfold(raw);
   const skipped: ImportIssue[] = [];
   const components: string[][] = [];
-  if (lines === undefined || !lines.includes("BEGIN:VCALENDAR"))
+  if (!lines?.includes("BEGIN:VCALENDAR"))
     skipped.push({
       code: "malformed_component",
       detail: "Input is not a bounded VCALENDAR",

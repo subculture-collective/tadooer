@@ -371,6 +371,18 @@ read-only calendar feed, and use provenance-aware import adapters.
 - Recurrence, attendees, alarms, unknown fields, and unsupported data are reported
 - Capability URLs are revocable and never presented as writable sync
 
+Phase 7 was completed on 2026-08-07 on
+`codex/phase-7-migration-publication`. The Suite now has a bounded common
+calendar-import IR with generic ICS and Google Calendar ICS/Takeout adapters,
+an inert reconciliation preview, stable per-item CalDAV identities, durable
+apply/replay state, authenticated ICS export, and digest-only revocable
+read-only feed capabilities. Raw VEVENT data preserves recurrence, attendees,
+alarms, and vendor fields while the report makes those compatibility boundaries
+visible. The disposable gate proves one resource in real Baïkal across retry,
+Suite restart, and full-stack backup/restore, then proves feed revocation fails
+closed. Live Google OAuth/federation remains the honest Phase 3 boundary, and
+no background mirror is enabled.
+
 ## Phase 8: Packaged clients and broader operations
 
 ### Scope
