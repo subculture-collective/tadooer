@@ -104,7 +104,7 @@ describe("Phase 4 automation HTTP integration", () => {
           "POST",
           {
             label: "Phase 4 integration",
-            scopes: ["tasks:read", "tasks:write"],
+            scopes: ["tasks:read", "tasks:write", "focus:read", "focus:write"],
             expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           },
         );
@@ -120,9 +120,9 @@ describe("Phase 4 automation HTTP integration", () => {
           "GET",
         );
         expect(scopedRead.status).toBe(200);
-        expect(automationTaskResourceSchema.parse(await scopedRead.json()).tasks).toEqual(
-          [],
-        );
+        expect(
+          automationTaskResourceSchema.parse(await scopedRead.json()).tasks,
+        ).toEqual([]);
 
         const previewInput = {
           operation: "tasks.create",
@@ -148,7 +148,8 @@ describe("Phase 4 automation HTTP integration", () => {
           "GET",
         );
         expect(
-          automationTaskResourceSchema.parse(await beforeConfirmation.json()).tasks,
+          automationTaskResourceSchema.parse(await beforeConfirmation.json())
+            .tasks,
         ).toEqual([]);
 
         const operationKey = "phase4-confirm-task-001";
@@ -199,9 +200,11 @@ describe("Phase 4 automation HTTP integration", () => {
           { idempotencyKey: operationKey },
         );
         expect(alteredPreview.status).toBe(409);
-        expect(apiErrorSchema.parse(await alteredPreview.json())).toMatchObject({
-          code: "IDEMPOTENCY_CONFLICT",
-        });
+        expect(apiErrorSchema.parse(await alteredPreview.json())).toMatchObject(
+          {
+            code: "IDEMPOTENCY_CONFLICT",
+          },
+        );
 
         await server.close();
         server = await startSuiteServer(config);
@@ -213,7 +216,9 @@ describe("Phase 4 automation HTTP integration", () => {
           { idempotencyKey: operationKey },
         );
         expect(replay.status).toBe(200);
-        expect(automationConfirmationResponseSchema.parse(await replay.json())).toMatchObject({
+        expect(
+          automationConfirmationResponseSchema.parse(await replay.json()),
+        ).toMatchObject({
           previewId: preview.id,
           replayed: true,
           result: {
@@ -236,6 +241,36 @@ describe("Phase 4 automation HTTP integration", () => {
           }),
         ]);
 
+        const focusPreviewResponse = await automationRequest(
+          server,
+          credential.token,
+          "/api/automation/v1/previews",
+          "POST",
+          {
+            operation: "focus.start",
+            input: { operation: "focus.start", taskId: firstTask.id },
+          },
+        );
+        expect(focusPreviewResponse.status).toBe(201);
+        const focusPreview = automationPreviewResponseSchema.parse(
+          await focusPreviewResponse.json(),
+        ).preview;
+        const focusConfirmed = await automationRequest(
+          server,
+          credential.token,
+          `/api/automation/v1/previews/${focusPreview.id}/confirm`,
+          "POST",
+          { idempotencyKey: "phase4-focus-start-001" },
+        );
+        expect(focusConfirmed.status).toBe(200);
+        expect(
+          automationConfirmationResponseSchema.parse(
+            await focusConfirmed.json(),
+          ),
+        ).toMatchObject({
+          operation: "focus.start",
+          result: { session: { taskId: firstTask.id, state: "running" } },
+        });
         const revoked = await browserRequest(
           server,
           cookie,
@@ -264,7 +299,9 @@ describe("Phase 4 automation HTTP integration", () => {
           { title: "Browser remains signed in", notes: "" },
         );
         expect(interactiveCreate.status).toBe(400);
-        expect(apiErrorSchema.parse(await interactiveCreate.json())).toMatchObject({
+        expect(
+          apiErrorSchema.parse(await interactiveCreate.json()),
+        ).toMatchObject({
           code: "IDEMPOTENCY_KEY_REQUIRED",
         });
         const browserMutation = await fetch(`${server.baseUrl}/api/tasks`, {
@@ -276,7 +313,10 @@ describe("Phase 4 automation HTTP integration", () => {
             "Idempotency-Key": "phase4-browser-task-001",
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ title: "Browser remains signed in", notes: "" }),
+          body: JSON.stringify({
+            title: "Browser remains signed in",
+            notes: "",
+          }),
         });
         expect(browserMutation.status).toBe(201);
         taskMutationResponseSchema.parse(await browserMutation.json());
@@ -284,9 +324,9 @@ describe("Phase 4 automation HTTP integration", () => {
           headers: { Cookie: cookie },
         });
         expect(browserTasks.status).toBe(200);
-        expect(taskListResponseSchema.parse(await browserTasks.json()).tasks).toHaveLength(
-          2,
-        );
+        expect(
+          taskListResponseSchema.parse(await browserTasks.json()).tasks,
+        ).toHaveLength(2);
       } finally {
         await server.close();
       }
