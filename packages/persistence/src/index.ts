@@ -204,6 +204,58 @@ export interface SyncClientRecord {
   readonly revokedAt: string | null;
 }
 
+export interface AutomationTokenRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly label: string;
+  readonly secretHash: string;
+  readonly scopes: readonly string[];
+  readonly createdAt: string;
+  readonly lastUsedAt: string | null;
+  readonly expiresAt: string | null;
+  readonly revokedAt: string | null;
+}
+
+export interface AutomationPreviewRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly tokenId: string;
+  readonly operation: string;
+  readonly inputHash: string;
+  readonly input: unknown;
+  readonly summary: string;
+  readonly affectedIds: readonly string[];
+  readonly baseRevisions: Readonly<Record<string, number>>;
+  readonly expiresAt: string;
+  readonly consumedAt: string | null;
+  readonly createdAt: string;
+}
+
+export interface AutomationOutcomeRecord {
+  readonly ownerId: string;
+  readonly tokenId: string;
+  readonly operation: string;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+  readonly previewId: string;
+  readonly response: unknown;
+  readonly createdAt: string;
+}
+
+export interface AutomationAuditRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly tokenId: string;
+  readonly operation: string;
+  readonly phase: "resource_read" | "preview" | "confirm" | "execute";
+  readonly outcome: "succeeded" | "replayed" | "denied" | "failed";
+  readonly errorCode: string | null;
+  readonly previewId: string | null;
+  readonly affectedIds: readonly string[];
+  readonly requestHash: string | null;
+  readonly createdAt: string;
+}
+
 export interface ProjectRecord {
   readonly id: string;
   readonly ownerId: string;
@@ -566,6 +618,43 @@ const migrations: readonly Migration[] = [
         revision INTEGER NOT NULL, response_json TEXT NOT NULL, created_at TEXT NOT NULL,
         PRIMARY KEY(owner_id, client_id, idempotency_key)
       ) STRICT;
+    `,
+  },
+  {
+    id: "0008_phase_4_automation",
+    sql: `
+      CREATE TABLE automation_tokens (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 100), secret_hash TEXT NOT NULL UNIQUE,
+        scopes_json TEXT NOT NULL, created_at TEXT NOT NULL, last_used_at TEXT,
+        expires_at TEXT, revoked_at TEXT
+      ) STRICT;
+      CREATE INDEX automation_tokens_by_owner ON automation_tokens(owner_id, created_at, id);
+      CREATE TABLE automation_previews (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        token_id TEXT NOT NULL REFERENCES automation_tokens(id) ON DELETE RESTRICT,
+        operation TEXT NOT NULL, input_hash TEXT NOT NULL, input_json TEXT NOT NULL,
+        summary TEXT NOT NULL, affected_ids_json TEXT NOT NULL, base_revisions_json TEXT NOT NULL,
+        expires_at TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE automation_operation_outcomes (
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        token_id TEXT NOT NULL REFERENCES automation_tokens(id) ON DELETE RESTRICT,
+        operation TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+        preview_id TEXT NOT NULL REFERENCES automation_previews(id) ON DELETE RESTRICT,
+        response_json TEXT NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY(owner_id, token_id, operation, idempotency_key)
+      ) STRICT;
+      CREATE TABLE automation_audit_log (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        token_id TEXT NOT NULL REFERENCES automation_tokens(id) ON DELETE RESTRICT,
+        operation TEXT NOT NULL, phase TEXT NOT NULL
+          CHECK(phase IN ('resource_read','preview','confirm','execute')),
+        outcome TEXT NOT NULL CHECK(outcome IN ('succeeded','replayed','denied','failed')),
+        error_code TEXT, preview_id TEXT, affected_ids_json TEXT NOT NULL,
+        request_hash TEXT, created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX automation_audit_by_owner ON automation_audit_log(owner_id, created_at, id);
     `,
   },
 ];
@@ -1834,6 +1923,231 @@ export class SuiteDatabase {
         )
         .run(now, ownerId, clientId).changes === 1
     );
+  }
+
+  createAutomationToken(record: AutomationTokenRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO automation_tokens
+          (id,owner_id,label,secret_hash,scopes_json,created_at,last_used_at,expires_at,revoked_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        record.id,
+        record.ownerId,
+        record.label,
+        record.secretHash,
+        JSON.stringify([...record.scopes].sort()),
+        record.createdAt,
+        record.lastUsedAt,
+        record.expiresAt,
+        record.revokedAt,
+      );
+  }
+
+  listAutomationTokens(ownerId: string): readonly AutomationTokenRecord[] {
+    const rows = this.#database
+      .prepare(
+        "SELECT * FROM automation_tokens WHERE owner_id=? ORDER BY created_at,id",
+      )
+      .all(ownerId) as unknown as readonly Record<string, string | null>[];
+    return rows.map((row) => this.#automationTokenFromRow(row));
+  }
+
+  authenticateAutomationToken(
+    tokenId: string,
+    secretHash: string,
+    now: string,
+  ): AutomationTokenRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM automation_tokens WHERE id=? AND secret_hash=?
+         AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .get(tokenId, secretHash, now) as unknown as
+      Record<string, string | null> | undefined;
+    if (row === undefined) return undefined;
+    this.#database
+      .prepare("UPDATE automation_tokens SET last_used_at=? WHERE id=?")
+      .run(now, tokenId);
+    return { ...this.#automationTokenFromRow(row), lastUsedAt: now };
+  }
+
+  revokeAutomationToken(
+    ownerId: string,
+    tokenId: string,
+    now: string,
+  ): boolean {
+    return (
+      this.#database
+        .prepare(
+          "UPDATE automation_tokens SET revoked_at=? WHERE owner_id=? AND id=? AND revoked_at IS NULL",
+        )
+        .run(now, ownerId, tokenId).changes === 1
+    );
+  }
+
+  createAutomationPreview(record: AutomationPreviewRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO automation_previews
+          (id,owner_id,token_id,operation,input_hash,input_json,summary,affected_ids_json,
+           base_revisions_json,expires_at,consumed_at,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        record.id,
+        record.ownerId,
+        record.tokenId,
+        record.operation,
+        record.inputHash,
+        JSON.stringify(record.input),
+        record.summary,
+        JSON.stringify(record.affectedIds),
+        JSON.stringify(record.baseRevisions),
+        record.expiresAt,
+        record.consumedAt,
+        record.createdAt,
+      );
+  }
+
+  getAutomationPreview(previewId: string): AutomationPreviewRecord | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM automation_previews WHERE id=?")
+      .get(previewId) as unknown as Record<string, string | null> | undefined;
+    if (row === undefined) return undefined;
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      tokenId: String(row.token_id),
+      operation: String(row.operation),
+      inputHash: String(row.input_hash),
+      input: JSON.parse(String(row.input_json)) as unknown,
+      summary: String(row.summary),
+      affectedIds: JSON.parse(String(row.affected_ids_json)) as string[],
+      baseRevisions: JSON.parse(String(row.base_revisions_json)) as Record<
+        string,
+        number
+      >,
+      expiresAt: String(row.expires_at),
+      consumedAt: row.consumed_at ?? null,
+      createdAt: String(row.created_at),
+    };
+  }
+
+  consumeAutomationPreview(previewId: string, now: string): boolean {
+    return (
+      this.#database
+        .prepare(
+          "UPDATE automation_previews SET consumed_at=? WHERE id=? AND consumed_at IS NULL AND expires_at>?",
+        )
+        .run(now, previewId, now).changes === 1
+    );
+  }
+
+  getAutomationOutcome(
+    ownerId: string,
+    tokenId: string,
+    operation: string,
+    idempotencyKey: string,
+  ): AutomationOutcomeRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM automation_operation_outcomes
+         WHERE owner_id=? AND token_id=? AND operation=? AND idempotency_key=?`,
+      )
+      .get(ownerId, tokenId, operation, idempotencyKey) as unknown as
+      Record<string, string> | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          ownerId: String(row.owner_id),
+          tokenId: String(row.token_id),
+          operation: String(row.operation),
+          idempotencyKey: String(row.idempotency_key),
+          requestHash: String(row.request_hash),
+          previewId: String(row.preview_id),
+          response: JSON.parse(String(row.response_json)) as unknown,
+          createdAt: String(row.created_at),
+        };
+  }
+
+  putAutomationOutcome(record: AutomationOutcomeRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO automation_operation_outcomes
+          (owner_id,token_id,operation,idempotency_key,request_hash,preview_id,response_json,created_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        record.ownerId,
+        record.tokenId,
+        record.operation,
+        record.idempotencyKey,
+        record.requestHash,
+        record.previewId,
+        JSON.stringify(record.response),
+        record.createdAt,
+      );
+  }
+
+  appendAutomationAudit(record: AutomationAuditRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO automation_audit_log
+          (id,owner_id,token_id,operation,phase,outcome,error_code,preview_id,
+           affected_ids_json,request_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        record.id,
+        record.ownerId,
+        record.tokenId,
+        record.operation,
+        record.phase,
+        record.outcome,
+        record.errorCode,
+        record.previewId,
+        JSON.stringify(record.affectedIds),
+        record.requestHash,
+        record.createdAt,
+      );
+  }
+
+  listAutomationAudit(ownerId: string): readonly AutomationAuditRecord[] {
+    const rows = this.#database
+      .prepare(
+        "SELECT * FROM automation_audit_log WHERE owner_id=? ORDER BY created_at,id",
+      )
+      .all(ownerId) as unknown as readonly Record<string, string | null>[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      tokenId: String(row.token_id),
+      operation: String(row.operation),
+      phase: String(row.phase) as AutomationAuditRecord["phase"],
+      outcome: String(row.outcome) as AutomationAuditRecord["outcome"],
+      errorCode: row.error_code ?? null,
+      previewId: row.preview_id ?? null,
+      affectedIds: JSON.parse(String(row.affected_ids_json)) as string[],
+      requestHash: row.request_hash ?? null,
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  #automationTokenFromRow(
+    row: Record<string, string | null>,
+  ): AutomationTokenRecord {
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      label: String(row.label),
+      secretHash: String(row.secret_hash),
+      scopes: JSON.parse(String(row.scopes_json)) as string[],
+      createdAt: String(row.created_at),
+      lastUsedAt: row.last_used_at ?? null,
+      expiresAt: row.expires_at ?? null,
+      revokedAt: row.revoked_at ?? null,
+    };
   }
 
   appendSyncChange(
