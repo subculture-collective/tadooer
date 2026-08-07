@@ -438,6 +438,160 @@ export const templateSetLibraryResponseSchema = z
   })
   .strict();
 
+export const choicePoolPolicySchema = z.enum([
+  "none",
+  "cooldown",
+  "cycle",
+  "one_shot",
+]);
+export const choicePoolSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  policy: choicePoolPolicySchema,
+  pickCount: z.number().int().min(1).max(25),
+  cooldownSeconds: z.number().int().min(1).max(31_536_000).nullable(),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolItemSchema = z.object({
+  id: entityIdSchema,
+  poolId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  position: z.number().int().nonnegative(),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolHistoryEventSchema = z.object({
+  id: entityIdSchema,
+  poolId: entityIdSchema,
+  itemId: entityIdSchema,
+  placeholderId: entityIdSchema.nullable(),
+  kind: z.enum(["selected", "completed"]),
+  cycle: revisionSchema,
+  overridden: z.boolean(),
+  occurredAt: z.iso.datetime(),
+});
+export const planningPlaceholderSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  taskId: entityIdSchema,
+  poolId: entityIdSchema,
+  pickCount: z.number().int().min(1).max(25),
+  state: z.enum(["unresolved", "resolved"]),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  resolvedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolEligibilitySchema = z.object({
+  itemId: entityIdSchema,
+  eligible: z.boolean(),
+  reason: z.enum([
+    "eligible",
+    "archived",
+    "cooldown",
+    "cycle_selected",
+    "one_shot_selected",
+  ]),
+  eligibleAt: z.iso.datetime().nullable(),
+  lastSelectedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolSuggestionResponseSchema = z.object({
+  pool: choicePoolSchema,
+  selectedItemIds: z.array(entityIdSchema).max(25),
+  cycle: revisionSchema,
+  eligibility: z.array(choicePoolEligibilitySchema).max(250),
+  logicalTime: z.iso.datetime(),
+});
+export const createChoicePoolRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    policy: choicePoolPolicySchema,
+    pickCount: z.number().int().min(1).max(25),
+    cooldownSeconds: z.number().int().min(1).max(31_536_000).nullable(),
+    items: z
+      .array(z.object({ title: z.string().trim().min(1).max(240) }).strict())
+      .min(1)
+      .max(250),
+  })
+  .strict()
+  .superRefine(({ policy, cooldownSeconds }, context) => {
+    if (policy === "cooldown" && cooldownSeconds === null)
+      context.addIssue({
+        code: "custom",
+        message: "Cooldown policy requires cooldownSeconds",
+      });
+    if (policy !== "cooldown" && cooldownSeconds !== null)
+      context.addIssue({
+        code: "custom",
+        message: "Only cooldown policy accepts cooldownSeconds",
+      });
+  });
+export const createPlanningPlaceholderRequestSchema = z
+  .object({
+    taskId: entityIdSchema,
+    poolId: entityIdSchema,
+    pickCount: z.number().int().min(1).max(25).optional(),
+  })
+  .strict();
+export const resolvePlanningPlaceholderPreviewInputSchema = z
+  .object({
+    selectedItemIds: z.array(entityIdSchema).min(1).max(25),
+    logicalTime: z.iso.datetime(),
+    override: z.boolean().default(false),
+    expectedRevision: revisionSchema,
+  })
+  .strict()
+  .refine(
+    ({ selectedItemIds }) =>
+      new Set(selectedItemIds).size === selectedItemIds.length,
+    {
+      message: "Selected pool items must be unique",
+    },
+  );
+export const resolvePlanningPlaceholderRequestSchema = z
+  .object({
+    selectedItemIds: z.array(entityIdSchema).min(1).max(25),
+    logicalTime: z.iso.datetime(),
+    override: z.boolean().default(false),
+    expectedRevision: revisionSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict()
+  .refine(
+    ({ selectedItemIds }) =>
+      new Set(selectedItemIds).size === selectedItemIds.length,
+    { message: "Selected pool items must be unique" },
+  );
+export const planningPlaceholderResolutionSchema = z.object({
+  id: entityIdSchema,
+  placeholderId: entityIdSchema,
+  selectedItemIds: z.array(entityIdSchema).min(1).max(25),
+  subtaskIds: z.array(entityIdSchema).min(1).max(25),
+  historyIds: z.array(entityIdSchema).min(1).max(25),
+  logicalTime: z.iso.datetime(),
+  overridden: z.boolean(),
+  createdAt: z.iso.datetime(),
+});
+export const planningPlaceholderResolutionResponseSchema = z.object({
+  placeholder: planningPlaceholderSchema,
+  resolution: planningPlaceholderResolutionSchema,
+  subtasks: z.array(subtaskSchema).min(1).max(25),
+  history: z.array(choicePoolHistoryEventSchema).min(1).max(25),
+  replayed: z.boolean(),
+});
+export const choicePoolLibraryResponseSchema = z.object({
+  pools: z.array(choicePoolSchema),
+  items: z.array(choicePoolItemSchema),
+  history: z.array(choicePoolHistoryEventSchema),
+  placeholders: z.array(planningPlaceholderSchema),
+});
+
 export const clientRegistrationRequestSchema = z
   .object({
     label: z.string().trim().min(1).max(100),
@@ -686,6 +840,16 @@ export const syncTemplateSetSnapshotSchema = z
   })
   .strict();
 
+export const syncChoicePoolSnapshotSchema = z.object({
+  pool: choicePoolSchema,
+  items: z.array(choicePoolItemSchema).max(250),
+  history: z.array(choicePoolHistoryEventSchema).max(2_000),
+});
+export const syncPlanningPlaceholderSnapshotSchema = z.object({
+  placeholder: planningPlaceholderSchema,
+  resolution: planningPlaceholderResolutionSchema.nullable(),
+});
+
 export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   z.object({ entityKind: z.literal("task"), value: syncTaskSnapshotSchema }),
   z.object({ entityKind: z.literal("project"), value: projectSchema }),
@@ -698,6 +862,14 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   z.object({
     entityKind: z.literal("template_set"),
     value: syncTemplateSetSnapshotSchema,
+  }),
+  z.object({
+    entityKind: z.literal("choice_pool"),
+    value: syncChoicePoolSnapshotSchema,
+  }),
+  z.object({
+    entityKind: z.literal("planning_placeholder"),
+    value: syncPlanningPlaceholderSnapshotSchema,
   }),
   z.object({
     entityKind: z.literal("active_session"),
@@ -714,6 +886,8 @@ export const syncChangeSchema = z.object({
     "subtask",
     "template",
     "template_set",
+    "choice_pool",
+    "planning_placeholder",
     "active_session",
   ]),
   entityId: entityIdSchema,
@@ -810,6 +984,8 @@ export const automationTokenScopeSchema = z.enum([
   "focus:write",
   "templates:read",
   "templates:write",
+  "pools:read",
+  "pools:write",
 ]);
 
 export const automationTokenSchema = z
@@ -866,6 +1042,7 @@ export const automationOperationSchema = z.enum([
   "focus.takeover",
   "templates.instantiate",
   "template_sets.instantiate",
+  "placeholders.resolve",
 ]);
 
 const automationSessionCommandBaseSchema = z.object({
@@ -924,6 +1101,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
         destinationProjectId: entityIdSchema,
       }),
     }),
+    z.object({
+      operation: z.literal("placeholders.resolve"),
+      input: resolvePlanningPlaceholderPreviewInputSchema,
+    }),
     ...[
       "focus.start",
       "focus.pause",
@@ -980,6 +1161,11 @@ const automationToolInputSchema = (
         destinationProjectId: entityIdSchema,
       }),
     });
+  if (operation === "placeholders.resolve")
+    return z.object({
+      operation: z.literal("placeholders.resolve"),
+      input: resolvePlanningPlaceholderPreviewInputSchema,
+    });
   if (operation === "focus.start")
     return z.object({
       operation: z.literal("focus.start"),
@@ -1005,6 +1191,9 @@ export const automationAffectedEntitySchema = z
       "template",
       "template_set",
       "project",
+      "choice_pool",
+      "planning_placeholder",
+      "pool_item",
     ]),
     entityId: entityIdSchema,
   })
@@ -1018,6 +1207,9 @@ export const automationBaseRevisionSchema = z
       "template",
       "template_set",
       "project",
+      "choice_pool",
+      "planning_placeholder",
+      "pool_item",
     ]),
     entityId: entityIdSchema,
     revision: revisionSchema,
@@ -1054,6 +1246,7 @@ export const automationExecutionResultSchema = z.union([
   activeSessionCommandResponseSchema,
   taskMutationResponseSchema,
   templateInstantiationResponseSchema,
+  planningPlaceholderResolutionResponseSchema,
 ]);
 
 export const automationConfirmationResponseSchema = z
@@ -1082,6 +1275,8 @@ export const automationTemplateResourceSchema =
   taskTemplateLibraryResponseSchema;
 export const automationTemplateSetResourceSchema =
   templateSetLibraryResponseSchema;
+export const automationChoicePoolResourceSchema =
+  choicePoolLibraryResponseSchema;
 
 export interface AutomationCatalogEntry {
   readonly id: string;
@@ -1175,6 +1370,17 @@ export const automationCatalog = [
     inputSchema: z.object({}).strict(),
     outputSchema: automationTemplateSetResourceSchema,
   },
+  {
+    id: "pools.list",
+    kind: "resource",
+    scopes: ["pools:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/pools",
+    mcpName: "suite.pools.list",
+    mcpUri: "suite://v1/pools",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationChoicePoolResourceSchema,
+  },
   ...automationOperationSchema.options.map((id) => ({
     id,
     kind: "tool" as const,
@@ -1185,7 +1391,9 @@ export const automationCatalog = [
           ? "schedule:write"
           : id.startsWith("templates.") || id.startsWith("template_sets.")
             ? "templates:write"
-            : "focus:write",
+            : id === "placeholders.resolve"
+              ? "pools:write"
+              : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -1196,7 +1404,13 @@ export const automationCatalog = [
   {
     id: "automation.confirm",
     kind: "tool",
-    scopes: ["tasks:write", "schedule:write", "focus:write", "templates:write"],
+    scopes: [
+      "tasks:write",
+      "schedule:write",
+      "focus:write",
+      "templates:write",
+      "pools:write",
+    ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",
     mcpName: "suite.confirm",
@@ -1277,6 +1491,21 @@ export type InstantiateTemplateRequest = z.infer<
 >;
 export type TemplateInstantiationResponse = z.infer<
   typeof templateInstantiationResponseSchema
+>;
+export type ChoicePool = z.infer<typeof choicePoolSchema>;
+export type ChoicePoolItem = z.infer<typeof choicePoolItemSchema>;
+export type ChoicePoolHistoryEvent = z.infer<
+  typeof choicePoolHistoryEventSchema
+>;
+export type PlanningPlaceholder = z.infer<typeof planningPlaceholderSchema>;
+export type ChoicePoolSuggestionResponse = z.infer<
+  typeof choicePoolSuggestionResponseSchema
+>;
+export type PlanningPlaceholderResolution = z.infer<
+  typeof planningPlaceholderResolutionSchema
+>;
+export type PlanningPlaceholderResolutionResponse = z.infer<
+  typeof planningPlaceholderResolutionResponseSchema
 >;
 export type ClientRegistrationRequest = z.infer<
   typeof clientRegistrationRequestSchema

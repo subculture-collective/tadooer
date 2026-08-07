@@ -170,7 +170,7 @@ describe("Suite HTTP server", () => {
           database: "ok",
           migrations: "current",
         });
-        expect(readiness.migrationCount).toBe(9);
+        expect(readiness.migrationCount).toBe(10);
 
         const build = await fetch(`${server.baseUrl}/api/build`);
         expect(build.status).toBe(200);

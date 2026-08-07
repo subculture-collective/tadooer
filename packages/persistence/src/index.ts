@@ -332,6 +332,67 @@ export interface TemplateInstantiationResult {
     readonly provenance: TaskTemplateProvenanceRecord;
   }[];
 }
+export interface ChoicePoolRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly policy: "none" | "cooldown" | "cycle" | "one_shot";
+  readonly pickCount: number;
+  readonly cooldownSeconds: number | null;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt: string | null;
+}
+export interface ChoicePoolItemRecord {
+  readonly id: string;
+  readonly poolId: string;
+  readonly title: string;
+  readonly position: number;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt: string | null;
+}
+export interface ChoicePoolHistoryRecord {
+  readonly id: string;
+  readonly poolId: string;
+  readonly itemId: string;
+  readonly placeholderId: string | null;
+  readonly kind: "selected" | "completed";
+  readonly cycle: number;
+  readonly overridden: boolean;
+  readonly occurredAt: string;
+}
+export interface PlanningPlaceholderRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly taskId: string;
+  readonly poolId: string;
+  readonly pickCount: number;
+  readonly state: "unresolved" | "resolved";
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly resolvedAt: string | null;
+}
+export interface PlanningPlaceholderResolutionRecord {
+  readonly id: string;
+  readonly placeholderId: string;
+  readonly selectedItemIds: readonly string[];
+  readonly subtaskIds: readonly string[];
+  readonly historyIds: readonly string[];
+  readonly logicalTime: string;
+  readonly overridden: boolean;
+  readonly createdAt: string;
+}
+export interface PlanningPlaceholderResolutionResult {
+  readonly kind: "created" | "replayed" | "conflict" | "stale" | "not-found";
+  readonly placeholder?: PlanningPlaceholderRecord;
+  readonly resolution?: PlanningPlaceholderResolutionRecord;
+  readonly subtasks?: readonly SubtaskRecord[];
+  readonly history?: readonly ChoicePoolHistoryRecord[];
+}
 export interface SyncChangeRecord {
   readonly ownerId: string;
   readonly epoch: string;
@@ -754,6 +815,60 @@ const migrations: readonly Migration[] = [
         template_revision INTEGER NOT NULL CHECK(template_revision > 0),
         instantiation_id TEXT NOT NULL REFERENCES template_instantiations(id) ON DELETE RESTRICT,
         instantiated_at TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
+  {
+    id: "0010_phase_6_choice_pools",
+    sql: `
+      CREATE TABLE choice_pools (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 240),
+        policy TEXT NOT NULL CHECK(policy IN ('none','cooldown','cycle','one_shot')),
+        pick_count INTEGER NOT NULL CHECK(pick_count BETWEEN 1 AND 25),
+        cooldown_seconds INTEGER CHECK(cooldown_seconds IS NULL OR cooldown_seconds BETWEEN 1 AND 31536000),
+        revision INTEGER NOT NULL CHECK(revision > 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT,
+        CHECK((policy='cooldown' AND cooldown_seconds IS NOT NULL) OR (policy!='cooldown' AND cooldown_seconds IS NULL))
+      ) STRICT;
+      CREATE INDEX choice_pools_by_owner ON choice_pools(owner_id, archived_at, title COLLATE NOCASE, id);
+      CREATE TABLE choice_pool_items (
+        id TEXT PRIMARY KEY, pool_id TEXT NOT NULL REFERENCES choice_pools(id) ON DELETE CASCADE,
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 240), position INTEGER NOT NULL CHECK(position >= 0),
+        revision INTEGER NOT NULL CHECK(revision > 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT,
+        UNIQUE(pool_id, position)
+      ) STRICT;
+      CREATE INDEX choice_pool_items_by_pool ON choice_pool_items(pool_id, archived_at, position, id);
+      CREATE TABLE planning_placeholders (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+        pool_id TEXT NOT NULL REFERENCES choice_pools(id) ON DELETE RESTRICT,
+        pick_count INTEGER NOT NULL CHECK(pick_count BETWEEN 1 AND 25),
+        state TEXT NOT NULL CHECK(state IN ('unresolved','resolved')),
+        revision INTEGER NOT NULL CHECK(revision > 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        resolved_at TEXT, CHECK((state='unresolved' AND resolved_at IS NULL) OR (state='resolved' AND resolved_at IS NOT NULL))
+      ) STRICT;
+      CREATE INDEX planning_placeholders_by_owner ON planning_placeholders(owner_id, state, created_at, id);
+      CREATE TABLE choice_pool_history (
+        id TEXT PRIMARY KEY, pool_id TEXT NOT NULL REFERENCES choice_pools(id) ON DELETE RESTRICT,
+        item_id TEXT NOT NULL REFERENCES choice_pool_items(id) ON DELETE RESTRICT,
+        placeholder_id TEXT REFERENCES planning_placeholders(id) ON DELETE SET NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('selected','completed')),
+        cycle INTEGER NOT NULL CHECK(cycle > 0), overridden INTEGER NOT NULL CHECK(overridden IN (0,1)), occurred_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX choice_pool_history_by_pool ON choice_pool_history(pool_id, occurred_at, id);
+      CREATE TABLE planning_placeholder_resolutions (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        placeholder_id TEXT NOT NULL REFERENCES planning_placeholders(id) ON DELETE RESTRICT,
+        idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+        selected_item_ids_json TEXT NOT NULL, subtask_ids_json TEXT NOT NULL, history_ids_json TEXT NOT NULL,
+        logical_time TEXT NOT NULL, overridden INTEGER NOT NULL CHECK(overridden IN (0,1)), created_at TEXT NOT NULL,
+        UNIQUE(owner_id, placeholder_id, idempotency_key), UNIQUE(placeholder_id)
+      ) STRICT;
+      CREATE TABLE template_pool_slots (
+        id TEXT PRIMARY KEY, template_id TEXT NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
+        pool_id TEXT NOT NULL REFERENCES choice_pools(id) ON DELETE RESTRICT,
+        pick_count INTEGER NOT NULL CHECK(pick_count BETWEEN 1 AND 25), position INTEGER NOT NULL CHECK(position >= 0),
+        created_at TEXT NOT NULL, UNIQUE(template_id, position)
       ) STRICT;
     `,
   },
@@ -4464,6 +4579,492 @@ export class SuiteDatabase {
         },
       };
     });
+  }
+  createChoicePool(
+    pool: ChoicePoolRecord,
+    items: readonly ChoicePoolItemRecord[],
+  ): ChoicePoolRecord {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (
+        items.length < pool.pickCount ||
+        new Set(items.map(({ id }) => id)).size !== items.length ||
+        new Set(items.map(({ position }) => position)).size !== items.length
+      )
+        throw new Error(
+          "Choice pool items must be unique and satisfy pick count",
+        );
+      this.#database
+        .prepare(
+          "INSERT INTO choice_pools (id,owner_id,title,policy,pick_count,cooldown_seconds,revision,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          pool.id,
+          pool.ownerId,
+          pool.title,
+          pool.policy,
+          pool.pickCount,
+          pool.cooldownSeconds,
+          pool.revision,
+          pool.createdAt,
+          pool.updatedAt,
+          pool.archivedAt,
+        );
+      const insert = this.#database.prepare(
+        "INSERT INTO choice_pool_items (id,pool_id,title,position,revision,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?,?)",
+      );
+      for (const item of items)
+        insert.run(
+          item.id,
+          pool.id,
+          item.title,
+          item.position,
+          item.revision,
+          item.createdAt,
+          item.updatedAt,
+          item.archivedAt,
+        );
+      this.#appendSyncChangeInTransaction(
+        pool.ownerId,
+        "choice_pool",
+        pool.id,
+        "upsert",
+        pool.revision,
+        pool.createdAt,
+      );
+      this.#database.exec("COMMIT;");
+      return pool;
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  getChoicePool(
+    ownerId: string,
+    id: string,
+    includeArchived = false,
+  ): ChoicePoolRecord | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT * FROM choice_pools WHERE owner_id=? AND id=? AND (?=1 OR archived_at IS NULL)",
+      )
+      .get(ownerId, id, includeArchived ? 1 : 0) as unknown as
+      Record<string, string | number | null> | undefined;
+    return row === undefined ? undefined : this.#choicePoolFromRow(row);
+  }
+  listChoicePools(
+    ownerId: string,
+    includeArchived = false,
+  ): readonly ChoicePoolRecord[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT * FROM choice_pools WHERE owner_id=? AND (?=1 OR archived_at IS NULL) ORDER BY archived_at IS NOT NULL,title COLLATE NOCASE,id",
+        )
+        .all(ownerId, includeArchived ? 1 : 0) as unknown as readonly Record<
+        string,
+        string | number | null
+      >[]
+    ).map((row) => this.#choicePoolFromRow(row));
+  }
+  listChoicePoolItems(
+    poolId: string,
+    includeArchived = true,
+  ): readonly ChoicePoolItemRecord[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT * FROM choice_pool_items WHERE pool_id=? AND (?=1 OR archived_at IS NULL) ORDER BY position,id",
+        )
+        .all(poolId, includeArchived ? 1 : 0) as unknown as readonly Record<
+        string,
+        string | number | null
+      >[]
+    ).map((row) => this.#choicePoolItemFromRow(row));
+  }
+  listChoicePoolHistory(poolId: string): readonly ChoicePoolHistoryRecord[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT * FROM choice_pool_history WHERE pool_id=? ORDER BY occurred_at,id",
+        )
+        .all(poolId) as unknown as readonly Record<
+        string,
+        string | number | null
+      >[]
+    ).map((row) => this.#choicePoolHistoryFromRow(row));
+  }
+  createPlanningPlaceholder(
+    record: PlanningPlaceholderRecord,
+  ): PlanningPlaceholderRecord | undefined {
+    if (
+      this.getChoicePool(record.ownerId, record.poolId) === undefined ||
+      this.getTask(record.ownerId, record.taskId) === undefined ||
+      this.listChoicePoolItems(record.poolId, false).length < record.pickCount
+    )
+      return undefined;
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.#database
+        .prepare(
+          "INSERT INTO planning_placeholders (id,owner_id,task_id,pool_id,pick_count,state,revision,created_at,updated_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          record.id,
+          record.ownerId,
+          record.taskId,
+          record.poolId,
+          record.pickCount,
+          record.state,
+          record.revision,
+          record.createdAt,
+          record.updatedAt,
+          record.resolvedAt,
+        );
+      this.#appendSyncChangeInTransaction(
+        record.ownerId,
+        "planning_placeholder",
+        record.id,
+        "upsert",
+        record.revision,
+        record.createdAt,
+      );
+      this.#database.exec("COMMIT;");
+      return record;
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  getPlanningPlaceholder(
+    ownerId: string,
+    id: string,
+  ): PlanningPlaceholderRecord | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM planning_placeholders WHERE owner_id=? AND id=?")
+      .get(ownerId, id) as unknown as
+      Record<string, string | number | null> | undefined;
+    return row === undefined ? undefined : this.#placeholderFromRow(row);
+  }
+  listPlanningPlaceholders(
+    ownerId: string,
+  ): readonly PlanningPlaceholderRecord[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT * FROM planning_placeholders WHERE owner_id=? ORDER BY created_at,id",
+        )
+        .all(ownerId) as unknown as readonly Record<
+        string,
+        string | number | null
+      >[]
+    ).map((row) => this.#placeholderFromRow(row));
+  }
+  getPlanningPlaceholderResolution(
+    placeholderId: string,
+  ): PlanningPlaceholderResolutionRecord | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT * FROM planning_placeholder_resolutions WHERE placeholder_id=?",
+      )
+      .get(placeholderId) as unknown as
+      Record<string, string | number> | undefined;
+    return row === undefined ? undefined : this.#resolutionFromRow(row);
+  }
+  resolvePlanningPlaceholderIdempotently(input: {
+    readonly ownerId: string;
+    readonly placeholderId: string;
+    readonly expectedRevision: number;
+    readonly selectedItemIds: readonly string[];
+    readonly logicalTime: string;
+    readonly cycle: number;
+    readonly overridden: boolean;
+    readonly idempotencyKey: string;
+    readonly requestHash: string;
+    readonly now: string;
+  }): PlanningPlaceholderResolutionResult {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const prior = this.#database
+        .prepare(
+          "SELECT * FROM planning_placeholder_resolutions WHERE owner_id=? AND placeholder_id=? AND idempotency_key=?",
+        )
+        .get(
+          input.ownerId,
+          input.placeholderId,
+          input.idempotencyKey,
+        ) as unknown as Record<string, string | number> | undefined;
+      if (prior !== undefined) {
+        this.#database.exec("COMMIT;");
+        if (String(prior.request_hash) !== input.requestHash)
+          return { kind: "conflict" };
+        return this.#resolvedPlaceholderResult(
+          input.ownerId,
+          this.#resolutionFromRow(prior),
+          "replayed",
+        );
+      }
+      const placeholder = this.getPlanningPlaceholder(
+        input.ownerId,
+        input.placeholderId,
+      );
+      if (placeholder === undefined) {
+        this.#database.exec("COMMIT;");
+        return { kind: "not-found" };
+      }
+      if (
+        placeholder.state !== "unresolved" ||
+        placeholder.revision !== input.expectedRevision
+      ) {
+        this.#database.exec("COMMIT;");
+        return { kind: "stale" };
+      }
+      if (
+        input.selectedItemIds.length !== placeholder.pickCount ||
+        new Set(input.selectedItemIds).size !== input.selectedItemIds.length
+      ) {
+        this.#database.exec("COMMIT;");
+        return { kind: "conflict" };
+      }
+      const itemRows = input.selectedItemIds.map((id) =>
+        this.#database
+          .prepare(
+            "SELECT * FROM choice_pool_items WHERE id=? AND pool_id=? AND archived_at IS NULL",
+          )
+          .get(id, placeholder.poolId),
+      );
+      if (itemRows.some((row) => row === undefined)) {
+        this.#database.exec("COMMIT;");
+        return { kind: "conflict" };
+      }
+      const items = itemRows.map((row) =>
+        this.#choicePoolItemFromRow(
+          row as unknown as Record<string, string | number | null>,
+        ),
+      );
+      const resolutionId = randomUUID();
+      const existingSubtasks = this.listSubtasks(
+        input.ownerId,
+        placeholder.taskId,
+      );
+      const subtaskIds: string[] = [];
+      const historyIds: string[] = [];
+      const insertSubtask = this.#database.prepare(
+        "INSERT INTO subtasks (id,owner_id,task_id,title,completed,position,revision,created_at,updated_at) VALUES (?,?,?,?,0,?,?,?,?)",
+      );
+      const insertHistory = this.#database.prepare(
+        "INSERT INTO choice_pool_history (id,pool_id,item_id,placeholder_id,kind,cycle,overridden,occurred_at) VALUES (?,?,?,?,?,?,?,?)",
+      );
+      for (const [index, item] of items.entries()) {
+        const subtaskId = randomUUID();
+        const historyId = randomUUID();
+        subtaskIds.push(subtaskId);
+        historyIds.push(historyId);
+        insertSubtask.run(
+          subtaskId,
+          input.ownerId,
+          placeholder.taskId,
+          item.title,
+          existingSubtasks.length + index,
+          1,
+          input.now,
+          input.now,
+        );
+        insertHistory.run(
+          historyId,
+          placeholder.poolId,
+          item.id,
+          placeholder.id,
+          "selected",
+          input.cycle,
+          input.overridden ? 1 : 0,
+          input.logicalTime,
+        );
+        this.#appendSyncChangeInTransaction(
+          input.ownerId,
+          "subtask",
+          subtaskId,
+          "upsert",
+          1,
+          input.now,
+        );
+      }
+      const pool = this.getChoicePool(input.ownerId, placeholder.poolId);
+      if (pool?.policy === "one_shot") {
+        const archive = this.#database.prepare(
+          "UPDATE choice_pool_items SET archived_at=?,updated_at=?,revision=revision+1 WHERE id=? AND archived_at IS NULL",
+        );
+        for (const item of items)
+          archive.run(input.logicalTime, input.now, item.id);
+      }
+      this.#database
+        .prepare(
+          "UPDATE planning_placeholders SET state='resolved',revision=revision+1,updated_at=?,resolved_at=? WHERE id=?",
+        )
+        .run(input.now, input.logicalTime, placeholder.id);
+      this.#database
+        .prepare(
+          "INSERT INTO planning_placeholder_resolutions (id,owner_id,placeholder_id,idempotency_key,request_hash,selected_item_ids_json,subtask_ids_json,history_ids_json,logical_time,overridden,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          resolutionId,
+          input.ownerId,
+          placeholder.id,
+          input.idempotencyKey,
+          input.requestHash,
+          JSON.stringify(input.selectedItemIds),
+          JSON.stringify(subtaskIds),
+          JSON.stringify(historyIds),
+          input.logicalTime,
+          input.overridden ? 1 : 0,
+          input.now,
+        );
+      this.#appendSyncChangeInTransaction(
+        input.ownerId,
+        "planning_placeholder",
+        placeholder.id,
+        "upsert",
+        placeholder.revision + 1,
+        input.now,
+      );
+      this.#appendSyncChangeInTransaction(
+        input.ownerId,
+        "choice_pool",
+        placeholder.poolId,
+        "upsert",
+        pool?.revision ?? 1,
+        input.now,
+      );
+      this.#database.exec("COMMIT;");
+      return this.#resolvedPlaceholderResult(
+        input.ownerId,
+        {
+          id: resolutionId,
+          placeholderId: placeholder.id,
+          selectedItemIds: input.selectedItemIds,
+          subtaskIds,
+          historyIds,
+          logicalTime: input.logicalTime,
+          overridden: input.overridden,
+          createdAt: input.now,
+        },
+        "created",
+      );
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  #resolvedPlaceholderResult(
+    ownerId: string,
+    resolution: PlanningPlaceholderResolutionRecord,
+    kind: "created" | "replayed",
+  ): PlanningPlaceholderResolutionResult {
+    const placeholder = this.getPlanningPlaceholder(
+      ownerId,
+      resolution.placeholderId,
+    );
+    if (placeholder === undefined)
+      throw new Error("Resolved placeholder could not be read");
+    const subtasks = this.listSubtasks(ownerId, placeholder.taskId).filter(
+      ({ id }) => resolution.subtaskIds.includes(id),
+    );
+    const historyById = new Map(
+      this.listChoicePoolHistory(placeholder.poolId).map((event) => [
+        event.id,
+        event,
+      ]),
+    );
+    return {
+      kind,
+      placeholder,
+      resolution,
+      subtasks,
+      history: resolution.historyIds.map((id) => {
+        const event = historyById.get(id);
+        if (event === undefined)
+          throw new Error("Resolution history could not be read");
+        return event;
+      }),
+    };
+  }
+  #choicePoolFromRow(
+    row: Record<string, string | number | null>,
+  ): ChoicePoolRecord {
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      title: String(row.title),
+      policy: String(row.policy) as ChoicePoolRecord["policy"],
+      pickCount: Number(row.pick_count),
+      cooldownSeconds:
+        row.cooldown_seconds === null ? null : Number(row.cooldown_seconds),
+      revision: Number(row.revision),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      archivedAt: row.archived_at === null ? null : String(row.archived_at),
+    };
+  }
+  #choicePoolItemFromRow(
+    row: Record<string, string | number | null>,
+  ): ChoicePoolItemRecord {
+    return {
+      id: String(row.id),
+      poolId: String(row.pool_id),
+      title: String(row.title),
+      position: Number(row.position),
+      revision: Number(row.revision),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      archivedAt: row.archived_at === null ? null : String(row.archived_at),
+    };
+  }
+  #choicePoolHistoryFromRow(
+    row: Record<string, string | number | null>,
+  ): ChoicePoolHistoryRecord {
+    return {
+      id: String(row.id),
+      poolId: String(row.pool_id),
+      itemId: String(row.item_id),
+      placeholderId:
+        row.placeholder_id === null ? null : String(row.placeholder_id),
+      kind: String(row.kind) as ChoicePoolHistoryRecord["kind"],
+      cycle: Number(row.cycle),
+      overridden: Number(row.overridden) === 1,
+      occurredAt: String(row.occurred_at),
+    };
+  }
+  #placeholderFromRow(
+    row: Record<string, string | number | null>,
+  ): PlanningPlaceholderRecord {
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      taskId: String(row.task_id),
+      poolId: String(row.pool_id),
+      pickCount: Number(row.pick_count),
+      state: String(row.state) as PlanningPlaceholderRecord["state"],
+      revision: Number(row.revision),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      resolvedAt: row.resolved_at === null ? null : String(row.resolved_at),
+    };
+  }
+  #resolutionFromRow(
+    row: Record<string, string | number>,
+  ): PlanningPlaceholderResolutionRecord {
+    return {
+      id: String(row.id),
+      placeholderId: String(row.placeholder_id),
+      selectedItemIds: JSON.parse(
+        String(row.selected_item_ids_json),
+      ) as string[],
+      subtaskIds: JSON.parse(String(row.subtask_ids_json)) as string[],
+      historyIds: JSON.parse(String(row.history_ids_json)) as string[],
+      logicalTime: String(row.logical_time),
+      overridden: Number(row.overridden) === 1,
+      createdAt: String(row.created_at),
+    };
   }
   #projectFromRow(row: Record<string, string | number | null>): ProjectRecord {
     return {

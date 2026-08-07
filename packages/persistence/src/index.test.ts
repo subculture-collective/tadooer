@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 9,
-        expectedMigrationCount: 9,
+        appliedMigrationCount: 10,
+        expectedMigrationCount: 10,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(9);
-      expect(reopenedState.expectedMigrationCount).toBe(9);
+      expect(reopenedState.appliedMigrationCount).toBe(10);
+      expect(reopenedState.expectedMigrationCount).toBe(10);
     });
   });
 
@@ -159,6 +159,143 @@ describe("SuiteDatabase", () => {
       });
       expect(replay).toMatchObject({ kind: "replayed" });
       expect(database.listTasks("template-owner")).toHaveLength(1);
+      database.close();
+    });
+  });
+
+  it("resolves a planning placeholder atomically and replays it across restart", async () => {
+    await withTemporaryDirectory((directory) => {
+      const path = join(directory, "suite.sqlite");
+      let database = SuiteDatabase.open(path);
+      const now = "2026-08-07T12:00:00.000Z";
+      database.createOwner({
+        id: "pool-owner",
+        username: "pool-owner",
+        displayName: "Pool owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      const task = database.createTaskIdempotently(
+        "pool-owner",
+        "pool-parent-create",
+        "pool-parent-hash",
+        {
+          id: "pool-parent",
+          title: "Leg day",
+          notes: "",
+          status: "open",
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+      );
+      expect(task.kind).toBe("created");
+      database.createChoicePool(
+        {
+          id: "leg-pool",
+          ownerId: "pool-owner",
+          title: "Leg exercises",
+          policy: "cycle",
+          pickCount: 2,
+          cooldownSeconds: null,
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+        },
+        ["Squat", "Lunge", "Calf raise"].map((title, position) => ({
+          id: `leg-item-${String(position)}`,
+          poolId: "leg-pool",
+          title,
+          position,
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+        })),
+      );
+      expect(database.listTasks("pool-owner")).toHaveLength(1);
+      expect(
+        database.createPlanningPlaceholder({
+          id: "leg-placeholder",
+          ownerId: "pool-owner",
+          taskId: "pool-parent",
+          poolId: "leg-pool",
+          pickCount: 2,
+          state: "unresolved",
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+          resolvedAt: null,
+        }),
+      ).toMatchObject({ state: "unresolved", revision: 1 });
+      const first = database.resolvePlanningPlaceholderIdempotently({
+        ownerId: "pool-owner",
+        placeholderId: "leg-placeholder",
+        expectedRevision: 1,
+        selectedItemIds: ["leg-item-0", "leg-item-1"],
+        logicalTime: now,
+        cycle: 1,
+        overridden: false,
+        idempotencyKey: "pool-resolution-001",
+        requestHash: "pool-resolution-hash",
+        now,
+      });
+      expect(first).toMatchObject({
+        kind: "created",
+        placeholder: { state: "resolved", revision: 2 },
+        subtasks: [
+          { title: "Squat", position: 0 },
+          { title: "Lunge", position: 1 },
+        ],
+        history: [
+          { itemId: "leg-item-0", kind: "selected", cycle: 1 },
+          { itemId: "leg-item-1", kind: "selected", cycle: 1 },
+        ],
+      });
+      const identities = {
+        resolution: first.resolution?.id,
+        subtasks: first.subtasks?.map(({ id }) => id),
+        history: first.history?.map(({ id }) => id),
+      };
+      database.close();
+      database = SuiteDatabase.open(path);
+      const replay = database.resolvePlanningPlaceholderIdempotently({
+        ownerId: "pool-owner",
+        placeholderId: "leg-placeholder",
+        expectedRevision: 1,
+        selectedItemIds: ["leg-item-0", "leg-item-1"],
+        logicalTime: now,
+        cycle: 1,
+        overridden: false,
+        idempotencyKey: "pool-resolution-001",
+        requestHash: "pool-resolution-hash",
+        now,
+      });
+      expect(replay.kind).toBe("replayed");
+      expect({
+        resolution: replay.resolution?.id,
+        subtasks: replay.subtasks?.map(({ id }) => id),
+        history: replay.history?.map(({ id }) => id),
+      }).toEqual(identities);
+      expect(
+        database.resolvePlanningPlaceholderIdempotently({
+          ownerId: "pool-owner",
+          placeholderId: "leg-placeholder",
+          expectedRevision: 1,
+          selectedItemIds: ["leg-item-1", "leg-item-2"],
+          logicalTime: now,
+          cycle: 1,
+          overridden: false,
+          idempotencyKey: "pool-resolution-001",
+          requestHash: "changed-hash",
+          now,
+        }).kind,
+      ).toBe("conflict");
+      expect(database.listSubtasks("pool-owner", "pool-parent")).toHaveLength(
+        2,
+      );
+      expect(database.listChoicePoolHistory("leg-pool")).toHaveLength(2);
       database.close();
     });
   });
