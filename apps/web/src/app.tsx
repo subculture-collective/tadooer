@@ -229,7 +229,15 @@ export const App = ({ initialState }: AppProps) => {
           ]),
         ),
       );
-      setTemplateSets(sets.sets);
+      setTemplateSets(
+        sets.sets.map((set) => ({
+          ...set,
+          templateIds: sets.members
+            .filter((member) => member.setId === set.id)
+            .sort((left, right) => left.position - right.position)
+            .map((member) => member.templateId),
+        })),
+      );
       const window = plannerWindow();
       const planner = baikal.connected
         ? await getPlanner(window.from, window.to)
@@ -915,7 +923,15 @@ export const App = ({ initialState }: AppProps) => {
         ]),
       ),
     );
-    setTemplateSets(sets.sets);
+    setTemplateSets(
+      sets.sets.map((set) => ({
+        ...set,
+        templateIds: sets.members
+          .filter((member) => member.setId === set.id)
+          .sort((left, right) => left.position - right.position)
+          .map((member) => member.templateId),
+      })),
+    );
   };
 
   const submitTemplateCreate = async (draft: {
@@ -964,6 +980,8 @@ export const App = ({ initialState }: AppProps) => {
       notes: string;
       estimateMinutes: number | null;
       suggestedProjectId: string | null;
+      tagIds: readonly string[];
+      subtasks: readonly { title: string }[];
     },
   ): Promise<void> => {
     if (state.kind !== "authenticated") return;

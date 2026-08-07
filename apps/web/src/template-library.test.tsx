@@ -28,6 +28,7 @@ const props = {
       id: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
       title: "Friday closeout",
       archivedAt: null,
+      templateIds: ["d1054acd-c04d-4bd8-a814-254b007154ba"],
     },
   ],
   projects: [{ id: "1b34cc57-972c-42e8-bafa-0ba455dced20", title: "Personal" }],

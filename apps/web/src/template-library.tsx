@@ -22,6 +22,7 @@ export interface TemplateSetView {
   readonly id: string;
   readonly title: string;
   readonly archivedAt: string | null;
+  readonly templateIds: readonly string[];
 }
 
 export interface ProjectOption {
@@ -57,6 +58,8 @@ export interface TemplateLibraryProps {
       notes: string;
       estimateMinutes: number | null;
       suggestedProjectId: string | null;
+      tagIds: readonly string[];
+      subtasks: readonly { title: string }[];
     },
   ) => Promise<void>;
   readonly onCreateSet: (
@@ -151,12 +154,21 @@ export const TemplateLibrary = ({
     event.preventDefault();
     const form = event.currentTarget;
     const estimate = Number(formText(form, "estimateMinutes"));
+    const subtasks = formText(form, "subtasks")
+      .split("\n")
+      .map((title) => title.trim())
+      .filter(Boolean)
+      .map((title) => ({ title }));
     await onEdit(template, {
       title: formText(form, "title"),
       notes: formText(form, "notes"),
       estimateMinutes:
         Number.isInteger(estimate) && estimate > 0 ? estimate : null,
       suggestedProjectId: formText(form, "suggestedProjectId") || null,
+      tagIds: new FormData(form)
+        .getAll("tagIds")
+        .filter((value): value is string => typeof value === "string"),
+      subtasks,
     });
   };
   const chooseDestination = (id: string, projectId: string) =>
@@ -326,6 +338,32 @@ export const TemplateLibrary = ({
                         ))}
                       </select>
                     </label>
+                    {tags.length > 0 && (
+                      <fieldset>
+                        <legend>Tags</legend>
+                        {tags.map((tag) => (
+                          <label key={tag.id}>
+                            <input
+                              type="checkbox"
+                              name="tagIds"
+                              value={tag.id}
+                              defaultChecked={template.tagIds.includes(tag.id)}
+                            />{" "}
+                            {tag.displayName}
+                          </label>
+                        ))}
+                      </fieldset>
+                    )}
+                    <label className="field">
+                      <span>Checklist blueprints (one per line)</span>
+                      <textarea
+                        name="subtasks"
+                        rows={3}
+                        defaultValue={items
+                          .map(({ title }) => title)
+                          .join("\n")}
+                      />
+                    </label>
                     <button disabled={busy}>Save template</button>
                   </form>
                 </details>
@@ -393,6 +431,14 @@ export const TemplateLibrary = ({
                 return (
                   <li key={set.id} className="template-card">
                     <strong>{set.title}</strong>
+                    <ol className="template-blueprints">
+                      {set.templateIds.map((templateId) => (
+                        <li key={templateId}>
+                          {templates.find(({ id }) => id === templateId)
+                            ?.title ?? "Archived template"}
+                        </li>
+                      ))}
+                    </ol>
                     <div className="template-destination">
                       {destinationSelect(set.id)}
                       <button

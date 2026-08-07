@@ -1145,7 +1145,9 @@ export const startSuiteServer = async (
                   .listTemplateSubtaskBlueprints(template.id)
                   .map(templateBlueprintResponse),
               ),
-              provenance: database.listTaskTemplateProvenance(token.ownerId),
+              // A templates-only automation credential does not implicitly
+              // gain task-identity metadata through provenance.
+              provenance: [],
             };
           } else if (resource === "template-sets.list") {
             const sets = database.listTemplateSets(token.ownerId);
