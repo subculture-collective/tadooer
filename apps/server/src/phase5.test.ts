@@ -315,6 +315,31 @@ describe("Phase 5 reusable work HTTP integration", () => {
           ]),
         ).toEqual(firstIds);
 
+        const otherProjectResponse = await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          "/api/projects",
+          "POST",
+          { title: "Different destination" },
+        );
+        expect(otherProjectResponse.status).toBe(201);
+        const otherProject = (await otherProjectResponse.json()) as {
+          project: { id: string };
+        };
+        const conflictingReplay = await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          `/api/templates/${template.id}/instantiate`,
+          "POST",
+          {
+            destinationProjectId: otherProject.project.id,
+            idempotencyKey: "phase5-tree-001",
+          },
+        );
+        expect(conflictingReplay.status).toBe(409);
+
         const listedAfterReplay = await fetch(`${server.baseUrl}/api/tasks`, {
           headers: { Cookie: cookie },
         });
@@ -400,7 +425,7 @@ describe("Phase 5 reusable work HTTP integration", () => {
               subtasks: [{ title: "Synced blueprint" }],
             },
           )
-        ).json()) as { id: string };
+        ).json()) as { id: string; revision: number };
         const set = await browserRequest(
           server,
           cookie,
@@ -513,6 +538,52 @@ describe("Phase 5 reusable work HTTP integration", () => {
         );
         expect(
           automationTaskResourceSchema.parse(await taskResource.json()).tasks,
+        ).toEqual([]);
+        const stalePreviewResponse = await automationRequest(
+          server,
+          credential.token,
+          "/api/automation/v1/previews",
+          "POST",
+          {
+            operation: "templates.instantiate",
+            input: {
+              templateId: template.id,
+              destinationProjectId: project.project.id,
+            },
+          },
+        );
+        expect(stalePreviewResponse.status).toBe(201);
+        const stalePreview = automationPreviewResponseSchema.parse(
+          await stalePreviewResponse.json(),
+        ).preview;
+        const changedTemplate = await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          `/api/templates/${template.id}`,
+          "PATCH",
+          { notes: "Changed after preview" },
+          template.revision,
+        );
+        expect(changedTemplate.status).toBe(200);
+        const staleConfirmation = await automationRequest(
+          server,
+          credential.token,
+          `/api/automation/v1/previews/${stalePreview.id}/confirm`,
+          "POST",
+          { idempotencyKey: "phase5-stale-template-001" },
+        );
+        expect(staleConfirmation.status).toBe(412);
+        const tasksAfterStaleConfirmation = await automationRequest(
+          server,
+          credential.token,
+          "/api/automation/v1/resources/tasks",
+          "GET",
+        );
+        expect(
+          automationTaskResourceSchema.parse(
+            await tasksAfterStaleConfirmation.json(),
+          ).tasks,
         ).toEqual([]);
         const previewResponse = await automationRequest(
           server,
