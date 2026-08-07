@@ -571,14 +571,14 @@ export const deleteSubtask = (
     headers: conditionalHeaders(revision, csrfToken),
   });
 
-export type TemplateDraft = {
+export interface TemplateDraft {
   readonly title: string;
   readonly notes: string;
   readonly estimateMinutes: number | null;
   readonly suggestedProjectId: string | null;
   readonly tagIds: readonly string[];
   readonly subtasks: readonly { readonly title: string }[];
-};
+}
 
 export const getTemplateLibrary = (query = "", includeArchived = false) =>
   request(

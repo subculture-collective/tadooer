@@ -33,13 +33,13 @@ const props = {
   projects: [{ id: "1b34cc57-972c-42e8-bafa-0ba455dced20", title: "Personal" }],
   tags: [],
   busy: false,
-  onCreate: vi.fn(async () => undefined),
+  onCreate: vi.fn(() => Promise.resolve()),
   onSearch: vi.fn(),
-  onArchive: vi.fn(async () => undefined),
-  onEdit: vi.fn(async () => undefined),
-  onCreateSet: vi.fn(async () => undefined),
-  onInstantiate: vi.fn(async () => undefined),
-  onInstantiateSet: vi.fn(async () => undefined),
+  onArchive: vi.fn(() => Promise.resolve()),
+  onEdit: vi.fn(() => Promise.resolve()),
+  onCreateSet: vi.fn(() => Promise.resolve()),
+  onInstantiate: vi.fn(() => Promise.resolve()),
+  onInstantiateSet: vi.fn(() => Promise.resolve()),
 };
 
 describe("TemplateLibrary", () => {

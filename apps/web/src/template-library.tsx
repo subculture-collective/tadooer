@@ -1,6 +1,6 @@
 import { useMemo, useState, type SyntheticEvent } from "react";
 
-export type TemplateView = {
+export interface TemplateView {
   readonly id: string;
   readonly title: string;
   readonly notes: string;
@@ -9,23 +9,29 @@ export type TemplateView = {
   readonly tagIds: readonly string[];
   readonly revision: number;
   readonly archivedAt: string | null;
-};
+}
 
-export type TemplateBlueprintView = {
+export interface TemplateBlueprintView {
   readonly id: string;
   readonly templateId: string;
   readonly title: string;
   readonly position: number;
-};
+}
 
-export type TemplateSetView = {
+export interface TemplateSetView {
   readonly id: string;
   readonly title: string;
   readonly archivedAt: string | null;
-};
+}
 
-export type ProjectOption = { readonly id: string; readonly title: string };
-export type TagOption = { readonly id: string; readonly displayName: string };
+export interface ProjectOption {
+  readonly id: string;
+  readonly title: string;
+}
+export interface TagOption {
+  readonly id: string;
+  readonly displayName: string;
+}
 
 export interface TemplateLibraryProps {
   readonly templates: readonly TemplateView[];
@@ -268,7 +274,7 @@ export const TemplateLibrary = ({
                   <small>
                     {template.estimateMinutes == null
                       ? "No estimate"
-                      : `${template.estimateMinutes} minutes`}{" "}
+                      : `${String(template.estimateMinutes)} minutes`}{" "}
                     · {items.length} checklist{" "}
                     {items.length === 1 ? "item" : "items"}
                   </small>

@@ -1410,12 +1410,16 @@ export const startSuiteServer = async (
               );
               return;
             }
+            const activeTemplates = templates.filter(
+              (template): template is NonNullable<typeof template> =>
+                template !== undefined,
+            );
             affected.push(
               { entityKind: "template_set", entityId: set.id },
               { entityKind: "project", entityId: project.id },
-              ...templates.map((template) => ({
+              ...activeTemplates.map((template) => ({
                 entityKind: "template" as const,
-                entityId: template!.id,
+                entityId: template.id,
               })),
             );
             baseRevisions.push(
@@ -1429,10 +1433,10 @@ export const startSuiteServer = async (
                 entityId: project.id,
                 revision: project.revision,
               },
-              ...templates.map((template) => ({
+              ...activeTemplates.map((template) => ({
                 entityKind: "template" as const,
-                entityId: template!.id,
-                revision: template!.revision,
+                entityId: template.id,
+                revision: template.revision,
               })),
             );
           } else if (command.operation.startsWith("focus.")) {

@@ -35,7 +35,7 @@ describe("Phase 2 API transport", () => {
       expect(init.method).toBe("POST");
       expect(headers.get("x-csrf-token")).toBe("csrf-token");
       expect(headers.get("idempotency-key")).toBe("instantiate-0001");
-      expect(JSON.parse(String(init.body))).toEqual({
+      expect(JSON.parse(init.body as string)).toEqual({
         destinationProjectId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
         idempotencyKey: "instantiate-0001",
       });

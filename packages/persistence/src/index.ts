@@ -2980,7 +2980,10 @@ export class SuiteDatabase {
         input.createdAt,
       );
       this.#database.exec("COMMIT;");
-      return this.getTaskTemplate(input.ownerId, input.id)!;
+      const created = this.getTaskTemplate(input.ownerId, input.id);
+      if (created === undefined)
+        throw new Error("Created task template could not be read");
+      return created;
     } catch (error) {
       this.#database.exec("ROLLBACK;");
       throw error;
@@ -3030,7 +3033,9 @@ export class SuiteDatabase {
       )
       .run(now, now, ownerId, id, expectedRevision).changes;
     if (changed !== 1) return undefined;
-    const template = this.getTaskTemplate(ownerId, id, true)!;
+    const template = this.getTaskTemplate(ownerId, id, true);
+    if (template === undefined)
+      throw new Error("Archived task template could not be read");
     this.appendSyncChange(
       ownerId,
       "template",
@@ -3080,10 +3085,7 @@ export class SuiteDatabase {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
       const current = this.getTaskTemplate(input.ownerId, input.id);
-      if (
-        current === undefined ||
-        current.revision !== input.expectedRevision
-      ) {
+      if (current?.revision !== input.expectedRevision) {
         this.#database.exec("COMMIT;");
         return undefined;
       }
@@ -3157,7 +3159,10 @@ export class SuiteDatabase {
         input.now,
       );
       this.#database.exec("COMMIT;");
-      return this.getTaskTemplate(input.ownerId, input.id)!;
+      const updated = this.getTaskTemplate(input.ownerId, input.id);
+      if (updated === undefined)
+        throw new Error("Updated task template could not be read");
+      return updated;
     } catch (error) {
       this.#database.exec("ROLLBACK;");
       throw error;
@@ -3313,7 +3318,9 @@ export class SuiteDatabase {
     if (changed !== 1) return undefined;
     const set = this.listTemplateSets(ownerId, true).find(
       (value) => value.id === id,
-    )!;
+    );
+    if (set === undefined)
+      throw new Error("Archived template set could not be read");
     this.appendSyncChange(
       ownerId,
       "template_set",
@@ -4294,7 +4301,9 @@ export class SuiteDatabase {
         return { kind: "not-found" };
       }
       const resolvedTemplates = templates as TaskTemplateRecord[];
-      const sourceRevision = source?.revision ?? set!.revision;
+      const sourceRevision = source?.revision ?? set?.revision;
+      if (sourceRevision === undefined)
+        throw new Error("Template instantiation source revision is missing");
       const instantiationId = randomUUID();
       const snapshot = resolvedTemplates.map((template) => ({
         ...template,
@@ -4427,10 +4436,14 @@ export class SuiteDatabase {
     readonly provenance: TaskTemplateProvenanceRecord;
   }[] {
     return taskIds.map((taskId) => {
-      const task = this.getTask(ownerId, taskId)!;
+      const task = this.getTask(ownerId, taskId);
+      if (task === undefined)
+        throw new Error("Instantiated task could not be read");
       const row = this.#database
         .prepare("SELECT * FROM task_template_provenance WHERE task_id=?")
-        .get(taskId) as unknown as Record<string, string | number>;
+        .get(taskId) as unknown as Record<string, string | number> | undefined;
+      if (row === undefined)
+        throw new Error("Instantiated task provenance could not be read");
       return {
         task,
         subtasks: this.listSubtasks(ownerId, taskId),
