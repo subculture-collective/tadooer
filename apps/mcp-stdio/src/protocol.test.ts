@@ -91,6 +91,54 @@ describe("MCP stdio protocol", () => {
     }
   });
 
+  it("serializes validated Boolean GET resource arguments as query parameters", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ templates: [] }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const resourceCatalog: AutomationCatalog = {
+        tools: [],
+        resources: [
+          {
+            uri: "suite://v1/templates",
+            name: "Templates",
+            description: "Inert task templates",
+            mimeType: "application/json",
+            http: { path: "/api/automation/v1/resources/templates" },
+            inputValidator: {
+              safeParse: () => ({
+                success: true as const,
+                data: { query: "", includeArchived: false },
+              }),
+            },
+          },
+        ],
+      };
+      const server = new McpStdioServer(resourceCatalog, config);
+      await expect(
+        server.handle({
+          jsonrpc: "2.0",
+          id: 4,
+          method: "resources/read",
+          params: { uri: "suite://v1/templates" },
+        }),
+      ).resolves.toMatchObject({
+        result: { contents: [{ uri: "suite://v1/templates" }] },
+      });
+      const destination = fetcher.mock.calls.at(0)?.[0];
+      expect(destination).toEqual(
+        new URL(
+          "https://suite.example.test/api/automation/v1/resources/templates?query=&includeArchived=false",
+        ),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("returns safe MCP errors without network detail or credentials", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

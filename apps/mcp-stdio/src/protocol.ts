@@ -120,7 +120,11 @@ class AutomationApiClient {
       const destination = automationApiUrl(this.config.baseUrl, path);
       if (http.method === "GET") {
         for (const [key, value] of Object.entries(body)) {
-          if (typeof value !== "string") {
+          if (
+            typeof value !== "string" &&
+            typeof value !== "number" &&
+            typeof value !== "boolean"
+          ) {
             return {
               ok: false,
               failure: {
@@ -129,7 +133,7 @@ class AutomationApiClient {
               },
             };
           }
-          destination.searchParams.set(key, value);
+          destination.searchParams.set(key, String(value));
         }
       }
       response = await fetch(
