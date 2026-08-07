@@ -13,6 +13,13 @@ import {
   plannerWindowSchema,
   activeSessionCommandSchema,
   activeSessionSchema,
+  automationCatalog,
+  automationConfirmRequestSchema,
+  automationFocusCommandInputSchema,
+  automationPreviewCommandSchema,
+  automationTokenSchema,
+  automationTokenSecretSchema,
+  createAutomationTokenRequestSchema,
   clientAuthenticationHeadersSchema,
   clientRegistrationRequestSchema,
   projectSchema,
@@ -389,5 +396,109 @@ describe("Suite contracts", () => {
         clientCredential: "A".repeat(43),
       }).success,
     ).toBe(false);
+  });
+
+  it("defines scoped, opaque automation credentials without browser-client reuse", () => {
+    expect(
+      createAutomationTokenRequestSchema.parse({
+        label: "Local planning agent",
+        scopes: ["tasks:read", "tasks:write", "schedule:read"],
+        expiresAt: "2026-09-01T00:00:00.000Z",
+      }),
+    ).toBeDefined();
+    expect(
+      automationTokenSecretSchema.parse(`suite_at_${id}.${"A".repeat(43)}`),
+    ).toContain("suite_at_");
+    expect(
+      automationTokenSchema.parse({
+        id,
+        ownerId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        label: "Local planning agent",
+        scopes: ["tasks:read", "tasks:write"],
+        createdAt: "2026-08-06T16:00:00.000Z",
+        lastUsedAt: null,
+        expiresAt: "2026-09-01T00:00:00.000Z",
+        revokedAt: null,
+      }),
+    ).toBeDefined();
+    expect(
+      createAutomationTokenRequestSchema.safeParse({
+        label: "Duplicate scope",
+        scopes: ["tasks:read", "tasks:read"],
+        expiresAt: "2026-09-01T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+    expect(automationTokenSecretSchema.safeParse("A".repeat(43)).success).toBe(
+      false,
+    );
+  });
+
+  it("requires a typed preview and a separate idempotency-bearing confirmation", () => {
+    expect(
+      automationPreviewCommandSchema.parse({
+        operation: "tasks.create",
+        input: { title: "Prepare status", notes: "No side effect yet" },
+      }),
+    ).toBeDefined();
+    expect(
+      automationPreviewCommandSchema.parse({
+        operation: "schedule.create_time_block",
+        input: {
+          taskId: id,
+          calendarId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+          startsAt: "2026-08-06T18:00:00.000Z",
+          durationMinutes: 30,
+        },
+      }),
+    ).toBeDefined();
+    expect(
+      automationFocusCommandInputSchema.parse({
+        operation: "focus.takeover",
+        sessionId: id,
+        expectedRevision: 2,
+      }),
+    ).toBeDefined();
+    expect(
+      automationConfirmRequestSchema.parse({
+        idempotencyKey: "automation-confirm-0001",
+      }),
+    ).toBeDefined();
+    expect(
+      automationPreviewCommandSchema.safeParse({
+        operation: "focus.pause",
+        input: {
+          operation: "focus.resume",
+          sessionId: id,
+          expectedRevision: 2,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      automationConfirmRequestSchema.safeParse({ dryRun: false }).success,
+    ).toBe(false);
+  });
+
+  it("keeps one catalog for Suite HTTP and MCP without legacy bridge identifiers", () => {
+    const ids = automationCatalog.map((entry) => entry.id);
+    const names = automationCatalog.map((entry) => entry.mcpName);
+    const uris = automationCatalog.flatMap((entry) =>
+      "mcpUri" in entry && entry.mcpUri !== undefined ? [entry.mcpUri] : [],
+    );
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(new Set(names).size).toBe(names.length);
+    expect(new Set(uris).size).toBe(uris.length);
+    expect(automationCatalog).toHaveLength(14);
+    for (const entry of automationCatalog) {
+      expect(entry.apiPath).toMatch(/^\/api\/automation\/v1\//);
+      expect(entry.mcpName.startsWith("suite.")).toBe(true);
+      expect(
+        "mcpUri" in entry && entry.mcpUri !== undefined
+          ? entry.mcpUri.startsWith("sp://")
+          : false,
+      ).toBe(false);
+      expect(entry.scopes.length).toBeGreaterThan(0);
+      if (entry.kind === "tool") expect(entry.confirmationRequired).toBe(true);
+      else expect(entry.confirmationRequired).toBe(false);
+    }
   });
 });

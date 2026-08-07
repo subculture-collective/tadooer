@@ -636,6 +636,295 @@ export const syncDiagnosticManifestSchema = z
   })
   .strict();
 
+// Phase 4 automation is a separate actor from browser sessions and registered
+// sync clients. These contracts deliberately describe the public, safe edge:
+// raw token secrets and preview input are never returned in inventories, audit
+// records, or diagnostic exports.
+export const automationTokenScopeSchema = z.enum([
+  "tasks:read",
+  "tasks:write",
+  "schedule:read",
+  "schedule:write",
+  "projects:read",
+  "tags:read",
+  "focus:read",
+  "focus:write",
+]);
+
+export const automationTokenSchema = z
+  .object({
+    id: entityIdSchema,
+    ownerId: entityIdSchema,
+    label: z.string().trim().min(1).max(100),
+    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    createdAt: z.iso.datetime(),
+    lastUsedAt: z.iso.datetime().nullable(),
+    expiresAt: z.iso.datetime(),
+    revokedAt: z.iso.datetime().nullable(),
+  })
+  .strict()
+  .refine(({ scopes }) => new Set(scopes).size === scopes.length, {
+    message: "Automation token scopes must be unique",
+  });
+
+export const createAutomationTokenRequestSchema = z
+  .object({
+    label: z.string().trim().min(1).max(100),
+    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    expiresAt: z.iso.datetime(),
+  })
+  .strict()
+  .refine(({ scopes }) => new Set(scopes).size === scopes.length, {
+    message: "Automation token scopes must be unique",
+  });
+
+export const automationTokenSecretSchema = z
+  .string()
+  .regex(
+    /^suite_at_[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/,
+    "Automation token must be an opaque Suite credential",
+  );
+
+export const createAutomationTokenResponseSchema = z
+  .object({ token: automationTokenSecretSchema, record: automationTokenSchema })
+  .strict();
+
+export const automationTokenListResponseSchema = z
+  .object({ tokens: z.array(automationTokenSchema) })
+  .strict();
+
+export const automationOperationSchema = z.enum([
+  "tasks.create",
+  "schedule.create_time_block",
+  "focus.start",
+  "focus.pause",
+  "focus.resume",
+  "focus.start_break",
+  "focus.end_break",
+  "focus.complete",
+  "focus.takeover",
+]);
+
+const automationSessionCommandBaseSchema = z.object({
+  sessionId: entityIdSchema,
+  expectedRevision: revisionSchema,
+});
+
+export const automationFocusCommandInputSchema = z.discriminatedUnion(
+  "operation",
+  [
+    z.object({ operation: z.literal("focus.start"), taskId: entityIdSchema }),
+    ...[
+      "focus.pause",
+      "focus.resume",
+      "focus.start_break",
+      "focus.end_break",
+      "focus.complete",
+      "focus.takeover",
+    ].map((operation) =>
+      automationSessionCommandBaseSchema.extend({
+        operation: z.literal(
+          operation as Exclude<
+            z.infer<typeof automationOperationSchema>,
+            "tasks.create" | "schedule.create_time_block" | "focus.start"
+          >,
+        ),
+      }),
+    ),
+  ],
+);
+
+export const automationPreviewCommandSchema = z.discriminatedUnion(
+  "operation",
+  [
+    z.object({
+      operation: z.literal("tasks.create"),
+      input: createTaskRequestSchema,
+    }),
+    z.object({
+      operation: z.literal("schedule.create_time_block"),
+      input: z
+        .object({ taskId: entityIdSchema })
+        .extend(createTaskTimeBlockRequestSchema.shape),
+    }),
+    ...[
+      "focus.start",
+      "focus.pause",
+      "focus.resume",
+      "focus.start_break",
+      "focus.end_break",
+      "focus.complete",
+      "focus.takeover",
+    ].map((operation) =>
+      z.object({
+        operation: z.literal(
+          operation as Extract<
+            z.infer<typeof automationOperationSchema>,
+            `focus.${string}`
+          >,
+        ),
+        input: automationFocusCommandInputSchema.refine(
+          (input) => input.operation === operation,
+          { message: "Focus preview operation and input must agree" },
+        ),
+      }),
+    ),
+  ],
+);
+
+export const automationAffectedEntitySchema = z
+  .object({
+    entityKind: z.enum(["task", "calendar", "active_session"]),
+    entityId: entityIdSchema,
+  })
+  .strict();
+
+export const automationBaseRevisionSchema = z
+  .object({
+    entityKind: z.enum(["task", "active_session"]),
+    entityId: entityIdSchema,
+    revision: revisionSchema,
+  })
+  .strict();
+
+export const automationPreviewSchema = z
+  .object({
+    id: entityIdSchema,
+    operation: automationOperationSchema,
+    inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+    summary: z.string().trim().min(1).max(1_000),
+    affected: z.array(automationAffectedEntitySchema).max(25),
+    baseRevisions: z.array(automationBaseRevisionSchema).max(25),
+    expiresAt: z.iso.datetime(),
+    requiresConfirmation: z.literal(true),
+  })
+  .strict();
+
+export const automationPreviewResponseSchema = z
+  .object({ preview: automationPreviewSchema })
+  .strict();
+
+export const automationConfirmRequestSchema = z
+  .object({ idempotencyKey: idempotencyKeySchema })
+  .strict();
+
+export const automationExecutionResultSchema = z.union([
+  taskMutationResponseSchema,
+  taskTimeBlockMutationResponseSchema,
+  activeSessionCommandResponseSchema,
+]);
+
+export const automationConfirmationResponseSchema = z
+  .object({
+    previewId: entityIdSchema,
+    operation: automationOperationSchema,
+    replayed: z.boolean(),
+    result: automationExecutionResultSchema,
+  })
+  .strict();
+
+export const automationTaskResourceSchema = z
+  .object({ tasks: z.array(taskSchema) })
+  .strict();
+export const automationScheduleResourceSchema = plannerResponseSchema;
+export const automationProjectResourceSchema = z
+  .object({ projects: z.array(projectSchema) })
+  .strict();
+export const automationTagResourceSchema = z
+  .object({ tags: z.array(tagSchema) })
+  .strict();
+export const automationActiveSessionResourceSchema = z
+  .object({ session: activeSessionSchema.nullable() })
+  .strict();
+
+export type AutomationCatalogEntry = {
+  readonly id: string;
+  readonly kind: "resource" | "tool";
+  readonly scopes: readonly z.infer<typeof automationTokenScopeSchema>[];
+  readonly confirmationRequired: boolean;
+  readonly apiPath: string;
+  readonly mcpName: string;
+  readonly mcpUri?: string;
+  readonly inputSchema: z.ZodType;
+  readonly outputSchema: z.ZodType;
+};
+
+// This is the only automation catalog. HTTP handlers and the stdio adapter must
+// import it instead of maintaining parallel operation lists.
+export const automationCatalog = [
+  {
+    id: "tasks.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tasks",
+    mcpName: "suite.tasks.list",
+    mcpUri: "suite://v1/tasks",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTaskResourceSchema,
+  },
+  {
+    id: "schedule.get",
+    kind: "resource",
+    scopes: ["schedule:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/schedule",
+    mcpName: "suite.schedule.get",
+    mcpUri: "suite://v1/schedule{?from,to}",
+    inputSchema: plannerWindowSchema,
+    outputSchema: automationScheduleResourceSchema,
+  },
+  {
+    id: "projects.list",
+    kind: "resource",
+    scopes: ["projects:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/projects",
+    mcpName: "suite.projects.list",
+    mcpUri: "suite://v1/projects",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationProjectResourceSchema,
+  },
+  {
+    id: "tags.list",
+    kind: "resource",
+    scopes: ["tags:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tags",
+    mcpName: "suite.tags.list",
+    mcpUri: "suite://v1/tags",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTagResourceSchema,
+  },
+  {
+    id: "active-session.get",
+    kind: "resource",
+    scopes: ["focus:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/active-session",
+    mcpName: "suite.active_session.get",
+    mcpUri: "suite://v1/active-session",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationActiveSessionResourceSchema,
+  },
+  ...automationOperationSchema.options.map((id) => ({
+    id,
+    kind: "tool" as const,
+    scopes: [
+      id === "tasks.create"
+        ? "tasks:write"
+        : id === "schedule.create_time_block"
+          ? "schedule:write"
+          : "focus:write",
+    ] as const,
+    confirmationRequired: true,
+    apiPath: "/api/automation/v1/previews",
+    mcpName: `suite.${id}`,
+    inputSchema: automationPreviewCommandSchema,
+    outputSchema: automationPreviewResponseSchema,
+  })),
+] as const satisfies readonly AutomationCatalogEntry[];
+
 export const importTaskCandidateSchema = z.object({
   externalId: z.string().trim().min(1).max(1024),
   title: z.string().trim().min(1).max(240),
@@ -717,4 +1006,25 @@ export type SyncCursorExpired = z.infer<typeof syncCursorExpiredSchema>;
 export type SyncSnapshotResponse = z.infer<typeof syncSnapshotResponseSchema>;
 export type SyncDiagnosticManifest = z.infer<
   typeof syncDiagnosticManifestSchema
+>;
+export type AutomationTokenScope = z.infer<typeof automationTokenScopeSchema>;
+export type AutomationToken = z.infer<typeof automationTokenSchema>;
+export type CreateAutomationTokenRequest = z.infer<
+  typeof createAutomationTokenRequestSchema
+>;
+export type CreateAutomationTokenResponse = z.infer<
+  typeof createAutomationTokenResponseSchema
+>;
+export type AutomationPreviewCommand = z.infer<
+  typeof automationPreviewCommandSchema
+>;
+export type AutomationPreview = z.infer<typeof automationPreviewSchema>;
+export type AutomationPreviewResponse = z.infer<
+  typeof automationPreviewResponseSchema
+>;
+export type AutomationConfirmRequest = z.infer<
+  typeof automationConfirmRequestSchema
+>;
+export type AutomationConfirmationResponse = z.infer<
+  typeof automationConfirmationResponseSchema
 >;
