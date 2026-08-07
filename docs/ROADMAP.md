@@ -270,6 +270,31 @@ idempotent task and scheduling actions through stable suite contracts.
 
 ## Phase 5: Reusable work
 
+### Implementation checkpoint
+
+Completed on 2026-08-07 on `codex/phase-5-reusable-work`:
+
+- dedicated inert Task Template, ordered subtask-blueprint, Template Set,
+  ordered membership, durable instantiation, and task-provenance storage under
+  checksummed migration 0009
+- a separate searchable Template Library with create-from-scratch,
+  create-from-task, edit, archive, explicit existing-project selection,
+  ordered Set creation, and persisted provenance display
+- one-transaction template or set instantiation that copies independent normal
+  tasks, tags, estimates, and ordered subtasks; same-request retries return the
+  original task-tree identities across restart
+- first-class sync snapshots that bundle ordered blueprints with templates and
+  ordered members with sets without casting either into active tasks
+- scoped catalog-derived MCP resources and preview/confirm tools for template
+  and set instantiation, including stale-source revisions, durable replay,
+  audit, and revocation behavior inherited from the Phase 4 authority
+- SQLite backup/restore coverage plus a disposable Compose gate using the built
+  Suite, Baïkal, and real local stdio adapter; restored confirmations replay the
+  same provenance-bearing tree
+
+Phase 5 is complete. Choice Pools, planning placeholders, cooldown/cycle
+policy, and two-device placeholder resolution remain Phase 6 work.
+
 ### User outcome
 
 The owner creates inert Task Templates and instantiates one task or a reusable

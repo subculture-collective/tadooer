@@ -5,14 +5,18 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phase 4 automation is complete on top of the Phase 2 runtime. The runnable
+Phase 5 reusable work is complete on top of the Phase 2 and Phase 4 runtime.
+The runnable
 self-hosted suite includes secure single-owner
 authentication, encrypted Baïkal planning, a durable browser-local task cache,
 replay-safe queued task writes, explicit two-client conflicts, daily-use task
 organization, and one server-authoritative focus/break session with follower
 and takeover behavior, plus separately scoped automation credentials, a stable
 preview/confirm API, content-safe audit records, a catalog-driven local MCP
-stdio adapter, and quick-add through the same confirmed API. It does not claim
+stdio adapter, quick-add through the same confirmed API, and a separate
+Template Library with inert templates, ordered Template Sets, explicit-project
+instantiation, immutable provenance, sync snapshots, and confirmed MCP
+instantiation. It does not claim
 offline calendar/focus mutation, closed-application background sync, Google
 Calendar, recurrence editing, or hosted MCP. Phase 3 Google federation is not
 present in this checkout.
@@ -136,6 +140,9 @@ The Phase 2 task-sync and active-session authority rules are recorded in
 [`docs/adr/0010-phase-2-local-sync-and-active-session.md`](docs/adr/0010-phase-2-local-sync-and-active-session.md).
 The Phase 4 automation authority and local-only transport decision are recorded
 in [`docs/adr/0011-phase-4-automation-authority.md`](docs/adr/0011-phase-4-automation-authority.md).
+The Phase 5 reusable-work identities, snapshot, and exact-once decisions are
+recorded in
+[`docs/adr/0012-phase-5-reusable-work.md`](docs/adr/0012-phase-5-reusable-work.md).
 
 An owner issues, inventories, and revokes automation credentials through
 `/api/automation/tokens`; the raw `suite_at_...` credential is returned only at
@@ -174,9 +181,11 @@ compatibility claim.
 The active requirements interview is recorded in
 [`docs/discovery/requirements-interview.md`](docs/discovery/requirements-interview.md).
 
-Candidate product requirements that have been captured but not assigned to a
-release live under `docs/product/candidate-features/`, including
-[Task Templates and Choice Pools](docs/product/candidate-features/task-templates-and-choice-pools.md).
+Candidate product requirements and their implementation boundaries live under
+`docs/product/candidate-features/`. The
+[Task Templates and Choice Pools](docs/product/candidate-features/task-templates-and-choice-pools.md)
+record now distinguishes the completed Phase 5 template slice from the
+remaining Phase 6 Choice Pool work.
 
 Implementation order is governed by the
 [Feature Prioritization](docs/product/feature-prioritization.md) rules and the

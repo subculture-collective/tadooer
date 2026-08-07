@@ -2,9 +2,10 @@
 
 ## Status
 
-Approved product direction and captured requirement. Sequenced after the core
-task/sync contracts in the roadmap, but not committed to the first usable
-release or accepted as a persisted data contract.
+The Task Template and Template Set portion was accepted and implemented in
+Phase 5 on 2026-08-07. Choice Pools and Planning Placeholders remain approved
+product direction assigned to Phase 6; their open policy questions are not a
+persisted data contract yet.
 
 ## Goal
 
