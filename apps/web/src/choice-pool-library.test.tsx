@@ -41,6 +41,7 @@ describe("ChoicePoolLibrary", () => {
             taskId: "00000000-0000-4000-8000-000000000005",
             poolId: "00000000-0000-4000-8000-000000000001",
             pickCount: 1,
+            position: 0,
             state: "unresolved",
             revision: 1,
             createdAt: now,
@@ -65,9 +66,14 @@ describe("ChoicePoolLibrary", () => {
             tagIds: [],
           },
         ]}
+        templates={[]}
+        poolSlots={[]}
         busy={false}
         onCreatePool={async () => undefined}
         onCreatePlaceholder={async () => undefined}
+        onEditPool={async () => undefined}
+        onCreateTemplateSlot={async () => undefined}
+        onRecordCompletion={async () => undefined}
         onSuggest={async () => {
           throw new Error("not invoked during SSR");
         }}

@@ -13,6 +13,7 @@ import type {
   ChoicePoolHistoryEvent,
   PlanningPlaceholder,
   ChoicePoolSuggestionResponse,
+  TemplatePoolSlot,
 } from "@suite/contracts";
 import {
   ApiRequestError,
@@ -48,6 +49,9 @@ import {
   createPlanningPlaceholder,
   suggestPlanningPlaceholder,
   resolvePlanningPlaceholder,
+  patchChoicePool,
+  createTemplatePoolSlot,
+  recordChoicePoolCompletion,
   patchSubtask,
   login,
   logout,
@@ -184,6 +188,9 @@ export const App = ({ initialState }: AppProps) => {
   const [planningPlaceholders, setPlanningPlaceholders] = useState<
     readonly PlanningPlaceholder[]
   >([]);
+  const [templatePoolSlots, setTemplatePoolSlots] = useState<
+    readonly TemplatePoolSlot[]
+  >([]);
 
   const cachedTaskState = useCallback(async () => {
     const snapshots = await localStore.loadCachedTasks({
@@ -244,6 +251,7 @@ export const App = ({ initialState }: AppProps) => {
       setTags(tagList);
       setTemplates(library.templates);
       setTemplateBlueprints(library.blueprints);
+      setTemplatePoolSlots(library.poolSlots);
       setTemplateProvenance(
         Object.fromEntries(
           library.provenance.map((provenance) => [
@@ -942,6 +950,7 @@ export const App = ({ initialState }: AppProps) => {
     ]);
     setTemplates(library.templates);
     setTemplateBlueprints(library.blueprints);
+    setTemplatePoolSlots(library.poolSlots);
     setTemplateProvenance(
       Object.fromEntries(
         library.provenance.map((provenance) => [
@@ -1153,6 +1162,85 @@ export const App = ({ initialState }: AppProps) => {
     setFormError(null);
     try {
       await createChoicePool(input, state.session.csrfToken);
+      await refreshChoicePools();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editChoicePool = async (
+    pool: ChoicePool,
+    input: {
+      title: string;
+      policy: ChoicePool["policy"];
+      pickCount: number;
+      cooldownSeconds: number | null;
+      items: readonly { readonly id?: string; readonly title: string }[];
+    },
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await patchChoicePool(
+        pool.id,
+        pool.revision,
+        {
+          ...input,
+          items: input.items.map((item) => ({
+            title: item.title,
+            ...(item.id === undefined ? {} : { id: item.id }),
+          })),
+        },
+        state.session.csrfToken,
+      );
+      await refreshChoicePools();
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addTemplatePoolSlot = async (
+    templateId: string,
+    poolId: string,
+    pickCount: number,
+    position: number,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await createTemplatePoolSlot(
+        templateId,
+        { poolId, pickCount, position },
+        state.session.csrfToken,
+      );
+      await refreshTemplateLibrary();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const completeChoicePoolItem = async (
+    poolId: string,
+    itemId: string,
+    placeholderId: string,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    try {
+      await recordChoicePoolCompletion(
+        poolId,
+        itemId,
+        placeholderId,
+        state.session.csrfToken,
+      );
       await refreshChoicePools();
     } catch (error: unknown) {
       setFormError(messageFor(error));
@@ -1639,9 +1727,14 @@ export const App = ({ initialState }: AppProps) => {
               history={choicePoolHistory}
               placeholders={planningPlaceholders}
               tasks={state.tasks}
+              templates={templates}
+              poolSlots={templatePoolSlots}
               busy={busy}
               onCreatePool={submitChoicePool}
               onCreatePlaceholder={submitPlanningPlaceholder}
+              onEditPool={editChoicePool}
+              onCreateTemplateSlot={addTemplatePoolSlot}
+              onRecordCompletion={completeChoicePoolItem}
               onSuggest={previewPlanningPlaceholder}
               onResolve={submitPlaceholderResolution}
             />

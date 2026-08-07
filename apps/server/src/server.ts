@@ -70,6 +70,9 @@ import {
   createChoicePoolRequestSchema,
   createPlanningPlaceholderRequestSchema,
   resolvePlanningPlaceholderRequestSchema,
+  updateChoicePoolRequestSchema,
+  createTemplatePoolSlotRequestSchema,
+  completeChoicePoolItemRequestSchema,
 } from "@suite/contracts";
 import {
   SuiteDatabase,
@@ -1232,6 +1235,9 @@ export const startSuiteServer = async (
               // A templates-only automation credential does not implicitly
               // gain task-identity metadata through provenance.
               provenance: [],
+              poolSlots: templates.flatMap((template) =>
+                database.listTemplatePoolSlots(template.id),
+              ),
             };
           } else if (resource === "template-sets.list") {
             const sets = database.listTemplateSets(token.ownerId);
@@ -2510,6 +2516,126 @@ export const startSuiteServer = async (
             return;
           }
 
+          const poolPatch = /^\/api\/pools\/([0-9a-f-]{36})$/.exec(
+            url.pathname,
+          );
+          if (method === "PATCH" && poolPatch !== null) {
+            const revision = expectedRevision(request, response);
+            if (revision === undefined) return;
+            const parsed = updateChoicePoolRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_CHOICE_POOL",
+                "Choice pool update is invalid",
+              );
+              return;
+            }
+            const updated = database.updateChoicePool({
+              ownerId: session.owner.id,
+              id: poolPatch[1] ?? "",
+              expectedRevision: revision,
+              title: parsed.data.title,
+              policy: parsed.data.policy,
+              pickCount: parsed.data.pickCount,
+              cooldownSeconds: parsed.data.cooldownSeconds,
+              items: parsed.data.items.map((item) => ({
+                title: item.title,
+                ...(item.id === undefined ? {} : { id: item.id }),
+              })),
+              now: new Date().toISOString(),
+            });
+            if (updated === undefined) {
+              sendError(
+                response,
+                412,
+                "CHOICE_POOL_STALE",
+                "Choice pool changed or is invalid",
+              );
+              return;
+            }
+            sendJson(response, 200, choicePoolResponse(updated), {
+              ETag: `"${String(updated.revision)}"`,
+            });
+            return;
+          }
+
+          const completionMatch =
+            /^\/api\/pools\/([0-9a-f-]{36})\/items\/([0-9a-f-]{36})\/completions$/.exec(
+              url.pathname,
+            );
+          if (method === "POST" && completionMatch !== null) {
+            const parsed = completeChoicePoolItemRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_POOL_COMPLETION",
+                "Completion input is invalid",
+              );
+              return;
+            }
+            const event = database.recordChoicePoolCompletion({
+              ownerId: session.owner.id,
+              poolId: completionMatch[1] ?? "",
+              itemId: completionMatch[2] ?? "",
+              placeholderId: parsed.data.placeholderId,
+              occurredAt: parsed.data.occurredAt,
+            });
+            if (event === undefined) {
+              sendError(
+                response,
+                404,
+                "POOL_ITEM_NOT_FOUND",
+                "Choice Pool item not found",
+              );
+              return;
+            }
+            sendJson(response, 201, choicePoolHistoryResponse(event));
+            return;
+          }
+
+          const slotMatch =
+            /^\/api\/templates\/([0-9a-f-]{36})\/pool-slots$/.exec(
+              url.pathname,
+            );
+          if (method === "POST" && slotMatch !== null) {
+            const parsed = createTemplatePoolSlotRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_POOL_SLOT",
+                "Template pool slot input is invalid",
+              );
+              return;
+            }
+            const slot = database.createTemplatePoolSlot(session.owner.id, {
+              id: randomUUID(),
+              templateId: slotMatch[1] ?? "",
+              ...parsed.data,
+              createdAt: new Date().toISOString(),
+            });
+            if (slot === undefined) {
+              sendError(
+                response,
+                409,
+                "TEMPLATE_POOL_SLOT_INVALID",
+                "Template, pool, order, or pick count is invalid",
+              );
+              return;
+            }
+            sendJson(response, 201, slot);
+            return;
+          }
+
           if (method === "POST" && url.pathname === "/api/placeholders") {
             const parsed = createPlanningPlaceholderRequestSchema.safeParse(
               await readJson(request),
@@ -2543,6 +2669,9 @@ export const startSuiteServer = async (
               taskId: parsed.data.taskId,
               poolId: pool.id,
               pickCount: parsed.data.pickCount ?? pool.pickCount,
+              position: database
+                .listPlanningPlaceholders(session.owner.id)
+                .filter(({ taskId }) => taskId === parsed.data.taskId).length,
               state: "unresolved",
               revision: 1,
               createdAt: now,
@@ -2780,6 +2909,9 @@ export const startSuiteServer = async (
                   .map(templateBlueprintResponse),
               ),
               provenance: database.listTaskTemplateProvenance(session.owner.id),
+              poolSlots: templates.flatMap((template) =>
+                database.listTemplatePoolSlots(template.id),
+              ),
             });
             return;
           }
@@ -4156,6 +4288,7 @@ export const startSuiteServer = async (
                   blueprints: database
                     .listTemplateSubtaskBlueprints(template.id)
                     .map(templateBlueprintResponse),
+                  poolSlots: [...database.listTemplatePoolSlots(template.id)],
                 },
               })),
               ...snapshot.templateSets.map((set) => ({
@@ -4506,6 +4639,11 @@ export const startSuiteServer = async (
                                   blueprints: database
                                     .listTemplateSubtaskBlueprints(template.id)
                                     .map(templateBlueprintResponse),
+                                  poolSlots: [
+                                    ...database.listTemplatePoolSlots(
+                                      template.id,
+                                    ),
+                                  ],
                                 },
                               }
                             : templateSet !== undefined

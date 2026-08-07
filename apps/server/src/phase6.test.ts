@@ -116,6 +116,32 @@ describe("Phase 6 choice pool integration", () => {
           pool: { id: string };
           items: { id: string }[];
         };
+        const editedPool = await fetch(
+          `${server.baseUrl}/api/pools/${createdPool.pool.id}`,
+          {
+            method: "PATCH",
+            headers: {
+              Origin: server.baseUrl,
+              Cookie: cookie,
+              "X-CSRF-Token": csrfToken,
+              "Content-Type": "application/json",
+              "If-Match": '"1"',
+            },
+            body: JSON.stringify({
+              title: "Leg exercise rotation",
+              policy: "cycle",
+              pickCount: 2,
+              cooldownSeconds: null,
+              items: ["Squat", "Lunge", "Calf raise", "Leg curl"].map(
+                (title, index) => ({
+                  id: createdPool.items[index]?.id,
+                  title,
+                }),
+              ),
+            }),
+          },
+        );
+        expect(editedPool.status).toBe(200);
         const taskList = taskListResponseSchema.parse(
           await (
             await fetch(`${server.baseUrl}/api/tasks`, {
@@ -215,6 +241,16 @@ describe("Phase 6 choice pool integration", () => {
           await raced[winnerIndex]!.json(),
         );
         expect(winner.subtasks).toHaveLength(2);
+        const completion = await post(
+          `/api/pools/${createdPool.pool.id}/items/${winner.history[0]!.itemId}/completions`,
+          {
+            placeholderId: placeholder.id,
+            occurredAt: "2026-08-07T13:00:00.000Z",
+          },
+          cookie,
+          csrfToken,
+        );
+        expect(completion.status).toBe(201);
         await server.close();
         server = await startSuiteServer(config);
         const replay = await post(
@@ -233,6 +269,59 @@ describe("Phase 6 choice pool integration", () => {
           resolution: { id: winner.resolution.id },
           subtasks: winner.subtasks.map(({ id }) => ({ id })),
         });
+
+        const project = (await (
+          await post(
+            "/api/projects",
+            { title: "Template destination" },
+            cookie,
+            csrfToken,
+          )
+        ).json()) as { project: { id: string } };
+        const template = (await (
+          await post(
+            "/api/templates",
+            {
+              title: "Pool-backed template",
+              notes: "",
+              estimateMinutes: null,
+              suggestedProjectId: null,
+              tagIds: [],
+              subtasks: [{ title: "Warm up" }],
+            },
+            cookie,
+            csrfToken,
+          )
+        ).json()) as { id: string };
+        const slot = await post(
+          `/api/templates/${template.id}/pool-slots`,
+          { poolId: createdPool.pool.id, pickCount: 2, position: 1 },
+          cookie,
+          csrfToken,
+        );
+        expect(slot.status).toBe(201);
+        const templateInstance = await post(
+          `/api/templates/${template.id}/instantiate`,
+          {
+            destinationProjectId: project.project.id,
+            idempotencyKey: "phase6-template-slot-001",
+          },
+          cookie,
+          csrfToken,
+        );
+        expect(templateInstance.status).toBe(201);
+        const poolsAfterTemplate = choicePoolLibraryResponseSchema.parse(
+          await (
+            await fetch(`${server.baseUrl}/api/pools`, {
+              headers: { Cookie: cookie },
+            })
+          ).json(),
+        );
+        expect(
+          poolsAfterTemplate.placeholders.some(
+            ({ position, state }) => position === 1 && state === "unresolved",
+          ),
+        ).toBe(true);
 
         const automationParent = await createParent(
           "Automated choice",

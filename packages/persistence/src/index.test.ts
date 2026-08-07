@@ -222,6 +222,7 @@ describe("SuiteDatabase", () => {
           taskId: "pool-parent",
           poolId: "leg-pool",
           pickCount: 2,
+          position: 0,
           state: "unresolved",
           revision: 1,
           createdAt: now,

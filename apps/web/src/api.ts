@@ -26,6 +26,12 @@ import {
   planningPlaceholderResolutionResponseSchema,
   planningPlaceholderSchema,
   resolvePlanningPlaceholderRequestSchema,
+  updateChoicePoolRequestSchema,
+  choicePoolSchema,
+  createTemplatePoolSlotRequestSchema,
+  templatePoolSlotSchema,
+  completeChoicePoolItemRequestSchema,
+  choicePoolHistoryEventSchema,
   taskListResponseSchema,
   taskMutationResponseSchema,
   conditionalTaskMutationResponseSchema,
@@ -725,6 +731,50 @@ export const createPlanningPlaceholder = (
       createPlanningPlaceholderRequestSchema.parse({ taskId, poolId }),
     ),
   });
+
+export const patchChoicePool = (
+  poolId: string,
+  revision: number,
+  input: z.infer<typeof updateChoicePoolRequestSchema>,
+  csrfToken: string,
+) =>
+  request(`/api/pools/${poolId}`, choicePoolSchema, {
+    method: "PATCH",
+    headers: conditionalHeaders(revision, csrfToken),
+    body: JSON.stringify(updateChoicePoolRequestSchema.parse(input)),
+  });
+
+export const createTemplatePoolSlot = (
+  templateId: string,
+  input: z.infer<typeof createTemplatePoolSlotRequestSchema>,
+  csrfToken: string,
+) =>
+  request(`/api/templates/${templateId}/pool-slots`, templatePoolSlotSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(createTemplatePoolSlotRequestSchema.parse(input)),
+  });
+
+export const recordChoicePoolCompletion = (
+  poolId: string,
+  itemId: string,
+  placeholderId: string | null,
+  csrfToken: string,
+) =>
+  request(
+    `/api/pools/${poolId}/items/${itemId}/completions`,
+    choicePoolHistoryEventSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(
+        completeChoicePoolItemRequestSchema.parse({
+          placeholderId,
+          occurredAt: new Date().toISOString(),
+        }),
+      ),
+    },
+  );
 
 export const suggestPlanningPlaceholder = (
   placeholderId: string,

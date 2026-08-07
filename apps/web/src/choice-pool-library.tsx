@@ -5,6 +5,7 @@ import type {
   ChoicePoolItem,
   ChoicePoolSuggestionResponse,
   PlanningPlaceholder,
+  TemplatePoolSlot,
   Task,
 } from "@suite/contracts";
 
@@ -14,6 +15,12 @@ export interface ChoicePoolLibraryProps {
   readonly history: readonly ChoicePoolHistoryEvent[];
   readonly placeholders: readonly PlanningPlaceholder[];
   readonly tasks: readonly Task[];
+  readonly templates: readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly archivedAt: string | null;
+  }[];
+  readonly poolSlots: readonly TemplatePoolSlot[];
   readonly busy: boolean;
   readonly onCreatePool: (input: {
     title: string;
@@ -25,6 +32,27 @@ export interface ChoicePoolLibraryProps {
   readonly onCreatePlaceholder: (
     taskId: string,
     poolId: string,
+  ) => Promise<void>;
+  readonly onEditPool: (
+    pool: ChoicePool,
+    input: {
+      title: string;
+      policy: "none" | "cooldown" | "cycle" | "one_shot";
+      pickCount: number;
+      cooldownSeconds: number | null;
+      items: readonly { readonly id?: string; readonly title: string }[];
+    },
+  ) => Promise<void>;
+  readonly onCreateTemplateSlot: (
+    templateId: string,
+    poolId: string,
+    pickCount: number,
+    position: number,
+  ) => Promise<void>;
+  readonly onRecordCompletion: (
+    poolId: string,
+    itemId: string,
+    placeholderId: string,
   ) => Promise<void>;
   readonly onSuggest: (
     placeholderId: string,
@@ -56,9 +84,14 @@ export const ChoicePoolLibrary = ({
   history,
   placeholders,
   tasks,
+  templates,
+  poolSlots,
   busy,
   onCreatePool,
   onCreatePlaceholder,
+  onEditPool,
+  onCreateTemplateSlot,
+  onRecordCompletion,
   onSuggest,
   onResolve,
 }: ChoicePoolLibraryProps) => {
@@ -189,6 +222,93 @@ export const ChoicePoolLibrary = ({
                     <li key={item.id}>{item.title}</li>
                   ))}
               </ol>
+              <details>
+                <summary>Edit pool and candidates</summary>
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const data = new FormData(event.currentTarget);
+                    const policy = value(
+                      data,
+                      "policy",
+                    ) as ChoicePool["policy"];
+                    const candidateTitles = value(data, "items")
+                      .split("\n")
+                      .map((title) => title.trim())
+                      .filter(Boolean);
+                    void onEditPool(pool, {
+                      title: value(data, "title"),
+                      policy,
+                      pickCount: Number(value(data, "pickCount")),
+                      cooldownSeconds:
+                        policy === "cooldown"
+                          ? Number(value(data, "cooldownDays")) * 86_400
+                          : null,
+                      items: candidateTitles.map((title) => {
+                        const existing = items.find(
+                          (item) =>
+                            item.poolId === pool.id && item.title === title,
+                        );
+                        return existing === undefined
+                          ? { title }
+                          : { id: existing.id, title };
+                      }),
+                    });
+                  }}
+                >
+                  <label className="field">
+                    <span>Name</span>
+                    <input name="title" defaultValue={pool.title} required />
+                  </label>
+                  <label className="field">
+                    <span>Policy</span>
+                    <select name="policy" defaultValue={pool.policy}>
+                      <option value="none">Always eligible</option>
+                      <option value="cooldown">Cooldown</option>
+                      <option value="cycle">Cycle</option>
+                      <option value="one_shot">One shot</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Pick count</span>
+                    <input
+                      name="pickCount"
+                      type="number"
+                      min="1"
+                      max="25"
+                      defaultValue={pool.pickCount}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Cooldown days</span>
+                    <input
+                      name="cooldownDays"
+                      type="number"
+                      min="1"
+                      max="365"
+                      defaultValue={Math.max(
+                        1,
+                        Math.round((pool.cooldownSeconds ?? 432000) / 86400),
+                      )}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Candidates, one per line</span>
+                    <textarea
+                      name="items"
+                      rows={5}
+                      defaultValue={items
+                        .filter(
+                          ({ poolId, archivedAt }) =>
+                            poolId === pool.id && archivedAt === null,
+                        )
+                        .map(({ title }) => title)
+                        .join("\n")}
+                    />
+                  </label>
+                  <button disabled={busy}>Save pool</button>
+                </form>
+              </details>
             </li>
           ))}
         </ul>
@@ -232,6 +352,69 @@ export const ChoicePoolLibrary = ({
           Reserve placeholder
         </button>
       </form>
+      <form
+        className="placeholder-create"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const data = new FormData(event.currentTarget);
+          const templateId = value(data, "templateId");
+          const existingSlots = poolSlots.filter(
+            (slot) => slot.templateId === templateId,
+          );
+          void onCreateTemplateSlot(
+            templateId,
+            value(data, "poolId"),
+            Number(value(data, "pickCount")),
+            existingSlots.length,
+          );
+        }}
+      >
+        <h4>Add a Choice Pool slot to a Task Template</h4>
+        <label className="field">
+          <span>Template</span>
+          <select name="templateId" required defaultValue="">
+            <option value="" disabled>
+              Select a template
+            </option>
+            {templates
+              .filter(({ archivedAt }) => archivedAt === null)
+              .map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.title}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Choice Pool</span>
+          <select name="poolId" required defaultValue="">
+            <option value="" disabled>
+              Select a pool
+            </option>
+            {pools
+              .filter(({ archivedAt }) => archivedAt === null)
+              .map((pool) => (
+                <option key={pool.id} value={pool.id}>
+                  {pool.title}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Pick count</span>
+          <input
+            name="pickCount"
+            type="number"
+            min="1"
+            max="25"
+            defaultValue="1"
+            required
+          />
+        </label>
+        <button disabled={busy || templates.length === 0 || pools.length === 0}>
+          Add template slot
+        </button>
+      </form>
       <div className="placeholders">
         {placeholders.map((placeholder) => {
           const suggestion = suggestions[placeholder.id];
@@ -250,6 +433,38 @@ export const ChoicePoolLibrary = ({
                   ? "Resolved into concrete subtasks"
                   : `Unresolved · choose ${placeholder.pickCount}`}
               </p>
+              {placeholder.state === "resolved" &&
+                history
+                  .filter(
+                    ({ placeholderId, kind }) =>
+                      placeholderId === placeholder.id && kind === "selected",
+                  )
+                  .map((event) => {
+                    const completed = history.some(
+                      ({ placeholderId, itemId, kind }) =>
+                        placeholderId === placeholder.id &&
+                        itemId === event.itemId &&
+                        kind === "completed",
+                    );
+                    return (
+                      <button
+                        key={event.id}
+                        type="button"
+                        disabled={busy || completed}
+                        onClick={() =>
+                          void onRecordCompletion(
+                            event.poolId,
+                            event.itemId,
+                            placeholder.id,
+                          )
+                        }
+                      >
+                        {completed
+                          ? "Completion recorded"
+                          : `Record completion: ${items.find(({ id }) => id === event.itemId)?.title ?? "item"}`}
+                      </button>
+                    );
+                  })}
               {placeholder.state === "unresolved" && (
                 <button
                   type="button"

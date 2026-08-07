@@ -301,6 +301,14 @@ export interface TemplateSubtaskBlueprintRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+export interface TemplatePoolSlotRecord {
+  readonly id: string;
+  readonly templateId: string;
+  readonly poolId: string;
+  readonly pickCount: number;
+  readonly position: number;
+  readonly createdAt: string;
+}
 export interface TemplateSetRecord {
   readonly id: string;
   readonly ownerId: string;
@@ -370,6 +378,7 @@ export interface PlanningPlaceholderRecord {
   readonly taskId: string;
   readonly poolId: string;
   readonly pickCount: number;
+  readonly position: number;
   readonly state: "unresolved" | "resolved";
   readonly revision: number;
   readonly createdAt: string;
@@ -840,9 +849,9 @@ const migrations: readonly Migration[] = [
       CREATE INDEX choice_pool_items_by_pool ON choice_pool_items(pool_id, archived_at, position, id);
       CREATE TABLE planning_placeholders (
         id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
-        task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         pool_id TEXT NOT NULL REFERENCES choice_pools(id) ON DELETE RESTRICT,
-        pick_count INTEGER NOT NULL CHECK(pick_count BETWEEN 1 AND 25),
+        pick_count INTEGER NOT NULL CHECK(pick_count BETWEEN 1 AND 25), position INTEGER NOT NULL CHECK(position >= 0),
         state TEXT NOT NULL CHECK(state IN ('unresolved','resolved')),
         revision INTEGER NOT NULL CHECK(revision > 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
         resolved_at TEXT, CHECK((state='unresolved' AND resolved_at IS NULL) OR (state='resolved' AND resolved_at IS NOT NULL))
@@ -3349,6 +3358,63 @@ export class SuiteDatabase {
       updatedAt: String(row.updated_at),
     }));
   }
+  createTemplatePoolSlot(
+    ownerId: string,
+    slot: TemplatePoolSlotRecord,
+  ): TemplatePoolSlotRecord | undefined {
+    if (
+      this.getTaskTemplate(ownerId, slot.templateId) === undefined ||
+      this.getChoicePool(ownerId, slot.poolId) === undefined ||
+      this.listChoicePoolItems(slot.poolId, false).length < slot.pickCount
+    )
+      return undefined;
+    try {
+      this.#database
+        .prepare(
+          "INSERT INTO template_pool_slots (id,template_id,pool_id,pick_count,position,created_at) VALUES (?,?,?,?,?,?)",
+        )
+        .run(
+          slot.id,
+          slot.templateId,
+          slot.poolId,
+          slot.pickCount,
+          slot.position,
+          slot.createdAt,
+        );
+      const template = this.getTaskTemplate(ownerId, slot.templateId);
+      if (template !== undefined)
+        this.appendSyncChange(
+          ownerId,
+          "template",
+          slot.templateId,
+          "upsert",
+          template.revision,
+          slot.createdAt,
+        );
+      return slot;
+    } catch {
+      return undefined;
+    }
+  }
+  listTemplatePoolSlots(templateId: string): readonly TemplatePoolSlotRecord[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT * FROM template_pool_slots WHERE template_id=? ORDER BY position,id",
+        )
+        .all(templateId) as unknown as readonly Record<
+        string,
+        string | number
+      >[]
+    ).map((row) => ({
+      id: String(row.id),
+      templateId: String(row.template_id),
+      poolId: String(row.pool_id),
+      pickCount: Number(row.pick_count),
+      position: Number(row.position),
+      createdAt: String(row.created_at),
+    }));
+  }
   createTemplateSet(
     record: TemplateSetRecord,
     members: readonly TemplateSetMemberRecord[],
@@ -4431,6 +4497,7 @@ export class SuiteDatabase {
       const snapshot = resolvedTemplates.map((template) => ({
         ...template,
         blueprints: this.listTemplateSubtaskBlueprints(template.id),
+        poolSlots: this.listTemplatePoolSlots(template.id),
       }));
       this.#database
         .prepare(
@@ -4464,6 +4531,9 @@ export class SuiteDatabase {
       );
       const insertProvenance = this.#database.prepare(
         "INSERT INTO task_template_provenance (task_id,template_id,template_revision,instantiation_id,instantiated_at) VALUES (?,?,?,?,?)",
+      );
+      const insertPlaceholder = this.#database.prepare(
+        "INSERT INTO planning_placeholders (id,owner_id,task_id,pool_id,pick_count,position,state,revision,created_at,updated_at,resolved_at) VALUES (?,?,?,?,?,?,'unresolved',1,?,?,NULL)",
       );
       for (const template of resolvedTemplates) {
         const taskId = randomUUID();
@@ -4508,6 +4578,27 @@ export class SuiteDatabase {
             input.ownerId,
             "subtask",
             subtaskId,
+            "upsert",
+            1,
+            input.now,
+          );
+        }
+        for (const slot of this.listTemplatePoolSlots(template.id)) {
+          const placeholderId = randomUUID();
+          insertPlaceholder.run(
+            placeholderId,
+            input.ownerId,
+            taskId,
+            slot.poolId,
+            slot.pickCount,
+            slot.position,
+            input.now,
+            input.now,
+          );
+          this.#appendSyncChangeInTransaction(
+            input.ownerId,
+            "planning_placeholder",
+            placeholderId,
             "upsert",
             1,
             input.now,
@@ -4639,6 +4730,155 @@ export class SuiteDatabase {
       throw error;
     }
   }
+  updateChoicePool(input: {
+    readonly ownerId: string;
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly title: string;
+    readonly policy: ChoicePoolRecord["policy"];
+    readonly pickCount: number;
+    readonly cooldownSeconds: number | null;
+    readonly items: readonly { readonly id?: string; readonly title: string }[];
+    readonly now: string;
+  }): ChoicePoolRecord | undefined {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const current = this.getChoicePool(input.ownerId, input.id);
+      if (
+        current?.revision !== input.expectedRevision ||
+        input.items.length < input.pickCount
+      ) {
+        this.#database.exec("COMMIT;");
+        return undefined;
+      }
+      const existing = this.listChoicePoolItems(input.id, true);
+      const existingById = new Map(existing.map((item) => [item.id, item]));
+      const existingByTitle = new Map(
+        existing
+          .filter(({ archivedAt }) => archivedAt === null)
+          .map((item) => [item.title.toLocaleLowerCase(), item]),
+      );
+      this.#database
+        .prepare(
+          "UPDATE choice_pool_items SET position=position+10000 WHERE pool_id=?",
+        )
+        .run(input.id);
+      const retained = new Set<string>();
+      const update = this.#database.prepare(
+        "UPDATE choice_pool_items SET title=?,position=?,revision=revision+1,updated_at=?,archived_at=NULL WHERE id=? AND pool_id=?",
+      );
+      const insert = this.#database.prepare(
+        "INSERT INTO choice_pool_items (id,pool_id,title,position,revision,created_at,updated_at,archived_at) VALUES (?,?,?,?,1,?,?,NULL)",
+      );
+      for (const [position, candidate] of input.items.entries()) {
+        const matched =
+          (candidate.id === undefined
+            ? undefined
+            : existingById.get(candidate.id)) ??
+          existingByTitle.get(candidate.title.toLocaleLowerCase());
+        if (matched === undefined)
+          insert.run(
+            randomUUID(),
+            input.id,
+            candidate.title,
+            position,
+            input.now,
+            input.now,
+          );
+        else {
+          retained.add(matched.id);
+          update.run(
+            candidate.title,
+            position,
+            input.now,
+            matched.id,
+            input.id,
+          );
+        }
+      }
+      const archive = this.#database.prepare(
+        "UPDATE choice_pool_items SET archived_at=?,updated_at=?,revision=revision+1 WHERE id=? AND pool_id=? AND archived_at IS NULL",
+      );
+      for (const item of existing)
+        if (!retained.has(item.id))
+          archive.run(input.now, input.now, item.id, input.id);
+      this.#database
+        .prepare(
+          "UPDATE choice_pools SET title=?,policy=?,pick_count=?,cooldown_seconds=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=?",
+        )
+        .run(
+          input.title,
+          input.policy,
+          input.pickCount,
+          input.cooldownSeconds,
+          input.now,
+          input.ownerId,
+          input.id,
+          input.expectedRevision,
+        );
+      this.#appendSyncChangeInTransaction(
+        input.ownerId,
+        "choice_pool",
+        input.id,
+        "upsert",
+        input.expectedRevision + 1,
+        input.now,
+      );
+      this.#database.exec("COMMIT;");
+      return this.getChoicePool(input.ownerId, input.id, true);
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  recordChoicePoolCompletion(input: {
+    readonly ownerId: string;
+    readonly poolId: string;
+    readonly itemId: string;
+    readonly placeholderId: string | null;
+    readonly occurredAt: string;
+  }): ChoicePoolHistoryRecord | undefined {
+    const pool = this.getChoicePool(input.ownerId, input.poolId, true);
+    const item = this.listChoicePoolItems(input.poolId, true).find(
+      ({ id }) => id === input.itemId,
+    );
+    if (pool === undefined || item === undefined) return undefined;
+    const selections = this.listChoicePoolHistory(input.poolId).filter(
+      ({ itemId, kind }) => itemId === input.itemId && kind === "selected",
+    );
+    const event: ChoicePoolHistoryRecord = {
+      id: randomUUID(),
+      poolId: input.poolId,
+      itemId: input.itemId,
+      placeholderId: input.placeholderId,
+      kind: "completed",
+      cycle: selections.at(-1)?.cycle ?? 1,
+      overridden: false,
+      occurredAt: input.occurredAt,
+    };
+    this.#database
+      .prepare(
+        "INSERT INTO choice_pool_history (id,pool_id,item_id,placeholder_id,kind,cycle,overridden,occurred_at) VALUES (?,?,?,?,?,?,0,?)",
+      )
+      .run(
+        event.id,
+        event.poolId,
+        event.itemId,
+        event.placeholderId,
+        event.kind,
+        event.cycle,
+        event.occurredAt,
+      );
+    this.appendSyncChange(
+      input.ownerId,
+      "choice_pool",
+      input.poolId,
+      "upsert",
+      pool.revision,
+      input.occurredAt,
+    );
+    return event;
+  }
   getChoicePool(
     ownerId: string,
     id: string,
@@ -4707,7 +4947,7 @@ export class SuiteDatabase {
     try {
       this.#database
         .prepare(
-          "INSERT INTO planning_placeholders (id,owner_id,task_id,pool_id,pick_count,state,revision,created_at,updated_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+          "INSERT INTO planning_placeholders (id,owner_id,task_id,pool_id,pick_count,position,state,revision,created_at,updated_at,resolved_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         )
         .run(
           record.id,
@@ -4715,6 +4955,7 @@ export class SuiteDatabase {
           record.taskId,
           record.poolId,
           record.pickCount,
+          record.position,
           record.state,
           record.revision,
           record.createdAt,
@@ -5043,6 +5284,7 @@ export class SuiteDatabase {
       taskId: String(row.task_id),
       poolId: String(row.pool_id),
       pickCount: Number(row.pick_count),
+      position: Number(row.position),
       state: String(row.state) as PlanningPlaceholderRecord["state"],
       revision: Number(row.revision),
       createdAt: String(row.created_at),

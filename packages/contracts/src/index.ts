@@ -424,11 +424,20 @@ export const templateInstantiationResponseSchema = z
     replayed: z.boolean(),
   })
   .strict();
+export const templatePoolSlotSchema = z.object({
+  id: entityIdSchema,
+  templateId: entityIdSchema,
+  poolId: entityIdSchema,
+  pickCount: z.number().int().min(1).max(25),
+  position: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime(),
+});
 export const taskTemplateLibraryResponseSchema = z
   .object({
     templates: z.array(taskTemplateSchema),
     blueprints: z.array(templateSubtaskBlueprintSchema),
     provenance: z.array(taskTemplateProvenanceSchema).default([]),
+    poolSlots: z.array(templatePoolSlotSchema).default([]),
   })
   .strict();
 export const templateSetLibraryResponseSchema = z
@@ -482,6 +491,7 @@ export const planningPlaceholderSchema = z.object({
   taskId: entityIdSchema,
   poolId: entityIdSchema,
   pickCount: z.number().int().min(1).max(25),
+  position: z.number().int().nonnegative(),
   state: z.enum(["unresolved", "resolved"]),
   revision: revisionSchema,
   createdAt: z.iso.datetime(),
@@ -532,6 +542,38 @@ export const createChoicePoolRequestSchema = z
         message: "Only cooldown policy accepts cooldownSeconds",
       });
   });
+export const updateChoicePoolRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    policy: choicePoolPolicySchema,
+    pickCount: z.number().int().min(1).max(25),
+    cooldownSeconds: z.number().int().min(1).max(31_536_000).nullable(),
+    items: z
+      .array(
+        z
+          .object({
+            id: entityIdSchema.optional(),
+            title: z.string().trim().min(1).max(240),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(250),
+  })
+  .strict();
+export const createTemplatePoolSlotRequestSchema = z
+  .object({
+    poolId: entityIdSchema,
+    pickCount: z.number().int().min(1).max(25),
+    position: z.number().int().nonnegative(),
+  })
+  .strict();
+export const completeChoicePoolItemRequestSchema = z
+  .object({
+    placeholderId: entityIdSchema.nullable().default(null),
+    occurredAt: z.iso.datetime(),
+  })
+  .strict();
 export const createPlanningPlaceholderRequestSchema = z
   .object({
     taskId: entityIdSchema,
@@ -832,6 +874,7 @@ export const syncTaskTemplateSnapshotSchema = z
   .object({
     template: taskTemplateSchema,
     blueprints: z.array(templateSubtaskBlueprintSchema).max(100),
+    poolSlots: z.array(templatePoolSlotSchema).max(25).default([]),
   })
   .strict();
 
@@ -1509,6 +1552,7 @@ export type PlanningPlaceholderResolution = z.infer<
 export type PlanningPlaceholderResolutionResponse = z.infer<
   typeof planningPlaceholderResolutionResponseSchema
 >;
+export type TemplatePoolSlot = z.infer<typeof templatePoolSlotSchema>;
 export type ClientRegistrationRequest = z.infer<
   typeof clientRegistrationRequestSchema
 >;
