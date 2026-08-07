@@ -75,7 +75,35 @@ After the callback:
 These live checks are the credential-dependent evidence required before Phase 3
 can be marked complete. `pnpm verify:phase3:foundation` proves the same protocol
 and failure-state logic against deterministic provider responses, but does not
-claim a real Google grant or live provider compatibility.
+by itself claim a real Google grant or live provider compatibility.
+
+## Live qualification record
+
+Phase 3 completed its credential-dependent qualification on 2026-08-07 against
+a real owner grant using the loopback Compose deployment and the scopes stated
+above. The content-safe evidence was:
+
+- OAuth state was consumed once; the connector identified the expected account,
+  discovered 15 calendars, and reported every calendar projection current.
+- The active seven-day window began with 25 Google events and 25 unique
+  provider/calendar/event identities. A no-change incremental sync preserved
+  those counts with zero duplicate identity groups.
+- One temporary Baïkal event appeared beside the Google projection and was then
+  removed; its event projection and task-block mapping both returned to zero.
+- A disposable Google event moved the window to 26 events and 26 unique
+  identities. Updating it retained the same one-way provider-identity digest
+  and a single lifecycle row. Deleting it returned the window to 25 events and
+  25 unique identities with no lifecycle row or duplicate group.
+- Revoking the grant produced reconnect-required state and a visible last-safe,
+  stale Week plan. Baïkal and a local task remained available.
+- Reauthorization restored all 15 calendars to current. Suite-side disconnect
+  then left zero active Google connectors, providers, and projections while the
+  Baïkal provider and local task remained present.
+
+This evidence qualifies the tested account, scopes, Google API behavior, pinned
+Suite code, and loopback deployment at that date. It is not a claim of Google
+write support, universal account compatibility, or a production-hosted OAuth
+deployment.
 
 ## Secret lifecycle, backup, and revocation
 

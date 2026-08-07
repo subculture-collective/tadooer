@@ -55,9 +55,8 @@ Phase 0C was completed on 2026-08-05 on `codex/phase-0-foundation`:
 
 Phase 0 is complete. Phases 1 and 2 were subsequently completed as the first
 bounded planning and local-first focus slices. Phase 4's provider-independent
-automation boundary was completed afterward; Phase 3 Google federation remains
-credential-independent and is still awaiting real-provider qualification before
-claiming the federated calendar outcome.
+automation boundary was completed afterward; Phase 3 Google federation was then
+live-qualified against a real owner grant on 2026-08-07.
 
 ### Outcome
 
@@ -197,7 +196,7 @@ takes over one active timer/focus/break session.
 
 ## Phase 3: Calendar federation and calm daily planning
 
-### Foundation checkpoint
+### Implementation checkpoint
 
 The credential-independent implementation landed on 2026-08-07 on
 `codex/phase-3-google-federation`:
@@ -216,10 +215,23 @@ The credential-independent implementation landed on 2026-08-07 on
 - deterministic protocol, persistence, HTTP, rendered UI, and desktop policy
   tests, plus an explicitly named credential-independent verification gate
 
-This checkpoint is not Phase 3 completion. A real Google OAuth client, real
-owner grant, live calendar projection, incremental mutation/deletion, visible
-staleness, revocation/reconnect, and disconnect qualification remain required.
-The operator runbook is
+Phase 3 was completed on 2026-08-07 after the credential-independent checkpoint
+was qualified against a real Google OAuth client and owner grant. The live run:
+
+- discovered 15 calendars and projected a current seven-day window without
+  duplicate provider identities
+- showed one Baïkal event beside Google events, then removed the temporary
+  Baïkal block cleanly
+- projected one disposable Google event through create, update, and delete;
+  the update retained its provider-identity digest and the active window moved
+  from 25 to 26 and back to 25 unique identities
+- converted remote grant revocation into reconnect-required state while keeping
+  the last safe projection visibly stale and preserving Baïkal plus local tasks
+- reconnected to current projection, then disconnected through the Suite and
+  removed Google connector/projection state without disturbing Baïkal or local
+  tasks
+
+The content-safe evidence record and operator procedure are in
 [`operations/google-calendar.md`](operations/google-calendar.md).
 
 ### User outcome
@@ -268,9 +280,8 @@ Completed on 2026-08-06 on `codex/phase-4-automation-mcp`:
   quick-add, and full repository verification gates
 
 Phase 4 is complete for the providers actually present in the repository.
-Phase 3 is not retroactively complete: Google OAuth/federation, unified
-cross-provider availability, and reminders now have a tested foundation, but
-the credential-dependent live Google exit evidence remains outstanding.
+Phase 3's Google federation and unified cross-provider availability were
+subsequently live-qualified and completed on 2026-08-07.
 
 ### User outcome
 
@@ -406,7 +417,7 @@ read-only feed capabilities. Raw VEVENT data preserves recurrence, attendees,
 alarms, and vendor fields while the report makes those compatibility boundaries
 visible. The disposable gate proves one resource in real Baïkal across retry,
 Suite restart, and full-stack backup/restore, then proves feed revocation fails
-closed. Live Google OAuth/federation remains the honest Phase 3 boundary, and
+closed. Live Google OAuth/federation was separately qualified to close Phase 3;
 no background mirror is enabled.
 
 ## Phase 8: Packaged clients and broader operations

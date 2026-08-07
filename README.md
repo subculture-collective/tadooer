@@ -5,9 +5,8 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phases 5 through 8 are complete on top of the Phase 2 and Phase 4 runtime, and
-the credential-independent Phase 3 Google federation foundation is implemented.
-The runnable
+Phases 0 through 8 are complete, including live Google federation qualification
+for Phase 3. The runnable
 self-hosted suite includes secure single-owner
 authentication, encrypted Baïkal planning, a durable browser-local task cache,
 replay-safe queued task writes, explicit two-client conflicts, daily-use task
@@ -18,12 +17,11 @@ stdio adapter, quick-add through the same confirmed API, and a separate
 Template Library with inert templates, ordered Template Sets, explicit-project
 instantiation, immutable provenance, sync snapshots, and confirmed MCP
 instantiation. Google calendar-list/event read scopes, encrypted refresh grants,
-incremental projection, explicit freshness, and calm daily planning are present,
-but have not yet been qualified with a real Google OAuth client in this
-checkout. It does not claim offline calendar/focus mutation,
+incremental projection, explicit freshness, and calm daily planning are present
+and were qualified against a real Google OAuth grant on 2026-08-07. It does not
+claim offline calendar/focus mutation,
 closed-application background sync, recurrence editing beyond read-only Google
-instances, or hosted MCP. Phase 3 remains incomplete until the live credential
-gate in the operator runbook passes.
+instances, or hosted MCP.
 
 Calendar migration accepts either a generic ICS payload or an explicit Google
 Calendar ICS/Takeout export. Preview reports recurrence, attendees, alarms,
@@ -220,12 +218,12 @@ Both clients reject non-loopback plaintext HTTP, reject token files that are
 not owner-only, and use only the cataloged automation API. The MCP adapter is
 newline-delimited JSON-RPC over stdio; no hosted MCP route, Super Productivity
 plugin IPC, or environment bearer-token shortcut is shipped. Google Calendar
-operator setup and the remaining live qualification are documented in
+operator setup and the completed live qualification record are documented in
 [`docs/operations/google-calendar.md`](docs/operations/google-calendar.md).
-Run `pnpm verify:phase3:foundation` without credentials; do not treat that
-deterministic gate as proof of a real Google grant. The disposable phase gates
-are local verification, not a production deployment or a universal provider
-compatibility claim.
+Run `pnpm verify:phase3:foundation` without credentials for deterministic
+protocol coverage; the dated runbook record separately captures the real grant
+and provider evidence. The disposable phase gates are local verification, not a
+production deployment or a universal provider compatibility claim.
 
 ## Existing systems under consideration
 
