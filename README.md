@@ -100,6 +100,7 @@ pnpm verify
 pnpm verify:phase1
 pnpm verify:phase2
 pnpm verify:phase4
+pnpm verify:phase5
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
@@ -119,6 +120,13 @@ duplicate task, visible same-field conflict handling, follower takeover, and
 the same authoritative focus session after a Suite restart. Lease expiry and
 the no-duplicate-interval transition matrix use an injected clock in server
 tests; no test clock endpoint exists in the Compose runtime.
+
+`pnpm verify:phase5` qualifies only reusable Task Templates and Template Sets:
+inert template records, explicit existing-project instantiation, independent
+subtask snapshots with provenance, exact-once retry across a restart, a real
+local stdio MCP preview/confirmation, and paired Suite backup/restore. Choice
+Pools and Planning Placeholders are Phase 6 work and are not asserted by this
+gate.
 
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
