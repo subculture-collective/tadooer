@@ -55,6 +55,16 @@ importers:
         specifier: 4.23.8
         version: 4.23.8
 
+  apps/quick-add:
+    dependencies:
+      '@suite/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+    devDependencies:
+      tsx:
+        specifier: 4.23.8
+        version: 4.23.8
+
   apps/server:
     dependencies:
       '@suite/caldav':
