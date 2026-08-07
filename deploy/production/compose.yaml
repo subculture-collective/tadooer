@@ -20,7 +20,10 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
     networks:
-      - productivity
+      productivity: {}
+      monitoring:
+        aliases:
+          - tadooer-suite
     cap_drop:
       - ALL
     security_opt:
@@ -29,4 +32,7 @@ services:
 networks:
   productivity:
     external: true
-    name: productivity_default
+    name: productivity
+  monitoring:
+    external: true
+    name: monitoring
