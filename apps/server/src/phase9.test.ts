@@ -95,6 +95,16 @@ describe("Phase 9 production trust boundary", () => {
           "max-age=31536000",
         );
 
+        const privatePortHealth = await call("/api/health", {
+          headers: { Host: "tadooer.subcult.tv:8080" },
+        });
+        expect(privatePortHealth.status).toBe(200);
+
+        const credentialLikeHost = await call("/api/health", {
+          headers: { Host: "attacker@tadooer.subcult.tv" },
+        });
+        expect(credentialLikeHost.status).toBe(421);
+
         for (let index = 1; index <= 6; index += 1)
           expect((await login(`192.0.2.${String(index)}`)).status).toBe(401);
         for (let index = 0; index < 5; index += 1)

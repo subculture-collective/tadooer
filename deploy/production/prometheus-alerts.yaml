@@ -22,6 +22,20 @@ groups:
           severity: warning
         annotations:
           summary: Tadooer is returning repeated server errors
+      - alert: TadooerRestartLoop
+        expr: changes(container_start_time_seconds{name="tadooer-suite-1"}[15m]) > 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tadooer is repeatedly restarting
+      - alert: TadooerBackupMissing
+        expr: absent(tadooer_backup_success)
+        for: 2h
+        labels:
+          severity: critical
+        annotations:
+          summary: Tadooer backup status metrics are missing
       - alert: TadooerBackupFailed
         expr: tadooer_backup_success == 0
         for: 5m

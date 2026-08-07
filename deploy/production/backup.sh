@@ -2,6 +2,7 @@
 set -eu
 
 compose_file="${TADOOER_COMPOSE_FILE:-/srv/apps/productivity/tadooer-compose.yaml}"
+compose_env_file="${TADOOER_COMPOSE_ENV_FILE:-/srv/apps/productivity/tadooer.env}"
 data_root="${TADOOER_DATA_ROOT:-/srv/apps/productivity/data/tadooer}"
 metric_file="${TADOOER_BACKUP_METRIC_FILE:-/srv/server/monitoring/data/node-exporter-textfile/tadooer_backup.prom}"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -25,12 +26,13 @@ fail_metric() {
 trap fail_metric 0 1 2 3 15
 
 test -f "$compose_file"
+test -f "$compose_env_file"
 case "$backup_root" in "${data_root}/backups/"*) ;; *) exit 93 ;; esac
 test ! -e "$backup_root"
 
-docker compose -f "$compose_file" exec -T suite \
+docker compose --env-file "$compose_env_file" -f "$compose_file" exec -T suite \
   node /app/server/cli.mjs backup "/data/${backup_relative}/suite.sqlite" >/dev/null
-docker compose -f "$compose_file" exec -T suite sh -eu -c '
+docker compose --env-file "$compose_env_file" -f "$compose_file" exec -T suite sh -eu -c '
   destination="$1"
   cp /data/credential.key "$destination/credential.key"
   if [ -f /data/google-oauth.json ]; then

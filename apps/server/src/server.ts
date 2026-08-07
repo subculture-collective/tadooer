@@ -795,7 +795,22 @@ export const startSuiteServer = async (
 
         if (config.publicOrigin !== undefined) {
           const expected = new URL(config.publicOrigin);
-          if (request.headers.host !== expected.host) {
+          let requestHost: URL | undefined;
+          try {
+            requestHost = new URL(`http://${request.headers.host ?? ""}`);
+          } catch {
+            requestHost = undefined;
+          }
+          if (
+            requestHost === undefined ||
+            requestHost.username !== "" ||
+            requestHost.password !== "" ||
+            requestHost.pathname !== "/" ||
+            requestHost.search !== "" ||
+            requestHost.hash !== "" ||
+            requestHost.hostname.toLowerCase() !==
+              expected.hostname.toLowerCase()
+          ) {
             sendError(
               response,
               421,

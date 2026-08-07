@@ -10,7 +10,7 @@ the parallel soak.
 - Public origin: `https://tadooer.subcult.tv`
 - NUC listener: `10.0.0.56:18080`
 - Trusted proxy: Almaz `10.0.0.200/32`
-- Compose network: existing `productivity_default`
+- Compose networks: existing `productivity` and `monitoring`
 - Suite data: `/srv/apps/productivity/data/tadooer`, owned by UID/GID 1000 and
   mode 0700
 - Compose file: `/srv/apps/productivity/tadooer-compose.yaml`
@@ -52,8 +52,9 @@ Run `deploy/production/backup.sh` before the NUC Restic job and include only the
 generated `/srv/apps/productivity/data/tadooer/backups` directory in Restic.
 The script makes an online SQLite backup, copies the paired credential key and
 optional OAuth configuration, creates `SHA256SUMS`, and writes content-free
-node-exporter textfile metrics. Backup directories and secrets stay mode 0700/ 0600. Prometheus scrapes Suite through the NUC listener and loads the supplied
-alert rules.
+node-exporter textfile metrics. Backup directories and secrets stay mode
+0700/0600. Prometheus scrapes Suite over the private `monitoring` network and
+loads the supplied alert rules.
 
 An acceptance restore always uses an isolated Compose project, isolated ports,
 a copied Baïkal backup, and no route to the production Baïkal service.

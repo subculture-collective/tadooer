@@ -24,6 +24,7 @@ services:
       monitoring:
         aliases:
           - tadooer-suite
+          - tadooer.subcult.tv
     cap_drop:
       - ALL
     security_opt:
