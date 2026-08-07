@@ -77,14 +77,86 @@ describe("SuiteDatabase", () => {
     await withTemporaryDirectory((directory) => {
       const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
       const now = "2026-08-06T00:00:00.000Z";
-      database.createOwner({ id: "template-owner", username: "template-owner", displayName: "Template owner", passwordHash: "hash", createdAt: now });
-      database.createProject({ id: "template-project", ownerId: "template-owner", title: "Fitness", revision: 1, createdAt: now, updatedAt: now, archivedAt: null });
-      database.createTag({ id: "template-tag", ownerId: "template-owner", title: "Fitness", normalizedName: "fitness", revision: 1, createdAt: now, updatedAt: now, archivedAt: null });
-      database.createTaskTemplate({ id: "template-1", ownerId: "template-owner", title: "Leg day", notes: "", estimateMinutes: 60, suggestedProjectId: "template-project", tagIds: ["template-tag"], revision: 1, createdAt: now, updatedAt: now, archivedAt: null, blueprints: [{ id: "blueprint-1", title: "Warm up", position: 0, revision: 1, createdAt: now, updatedAt: now }] });
+      database.createOwner({
+        id: "template-owner",
+        username: "template-owner",
+        displayName: "Template owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      database.createProject({
+        id: "template-project",
+        ownerId: "template-owner",
+        title: "Fitness",
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+      });
+      database.createTag({
+        id: "template-tag",
+        ownerId: "template-owner",
+        title: "Fitness",
+        normalizedName: "fitness",
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+      });
+      database.createTaskTemplate({
+        id: "template-1",
+        ownerId: "template-owner",
+        title: "Leg day",
+        notes: "",
+        estimateMinutes: 60,
+        suggestedProjectId: "template-project",
+        tagIds: ["template-tag"],
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        blueprints: [
+          {
+            id: "blueprint-1",
+            title: "Warm up",
+            position: 0,
+            revision: 1,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      });
       expect(database.listTasks("template-owner")).toHaveLength(0);
-      const first = database.instantiateTemplateIdempotently({ ownerId: "template-owner", templateId: "template-1", destinationProjectId: "template-project", idempotencyKey: "template-instantiate-0001", requestHash: "template-hash", now });
-      expect(first).toMatchObject({ kind: "created", tasks: [{ task: { title: "Leg day", projectId: "template-project", tagIds: ["template-tag"] }, subtasks: [{ title: "Warm up" }], provenance: { templateId: "template-1", templateRevision: 1 } }] });
-      const replay = database.instantiateTemplateIdempotently({ ownerId: "template-owner", templateId: "template-1", destinationProjectId: "template-project", idempotencyKey: "template-instantiate-0001", requestHash: "template-hash", now });
+      const first = database.instantiateTemplateIdempotently({
+        ownerId: "template-owner",
+        templateId: "template-1",
+        destinationProjectId: "template-project",
+        idempotencyKey: "template-instantiate-0001",
+        requestHash: "template-hash",
+        now,
+      });
+      expect(first).toMatchObject({
+        kind: "created",
+        tasks: [
+          {
+            task: {
+              title: "Leg day",
+              projectId: "template-project",
+              tagIds: ["template-tag"],
+            },
+            subtasks: [{ title: "Warm up" }],
+            provenance: { templateId: "template-1", templateRevision: 1 },
+          },
+        ],
+      });
+      const replay = database.instantiateTemplateIdempotently({
+        ownerId: "template-owner",
+        templateId: "template-1",
+        destinationProjectId: "template-project",
+        idempotencyKey: "template-instantiate-0001",
+        requestHash: "template-hash",
+        now,
+      });
       expect(replay).toMatchObject({ kind: "replayed" });
       expect(database.listTasks("template-owner")).toHaveLength(1);
       database.close();

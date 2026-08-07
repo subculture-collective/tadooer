@@ -586,10 +586,7 @@ export const getTemplateLibrary = (query = "", includeArchived = false) =>
     taskTemplateLibraryResponseSchema,
   );
 
-export const createTemplate = (
-  input: TemplateDraft,
-  csrfToken: string,
-) =>
+export const createTemplate = (input: TemplateDraft, csrfToken: string) =>
   request("/api/templates", taskTemplateSchema, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
@@ -647,13 +644,20 @@ export const instantiateTemplate = (
   csrfToken: string,
   idempotencyKey: string,
 ) =>
-  request(`/api/templates/${templateId}/instantiate`, templateInstantiationResponseSchema, {
-    method: "POST",
-    headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify(
-      instantiateTemplateRequestSchema.parse({ destinationProjectId, idempotencyKey }),
-    ),
-  });
+  request(
+    `/api/templates/${templateId}/instantiate`,
+    templateInstantiationResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(
+        instantiateTemplateRequestSchema.parse({
+          destinationProjectId,
+          idempotencyKey,
+        }),
+      ),
+    },
+  );
 
 export const instantiateTemplateSet = (
   setId: string,
@@ -661,10 +665,17 @@ export const instantiateTemplateSet = (
   csrfToken: string,
   idempotencyKey: string,
 ) =>
-  request(`/api/template-sets/${setId}/instantiate`, templateInstantiationResponseSchema, {
-    method: "POST",
-    headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
-    body: JSON.stringify(
-      instantiateTemplateRequestSchema.parse({ destinationProjectId, idempotencyKey }),
-    ),
-  });
+  request(
+    `/api/template-sets/${setId}/instantiate`,
+    templateInstantiationResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(
+        instantiateTemplateRequestSchema.parse({
+          destinationProjectId,
+          idempotencyKey,
+        }),
+      ),
+    },
+  );

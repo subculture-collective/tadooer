@@ -32,6 +32,10 @@ import type {
   AutomationConfirmationResponse,
   AutomationPreviewCommand,
   AutomationTokenScope,
+  TaskTemplate,
+  TemplateSubtaskBlueprint,
+  TemplateSet,
+  TemplateInstantiationResponse,
 } from "@suite/contracts";
 import {
   baikalConnectRequestSchema,
@@ -52,6 +56,12 @@ import {
   automationPreviewCommandSchema,
   createAutomationTokenRequestSchema,
   automationCatalog,
+  createTaskTemplateRequestSchema,
+  createTaskTemplateFromTaskRequestSchema,
+  taskTemplatePatchRequestSchema,
+  createTemplateSetRequestSchema,
+  instantiateTemplateRequestSchema,
+  templateSearchRequestSchema,
 } from "@suite/contracts";
 import {
   SuiteDatabase,
@@ -60,6 +70,7 @@ import {
   type ActiveSessionRecord,
   type ActiveSessionIntervalRecord,
   type ActiveSessionEventRecord,
+  type TemplateInstantiationResult,
 } from "@suite/persistence";
 import {
   createActiveSession,
@@ -142,10 +153,21 @@ const automationConfirmPath = automationCatalog.find(
 const automationResourceEntries = automationCatalog.filter(
   (entry) => entry.kind === "resource",
 );
+const requiredAutomationResources = [
+  "tasks.list",
+  "schedule.get",
+  "projects.list",
+  "tags.list",
+  "active-session.get",
+  "templates.list",
+  "template-sets.list",
+] as const;
 if (
   automationPreviewPath === undefined ||
   automationConfirmPath === undefined ||
-  automationResourceEntries.length !== 5
+  requiredAutomationResources.some(
+    (id) => !automationResourceEntries.some((entry) => entry.id === id),
+  )
 )
   throw new Error(
     "Suite automation catalog and HTTP handlers are out of parity",
@@ -166,6 +188,40 @@ const taskResponse = (task: TaskRecord): Task => ({
   projectId: task.projectId ?? null,
   tagIds: [...(task.tagIds ?? [])],
 });
+
+const templateResponse = (template: {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly notes: string;
+  readonly estimateMinutes: number | null;
+  readonly suggestedProjectId: string | null;
+  readonly tagIds: readonly string[];
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt: string | null;
+}): TaskTemplate => ({ ...template, tagIds: [...template.tagIds] });
+
+const templateBlueprintResponse = (blueprint: {
+  readonly id: string;
+  readonly templateId: string;
+  readonly title: string;
+  readonly position: number;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}): TemplateSubtaskBlueprint => ({ ...blueprint });
+
+const templateSetResponse = (set: {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt: string | null;
+}): TemplateSet => ({ ...set });
 
 const sendJson = (
   response: ServerResponse,
@@ -365,6 +421,26 @@ const subtaskResponse = (subtask: {
   readonly createdAt: string;
   readonly updatedAt: string;
 }): Subtask => ({ ...subtask });
+
+const templateInstantiationResponse = (
+  result: TemplateInstantiationResult,
+): TemplateInstantiationResponse => {
+  if (
+    (result.kind !== "created" && result.kind !== "replayed") ||
+    result.instantiationId === undefined ||
+    result.tasks === undefined
+  )
+    throw new Error("Template instantiation result is incomplete");
+  return {
+    instantiationId: result.instantiationId,
+    tasks: result.tasks.map((tree) => ({
+      task: taskResponse(tree.task),
+      subtasks: tree.subtasks.map(subtaskResponse),
+      provenance: tree.provenance,
+    })),
+    replayed: result.kind === "replayed",
+  };
+};
 
 const activeFromRecord = (
   record: ActiveSessionRecord,
@@ -1042,7 +1118,44 @@ export const startSuiteServer = async (
             };
           else if (resource === "tags.list")
             body = { tags: database.listTags(token.ownerId).map(tagResponse) };
-          else if (resource === "active-session.get") {
+          else if (resource === "templates.list") {
+            const query = templateSearchRequestSchema.safeParse({
+              query: url.searchParams.get("query") ?? "",
+              includeArchived:
+                url.searchParams.get("includeArchived") === "true",
+            });
+            if (!query.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_SEARCH",
+                "Template search is invalid",
+              );
+              return;
+            }
+            const templates = database.listTaskTemplates(
+              token.ownerId,
+              query.data.query,
+              query.data.includeArchived,
+            );
+            body = {
+              templates: templates.map(templateResponse),
+              blueprints: templates.flatMap((template) =>
+                database
+                  .listTemplateSubtaskBlueprints(template.id)
+                  .map(templateBlueprintResponse),
+              ),
+              provenance: database.listTaskTemplateProvenance(token.ownerId),
+            };
+          } else if (resource === "template-sets.list") {
+            const sets = database.listTemplateSets(token.ownerId);
+            body = {
+              sets: sets.map(templateSetResponse),
+              members: sets.flatMap((set) =>
+                database.listTemplateSetMembers(set.id),
+              ),
+            };
+          } else if (resource === "active-session.get") {
             const stored = database.getActiveSession(token.ownerId);
             body = {
               session:
@@ -1163,11 +1276,22 @@ export const startSuiteServer = async (
             return;
           }
           const affected: {
-            entityKind: "task" | "calendar" | "active_session";
+            entityKind:
+              | "task"
+              | "calendar"
+              | "active_session"
+              | "template"
+              | "template_set"
+              | "project";
             entityId: string;
           }[] = [];
           const baseRevisions: {
-            entityKind: "task" | "active_session";
+            entityKind:
+              | "task"
+              | "active_session"
+              | "template"
+              | "template_set"
+              | "project";
             entityId: string;
             revision: number;
           }[] = [];
@@ -1198,6 +1322,119 @@ export const startSuiteServer = async (
               entityId: task.id,
               revision: task.revision,
             });
+          } else if (command.operation === "templates.instantiate") {
+            const template = database.getTaskTemplate(
+              token.ownerId,
+              command.input.templateId,
+            );
+            const project = database
+              .listProjects(token.ownerId)
+              .find(
+                ({ id, archivedAt }) =>
+                  id === command.input.destinationProjectId &&
+                  archivedAt === null,
+              );
+            if (template === undefined) {
+              sendError(
+                response,
+                404,
+                "TEMPLATE_NOT_FOUND",
+                "Task template not found",
+              );
+              return;
+            }
+            if (project === undefined) {
+              sendError(
+                response,
+                404,
+                "PROJECT_NOT_FOUND",
+                "Destination project not found",
+              );
+              return;
+            }
+            affected.push(
+              { entityKind: "template", entityId: template.id },
+              { entityKind: "project", entityId: project.id },
+            );
+            baseRevisions.push(
+              {
+                entityKind: "template",
+                entityId: template.id,
+                revision: template.revision,
+              },
+              {
+                entityKind: "project",
+                entityId: project.id,
+                revision: project.revision,
+              },
+            );
+          } else if (command.operation === "template_sets.instantiate") {
+            const set = database
+              .listTemplateSets(token.ownerId)
+              .find(({ id }) => id === command.input.setId);
+            const project = database
+              .listProjects(token.ownerId)
+              .find(
+                ({ id, archivedAt }) =>
+                  id === command.input.destinationProjectId &&
+                  archivedAt === null,
+              );
+            if (set === undefined) {
+              sendError(
+                response,
+                404,
+                "TEMPLATE_SET_NOT_FOUND",
+                "Template set not found",
+              );
+              return;
+            }
+            if (project === undefined) {
+              sendError(
+                response,
+                404,
+                "PROJECT_NOT_FOUND",
+                "Destination project not found",
+              );
+              return;
+            }
+            const members = database.listTemplateSetMembers(set.id);
+            const templates = members.map((member) =>
+              database.getTaskTemplate(token.ownerId, member.templateId),
+            );
+            if (templates.some((template) => template === undefined)) {
+              sendError(
+                response,
+                409,
+                "TEMPLATE_SET_STALE",
+                "A template set member is no longer active",
+              );
+              return;
+            }
+            affected.push(
+              { entityKind: "template_set", entityId: set.id },
+              { entityKind: "project", entityId: project.id },
+              ...templates.map((template) => ({
+                entityKind: "template" as const,
+                entityId: template!.id,
+              })),
+            );
+            baseRevisions.push(
+              {
+                entityKind: "template_set",
+                entityId: set.id,
+                revision: set.revision,
+              },
+              {
+                entityKind: "project",
+                entityId: project.id,
+                revision: project.revision,
+              },
+              ...templates.map((template) => ({
+                entityKind: "template" as const,
+                entityId: template!.id,
+                revision: template!.revision,
+              })),
+            );
           } else if (command.operation.startsWith("focus.")) {
             const focusInput = automationFocusCommandInputSchema.parse(
               command.input,
@@ -1377,6 +1614,13 @@ export const startSuiteServer = async (
           )) {
             const current =
               database.getTask(token.ownerId, entityId, true) ??
+              database.getTaskTemplate(token.ownerId, entityId, true) ??
+              database
+                .listTemplateSets(token.ownerId, true)
+                .find(({ id }) => id === entityId) ??
+              database
+                .listProjects(token.ownerId)
+                .find(({ id }) => id === entityId) ??
               database.getActiveSession(token.ownerId);
             if (current?.id !== entityId || current.revision !== revision) {
               database.appendAutomationAudit({
@@ -1669,6 +1913,59 @@ export const startSuiteServer = async (
                 },
               };
             }
+          } else if (
+            command.operation === "templates.instantiate" ||
+            command.operation === "template_sets.instantiate"
+          ) {
+            const input = command.input;
+            const instantiated =
+              command.operation === "templates.instantiate"
+                ? database.instantiateTemplateIdempotently({
+                    ownerId: token.ownerId,
+                    templateId: "templateId" in input ? input.templateId : "",
+                    destinationProjectId: input.destinationProjectId,
+                    idempotencyKey: internalKey,
+                    requestHash,
+                    now: new Date().toISOString(),
+                  })
+                : database.instantiateTemplateSetIdempotently({
+                    ownerId: token.ownerId,
+                    setId: "setId" in input ? input.setId : "",
+                    destinationProjectId: input.destinationProjectId,
+                    idempotencyKey: internalKey,
+                    requestHash,
+                    now: new Date().toISOString(),
+                  });
+            if (instantiated.kind === "conflict") {
+              sendError(
+                response,
+                409,
+                "IDEMPOTENCY_CONFLICT",
+                "Operation key conflict",
+              );
+              return;
+            }
+            if (instantiated.kind === "project-not-found") {
+              sendError(
+                response,
+                404,
+                "PROJECT_NOT_FOUND",
+                "Destination project not found",
+              );
+              return;
+            }
+            if (instantiated.kind === "not-found") {
+              sendError(
+                response,
+                404,
+                command.operation === "templates.instantiate"
+                  ? "TEMPLATE_NOT_FOUND"
+                  : "TEMPLATE_SET_NOT_FOUND",
+                "Reusable work source not found",
+              );
+              return;
+            }
+            result = templateInstantiationResponse(instantiated);
           } else {
             const before = database.getActiveSession(token.ownerId);
             const focusInput = automationFocusCommandInputSchema.parse(
@@ -1809,6 +2106,442 @@ export const startSuiteServer = async (
             return;
           }
           sendJson(response, 200, body);
+          return;
+        }
+
+        if (
+          url.pathname === "/api/templates" ||
+          url.pathname.startsWith("/api/templates/") ||
+          url.pathname === "/api/template-sets" ||
+          url.pathname.startsWith("/api/template-sets/")
+        ) {
+          const mutating = method !== "GET";
+          const session = auth.authenticate(request, mutating);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            mutating &&
+            (!sameOrigin(request) ||
+              !auth.csrfMatches(
+                session,
+                request.headers["x-csrf-token"] as string | undefined,
+              ))
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_REQUIRED",
+              "Same-origin session and CSRF token required",
+            );
+            return;
+          }
+
+          if (method === "GET" && url.pathname === "/api/templates") {
+            const search = templateSearchRequestSchema.safeParse({
+              query: url.searchParams.get("query") ?? "",
+              includeArchived:
+                url.searchParams.get("includeArchived") === "true",
+            });
+            if (!search.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_SEARCH",
+                "Template search is invalid",
+              );
+              return;
+            }
+            const templates = database.listTaskTemplates(
+              session.owner.id,
+              search.data.query,
+              search.data.includeArchived,
+            );
+            sendJson(response, 200, {
+              templates: templates.map(templateResponse),
+              blueprints: templates.flatMap((template) =>
+                database
+                  .listTemplateSubtaskBlueprints(template.id)
+                  .map(templateBlueprintResponse),
+              ),
+              provenance: database.listTaskTemplateProvenance(session.owner.id),
+            });
+            return;
+          }
+
+          if (method === "POST" && url.pathname === "/api/templates") {
+            const parsed = createTaskTemplateRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE",
+                "Task template input is invalid",
+              );
+              return;
+            }
+            const now = new Date().toISOString();
+            try {
+              const template = database.createTaskTemplate({
+                id: randomUUID(),
+                ownerId: session.owner.id,
+                title: parsed.data.title,
+                notes: parsed.data.notes,
+                estimateMinutes: parsed.data.estimateMinutes,
+                suggestedProjectId: parsed.data.suggestedProjectId,
+                tagIds: parsed.data.tagIds,
+                revision: 1,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+                blueprints: parsed.data.subtasks.map((subtask, position) => ({
+                  id: randomUUID(),
+                  title: subtask.title,
+                  position,
+                  revision: 1,
+                  createdAt: now,
+                  updatedAt: now,
+                })),
+              });
+              sendJson(response, 201, templateResponse(template), {
+                ETag: `"${String(template.revision)}"`,
+              });
+            } catch {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_REFERENCES",
+                "Template project or tags are unavailable",
+              );
+            }
+            return;
+          }
+
+          const fromTask =
+            /^\/api\/templates\/from-task\/([0-9a-f-]{36})$/.exec(url.pathname);
+          if (method === "POST" && fromTask !== null) {
+            const taskId = fromTask[1] ?? "";
+            const parsed = createTaskTemplateFromTaskRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success || parsed.data.taskId !== taskId) {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_SOURCE",
+                "Template source task is invalid",
+              );
+              return;
+            }
+            const now = new Date().toISOString();
+            const task = database.getTask(session.owner.id, taskId);
+            if (task === undefined) {
+              sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+              return;
+            }
+            const created = database.createTaskTemplateFromTask(
+              session.owner.id,
+              taskId,
+              {
+                id: randomUUID(),
+                ownerId: session.owner.id,
+                title: task.title,
+                notes: task.notes,
+                estimateMinutes: task.estimateMinutes,
+                suggestedProjectId: task.projectId ?? null,
+                revision: 1,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+                blueprints: database
+                  .listSubtasks(session.owner.id, taskId)
+                  .map((subtask, position) => ({
+                    id: randomUUID(),
+                    title: subtask.title,
+                    position,
+                    revision: 1,
+                    createdAt: now,
+                    updatedAt: now,
+                  })),
+              },
+            );
+            if (created === undefined) {
+              sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+              return;
+            }
+            sendJson(response, 201, templateResponse(created), {
+              ETag: `"${String(created.revision)}"`,
+            });
+            return;
+          }
+
+          const templateArchive =
+            /^\/api\/templates\/([0-9a-f-]{36})\/archive$/.exec(url.pathname);
+          if (method === "POST" && templateArchive !== null) {
+            const revision = expectedRevision(request, response);
+            if (revision === undefined) return;
+            const archived = database.archiveTaskTemplate(
+              session.owner.id,
+              templateArchive[1] ?? "",
+              revision,
+              new Date().toISOString(),
+            );
+            if (archived === undefined) {
+              sendError(
+                response,
+                412,
+                "TEMPLATE_REVISION_CONFLICT",
+                "Template changed or was archived",
+              );
+              return;
+            }
+            sendJson(response, 200, templateResponse(archived), {
+              ETag: `"${String(archived.revision)}"`,
+            });
+            return;
+          }
+
+          const templateItem = /^\/api\/templates\/([0-9a-f-]{36})$/.exec(
+            url.pathname,
+          );
+          if (method === "PATCH" && templateItem !== null) {
+            const revision = expectedRevision(request, response);
+            if (revision === undefined) return;
+            const patch = taskTemplatePatchRequestSchema.safeParse(
+              await readJson(request),
+            );
+            const current = database.getTaskTemplate(
+              session.owner.id,
+              templateItem[1] ?? "",
+            );
+            if (!patch.success || current === undefined) {
+              sendError(
+                response,
+                current === undefined ? 404 : 400,
+                current === undefined
+                  ? "TEMPLATE_NOT_FOUND"
+                  : "INVALID_TEMPLATE",
+                current === undefined
+                  ? "Task template not found"
+                  : "Task template input is invalid",
+              );
+              return;
+            }
+            const now = new Date().toISOString();
+            const existingBlueprints = database.listTemplateSubtaskBlueprints(
+              current.id,
+            );
+            const updated = database.updateTaskTemplate({
+              ownerId: session.owner.id,
+              id: current.id,
+              expectedRevision: revision,
+              title: patch.data.title ?? current.title,
+              notes: patch.data.notes ?? current.notes,
+              estimateMinutes:
+                patch.data.estimateMinutes ?? current.estimateMinutes,
+              suggestedProjectId:
+                patch.data.suggestedProjectId ?? current.suggestedProjectId,
+              tagIds: patch.data.tagIds ?? current.tagIds,
+              blueprints:
+                patch.data.subtasks === undefined
+                  ? existingBlueprints.map((blueprint) => ({
+                      id: blueprint.id,
+                      title: blueprint.title,
+                      position: blueprint.position,
+                      revision: blueprint.revision,
+                      createdAt: blueprint.createdAt,
+                      updatedAt: blueprint.updatedAt,
+                    }))
+                  : patch.data.subtasks.map((subtask, position) => ({
+                      id: randomUUID(),
+                      title: subtask.title,
+                      position,
+                      revision: 1,
+                      createdAt: now,
+                      updatedAt: now,
+                    })),
+              now,
+            });
+            if (updated === undefined) {
+              sendError(
+                response,
+                412,
+                "TEMPLATE_REVISION_CONFLICT",
+                "Template changed or references are unavailable",
+              );
+              return;
+            }
+            sendJson(response, 200, templateResponse(updated), {
+              ETag: `"${String(updated.revision)}"`,
+            });
+            return;
+          }
+
+          const templateInstantiation =
+            /^\/api\/templates\/([0-9a-f-]{36})\/instantiate$/.exec(
+              url.pathname,
+            );
+          const setInstantiation =
+            /^\/api\/template-sets\/([0-9a-f-]{36})\/instantiate$/.exec(
+              url.pathname,
+            );
+          if (
+            method === "POST" &&
+            (templateInstantiation !== null || setInstantiation !== null)
+          ) {
+            const parsed = instantiateTemplateRequestSchema.safeParse(
+              await readJson(request),
+            );
+            const rawHeaderKey = request.headers["idempotency-key"];
+            const headerKey =
+              rawHeaderKey === undefined
+                ? undefined
+                : idempotencyKeySchema.safeParse(rawHeaderKey);
+            if (
+              !parsed.success ||
+              (headerKey !== undefined &&
+                (!headerKey.success ||
+                  headerKey.data !== parsed.data.idempotencyKey))
+            ) {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_INSTANTIATION",
+                "Destination and matching idempotency key are required",
+              );
+              return;
+            }
+            const sourceId =
+              templateInstantiation?.[1] ?? setInstantiation?.[1] ?? "";
+            const requestHash = createHash("sha256")
+              .update(
+                JSON.stringify({
+                  sourceId,
+                  destinationProjectId: parsed.data.destinationProjectId,
+                  sourceKind:
+                    templateInstantiation === null ? "set" : "template",
+                }),
+              )
+              .digest("hex");
+            const result =
+              templateInstantiation !== null
+                ? database.instantiateTemplateIdempotently({
+                    ownerId: session.owner.id,
+                    templateId: sourceId,
+                    destinationProjectId: parsed.data.destinationProjectId,
+                    idempotencyKey: parsed.data.idempotencyKey,
+                    requestHash,
+                    now: new Date().toISOString(),
+                  })
+                : database.instantiateTemplateSetIdempotently({
+                    ownerId: session.owner.id,
+                    setId: sourceId,
+                    destinationProjectId: parsed.data.destinationProjectId,
+                    idempotencyKey: parsed.data.idempotencyKey,
+                    requestHash,
+                    now: new Date().toISOString(),
+                  });
+            if (result.kind === "conflict") {
+              sendError(
+                response,
+                409,
+                "IDEMPOTENCY_CONFLICT",
+                "Idempotency key was used for another instantiation",
+              );
+              return;
+            }
+            if (result.kind === "project-not-found") {
+              sendError(
+                response,
+                404,
+                "PROJECT_NOT_FOUND",
+                "Destination project not found",
+              );
+              return;
+            }
+            if (result.kind === "not-found") {
+              sendError(
+                response,
+                404,
+                templateInstantiation === null
+                  ? "TEMPLATE_SET_NOT_FOUND"
+                  : "TEMPLATE_NOT_FOUND",
+                "Reusable work source not found",
+              );
+              return;
+            }
+            const body = templateInstantiationResponse(result);
+            sendJson(response, result.kind === "created" ? 201 : 200, body);
+            return;
+          }
+
+          if (method === "GET" && url.pathname === "/api/template-sets") {
+            const sets = database.listTemplateSets(session.owner.id);
+            sendJson(response, 200, {
+              sets: sets.map(templateSetResponse),
+              members: sets.flatMap((set) =>
+                database.listTemplateSetMembers(set.id),
+              ),
+            });
+            return;
+          }
+
+          if (method === "POST" && url.pathname === "/api/template-sets") {
+            const parsed = createTemplateSetRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_SET",
+                "Template set input is invalid",
+              );
+              return;
+            }
+            const now = new Date().toISOString();
+            const set = {
+              id: randomUUID(),
+              ownerId: session.owner.id,
+              title: parsed.data.title,
+              revision: 1,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+            };
+            try {
+              database.createTemplateSet(
+                set,
+                parsed.data.templateIds.map((templateId, position) => ({
+                  setId: set.id,
+                  templateId,
+                  position,
+                })),
+              );
+            } catch {
+              sendError(
+                response,
+                400,
+                "INVALID_TEMPLATE_SET_MEMBERS",
+                "Template set members must be active owner templates",
+              );
+              return;
+            }
+            sendJson(response, 201, templateSetResponse(set), {
+              ETag: `"${String(set.revision)}"`,
+            });
+            return;
+          }
+
+          sendError(response, 405, "METHOD_NOT_ALLOWED", "Method not allowed");
           return;
         }
 
@@ -2803,6 +3536,18 @@ export const startSuiteServer = async (
                 entityKind: "subtask" as const,
                 value: subtaskResponse(subtask),
               })),
+              ...snapshot.templates.map((template) => ({
+                entityKind: "template" as const,
+                value: templateResponse(template),
+              })),
+              ...snapshot.templateBlueprints.map((blueprint) => ({
+                entityKind: "template_blueprint" as const,
+                value: templateBlueprintResponse(blueprint),
+              })),
+              ...snapshot.templateSets.map((set) => ({
+                entityKind: "template_set" as const,
+                value: templateSetResponse(set),
+              })),
             ];
             const offset = Number(url.searchParams.get("offset") ?? "0");
             if (!Number.isInteger(offset) || offset < 0) {
@@ -3022,10 +3767,39 @@ export const startSuiteServer = async (
                       .fullSyncSnapshot(session.owner.id)
                       .subtasks.find(({ id }) => id === change.entityId)
                   : undefined;
+              const template =
+                change.entityType === "template"
+                  ? database.getTaskTemplate(
+                      session.owner.id,
+                      change.entityId,
+                      true,
+                    )
+                  : undefined;
+              const blueprint =
+                change.entityType === "template_blueprint"
+                  ? database
+                      .fullSyncSnapshot(session.owner.id)
+                      .templateBlueprints.find(
+                        ({ id }) => id === change.entityId,
+                      )
+                  : undefined;
+              const templateSet =
+                change.entityType === "template_set"
+                  ? database
+                      .listTemplateSets(session.owner.id, true)
+                      .find(({ id }) => id === change.entityId)
+                  : undefined;
               return {
                 sequence: change.sequence,
                 entityKind: change.entityType as
-                  "task" | "project" | "tag" | "subtask" | "active_session",
+                  | "task"
+                  | "project"
+                  | "tag"
+                  | "subtask"
+                  | "template"
+                  | "template_blueprint"
+                  | "template_set"
+                  | "active_session",
                 entityId: change.entityId,
                 kind:
                   change.kind === "deleted"
@@ -3068,14 +3842,29 @@ export const startSuiteServer = async (
                               entityKind: "subtask" as const,
                               value: subtaskResponse(subtask),
                             }
-                          : active?.id === change.entityId
+                          : template !== undefined
                             ? {
-                                entityKind: "active_session" as const,
-                                value: activeResponse(
-                                  activeFromRecord(active, database),
-                                ),
+                                entityKind: "template" as const,
+                                value: templateResponse(template),
                               }
-                            : null,
+                            : blueprint !== undefined
+                              ? {
+                                  entityKind: "template_blueprint" as const,
+                                  value: templateBlueprintResponse(blueprint),
+                                }
+                              : templateSet !== undefined
+                                ? {
+                                    entityKind: "template_set" as const,
+                                    value: templateSetResponse(templateSet),
+                                  }
+                                : active?.id === change.entityId
+                                  ? {
+                                      entityKind: "active_session" as const,
+                                      value: activeResponse(
+                                        activeFromRecord(active, database),
+                                      ),
+                                    }
+                                  : null,
               };
             }),
             nextCursor: cursorFor({

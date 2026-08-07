@@ -328,7 +328,10 @@ export const taskTemplateSchema = z.object({
   notes: z.string().max(20_000),
   estimateMinutes: z.number().int().min(1).max(720).nullable(),
   suggestedProjectId: entityIdSchema.nullable(),
-  tagIds: z.array(entityIdSchema).max(25).refine((ids) => new Set(ids).size === ids.length),
+  tagIds: z
+    .array(entityIdSchema)
+    .max(25)
+    .refine((ids) => new Set(ids).size === ids.length),
   revision: revisionSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -350,11 +353,21 @@ export const templateSetMemberSchema = z.object({
   templateId: entityIdSchema,
   position: z.number().int().nonnegative(),
 });
-export const createTemplateSetRequestSchema = z.object({
-  title: z.string().trim().min(1).max(240),
-  templateIds: z.array(entityIdSchema).min(1).max(100).refine((ids) => new Set(ids).size === ids.length),
-}).strict();
-export const templateSetPatchRequestSchema = createTemplateSetRequestSchema.partial().refine((value) => Object.keys(value).length > 0, { message: "At least one mutable template set field is required" });
+export const createTemplateSetRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    templateIds: z
+      .array(entityIdSchema)
+      .min(1)
+      .max(100)
+      .refine((ids) => new Set(ids).size === ids.length),
+  })
+  .strict();
+export const templateSetPatchRequestSchema = createTemplateSetRequestSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one mutable template set field is required",
+  });
 
 export const taskTemplateProvenanceSchema = z.object({
   taskId: entityIdSchema,
@@ -364,23 +377,66 @@ export const taskTemplateProvenanceSchema = z.object({
   instantiatedAt: z.iso.datetime(),
 });
 
-export const createTaskTemplateRequestSchema = z.object({
-  title: z.string().trim().min(1).max(240),
-  notes: z.string().max(20_000).default(""),
-  estimateMinutes: z.number().int().min(1).max(720).nullable().default(null),
-  suggestedProjectId: entityIdSchema.nullable().default(null),
-  tagIds: z.array(entityIdSchema).max(25).default([]),
-  subtasks: z.array(z.object({ title: z.string().trim().min(1).max(240) }).strict()).max(100).default([]),
-}).strict();
-export const createTaskTemplateFromTaskRequestSchema = z.object({ taskId: entityIdSchema }).strict();
-export const taskTemplatePatchRequestSchema = createTaskTemplateRequestSchema.partial().refine((value) => Object.keys(value).length > 0, { message: "At least one mutable template field is required" });
-export const templateSearchRequestSchema = z.object({ query: z.string().trim().max(240).default(""), includeArchived: z.boolean().default(false) }).strict();
-export const instantiateTemplateRequestSchema = z.object({ destinationProjectId: entityIdSchema, idempotencyKey: idempotencyKeySchema }).strict();
-export const instantiateTemplateSetRequestSchema = instantiateTemplateRequestSchema;
-export const instantiatedTaskTreeSchema = z.object({ task: taskSchema, subtasks: z.array(subtaskSchema), provenance: taskTemplateProvenanceSchema });
-export const templateInstantiationResponseSchema = z.object({ instantiationId: entityIdSchema, tasks: z.array(instantiatedTaskTreeSchema).min(1), replayed: z.boolean() }).strict();
-export const taskTemplateLibraryResponseSchema = z.object({ templates: z.array(taskTemplateSchema), blueprints: z.array(templateSubtaskBlueprintSchema) }).strict();
-export const templateSetLibraryResponseSchema = z.object({ sets: z.array(templateSetSchema), members: z.array(templateSetMemberSchema) }).strict();
+export const createTaskTemplateRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    notes: z.string().max(20_000).default(""),
+    estimateMinutes: z.number().int().min(1).max(720).nullable().default(null),
+    suggestedProjectId: entityIdSchema.nullable().default(null),
+    tagIds: z.array(entityIdSchema).max(25).default([]),
+    subtasks: z
+      .array(z.object({ title: z.string().trim().min(1).max(240) }).strict())
+      .max(100)
+      .default([]),
+  })
+  .strict();
+export const createTaskTemplateFromTaskRequestSchema = z
+  .object({ taskId: entityIdSchema })
+  .strict();
+export const taskTemplatePatchRequestSchema = createTaskTemplateRequestSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one mutable template field is required",
+  });
+export const templateSearchRequestSchema = z
+  .object({
+    query: z.string().trim().max(240).default(""),
+    includeArchived: z.boolean().default(false),
+  })
+  .strict();
+export const instantiateTemplateRequestSchema = z
+  .object({
+    destinationProjectId: entityIdSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export const instantiateTemplateSetRequestSchema =
+  instantiateTemplateRequestSchema;
+export const instantiatedTaskTreeSchema = z.object({
+  task: taskSchema,
+  subtasks: z.array(subtaskSchema),
+  provenance: taskTemplateProvenanceSchema,
+});
+export const templateInstantiationResponseSchema = z
+  .object({
+    instantiationId: entityIdSchema,
+    tasks: z.array(instantiatedTaskTreeSchema).min(1),
+    replayed: z.boolean(),
+  })
+  .strict();
+export const taskTemplateLibraryResponseSchema = z
+  .object({
+    templates: z.array(taskTemplateSchema),
+    blueprints: z.array(templateSubtaskBlueprintSchema),
+    provenance: z.array(taskTemplateProvenanceSchema).default([]),
+  })
+  .strict();
+export const templateSetLibraryResponseSchema = z
+  .object({
+    sets: z.array(templateSetSchema),
+    members: z.array(templateSetMemberSchema),
+  })
+  .strict();
 
 export const clientRegistrationRequestSchema = z
   .object({
@@ -622,7 +678,10 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   z.object({ entityKind: z.literal("tag"), value: tagSchema }),
   z.object({ entityKind: z.literal("subtask"), value: subtaskSchema }),
   z.object({ entityKind: z.literal("template"), value: taskTemplateSchema }),
-  z.object({ entityKind: z.literal("template_blueprint"), value: templateSubtaskBlueprintSchema }),
+  z.object({
+    entityKind: z.literal("template_blueprint"),
+    value: templateSubtaskBlueprintSchema,
+  }),
   z.object({ entityKind: z.literal("template_set"), value: templateSetSchema }),
   z.object({
     entityKind: z.literal("active_session"),
@@ -632,7 +691,16 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
 
 export const syncChangeSchema = z.object({
   sequence: revisionSchema,
-  entityKind: z.enum(["task", "project", "tag", "subtask", "template", "template_blueprint", "template_set", "active_session"]),
+  entityKind: z.enum([
+    "task",
+    "project",
+    "tag",
+    "subtask",
+    "template",
+    "template_blueprint",
+    "template_set",
+    "active_session",
+  ]),
   entityId: entityIdSchema,
   kind: z.enum(["upsert", "deleted", "session_changed"]),
   entityRevision: revisionSchema,
@@ -827,8 +895,20 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
         .object({ taskId: entityIdSchema })
         .extend(createTaskTimeBlockRequestSchema.shape),
     }),
-    z.object({ operation: z.literal("templates.instantiate"), input: z.object({ templateId: entityIdSchema, destinationProjectId: entityIdSchema }) }),
-    z.object({ operation: z.literal("template_sets.instantiate"), input: z.object({ setId: entityIdSchema, destinationProjectId: entityIdSchema }) }),
+    z.object({
+      operation: z.literal("templates.instantiate"),
+      input: z.object({
+        templateId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    }),
+    z.object({
+      operation: z.literal("template_sets.instantiate"),
+      input: z.object({
+        setId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    }),
     ...[
       "focus.start",
       "focus.pause",
@@ -869,8 +949,22 @@ const automationToolInputSchema = (
         .object({ taskId: entityIdSchema })
         .extend(createTaskTimeBlockRequestSchema.shape),
     });
-  if (operation === "templates.instantiate") return z.object({ operation: z.literal("templates.instantiate"), input: z.object({ templateId: entityIdSchema, destinationProjectId: entityIdSchema }) });
-  if (operation === "template_sets.instantiate") return z.object({ operation: z.literal("template_sets.instantiate"), input: z.object({ setId: entityIdSchema, destinationProjectId: entityIdSchema }) });
+  if (operation === "templates.instantiate")
+    return z.object({
+      operation: z.literal("templates.instantiate"),
+      input: z.object({
+        templateId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    });
+  if (operation === "template_sets.instantiate")
+    return z.object({
+      operation: z.literal("template_sets.instantiate"),
+      input: z.object({
+        setId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    });
   if (operation === "focus.start")
     return z.object({
       operation: z.literal("focus.start"),
@@ -889,14 +983,27 @@ const automationToolInputSchema = (
 
 export const automationAffectedEntitySchema = z
   .object({
-    entityKind: z.enum(["task", "calendar", "active_session"]),
+    entityKind: z.enum([
+      "task",
+      "calendar",
+      "active_session",
+      "template",
+      "template_set",
+      "project",
+    ]),
     entityId: entityIdSchema,
   })
   .strict();
 
 export const automationBaseRevisionSchema = z
   .object({
-    entityKind: z.enum(["task", "active_session"]),
+    entityKind: z.enum([
+      "task",
+      "active_session",
+      "template",
+      "template_set",
+      "project",
+    ]),
     entityId: entityIdSchema,
     revision: revisionSchema,
   })
@@ -908,8 +1015,8 @@ export const automationPreviewSchema = z
     operation: automationOperationSchema,
     inputHash: z.string().regex(/^[a-f0-9]{64}$/),
     summary: z.string().trim().min(1).max(1_000),
-    affected: z.array(automationAffectedEntitySchema).max(25),
-    baseRevisions: z.array(automationBaseRevisionSchema).max(25),
+    affected: z.array(automationAffectedEntitySchema).max(125),
+    baseRevisions: z.array(automationBaseRevisionSchema).max(125),
     expiresAt: z.iso.datetime(),
     requiresConfirmation: z.literal(true),
   })
@@ -956,8 +1063,10 @@ export const automationTagResourceSchema = z
 export const automationActiveSessionResourceSchema = z
   .object({ session: activeSessionSchema.nullable() })
   .strict();
-export const automationTemplateResourceSchema = taskTemplateLibraryResponseSchema;
-export const automationTemplateSetResourceSchema = templateSetLibraryResponseSchema;
+export const automationTemplateResourceSchema =
+  taskTemplateLibraryResponseSchema;
+export const automationTemplateSetResourceSchema =
+  templateSetLibraryResponseSchema;
 
 export interface AutomationCatalogEntry {
   readonly id: string;
@@ -1030,14 +1139,26 @@ export const automationCatalog = [
     outputSchema: automationActiveSessionResourceSchema,
   },
   {
-    id: "templates.list", kind: "resource", scopes: ["templates:read"], confirmationRequired: false,
-    apiPath: "/api/automation/v1/resources/templates", mcpName: "suite.templates.list", mcpUri: "suite://v1/templates",
-    inputSchema: templateSearchRequestSchema, outputSchema: automationTemplateResourceSchema,
+    id: "templates.list",
+    kind: "resource",
+    scopes: ["templates:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/templates",
+    mcpName: "suite.templates.list",
+    mcpUri: "suite://v1/templates",
+    inputSchema: templateSearchRequestSchema,
+    outputSchema: automationTemplateResourceSchema,
   },
   {
-    id: "template-sets.list", kind: "resource", scopes: ["templates:read"], confirmationRequired: false,
-    apiPath: "/api/automation/v1/resources/template-sets", mcpName: "suite.template_sets.list", mcpUri: "suite://v1/template-sets",
-    inputSchema: z.object({}).strict(), outputSchema: automationTemplateSetResourceSchema,
+    id: "template-sets.list",
+    kind: "resource",
+    scopes: ["templates:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/template-sets",
+    mcpName: "suite.template_sets.list",
+    mcpUri: "suite://v1/template-sets",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTemplateSetResourceSchema,
   },
   ...automationOperationSchema.options.map((id) => ({
     id,
@@ -1049,7 +1170,7 @@ export const automationCatalog = [
           ? "schedule:write"
           : id.startsWith("templates.") || id.startsWith("template_sets.")
             ? "templates:write"
-          : "focus:write",
+            : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -1060,7 +1181,7 @@ export const automationCatalog = [
   {
     id: "automation.confirm",
     kind: "tool",
-    scopes: ["tasks:write", "schedule:write", "focus:write"],
+    scopes: ["tasks:write", "schedule:write", "focus:write", "templates:write"],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",
     mcpName: "suite.confirm",
@@ -1122,14 +1243,26 @@ export type Project = z.infer<typeof projectSchema>;
 export type Tag = z.infer<typeof tagSchema>;
 export type Subtask = z.infer<typeof subtaskSchema>;
 export type TaskTemplate = z.infer<typeof taskTemplateSchema>;
-export type TemplateSubtaskBlueprint = z.infer<typeof templateSubtaskBlueprintSchema>;
+export type TemplateSubtaskBlueprint = z.infer<
+  typeof templateSubtaskBlueprintSchema
+>;
 export type TemplateSet = z.infer<typeof templateSetSchema>;
 export type TemplateSetMember = z.infer<typeof templateSetMemberSchema>;
-export type TaskTemplateProvenance = z.infer<typeof taskTemplateProvenanceSchema>;
-export type CreateTaskTemplateRequest = z.infer<typeof createTaskTemplateRequestSchema>;
-export type CreateTemplateSetRequest = z.infer<typeof createTemplateSetRequestSchema>;
-export type InstantiateTemplateRequest = z.infer<typeof instantiateTemplateRequestSchema>;
-export type TemplateInstantiationResponse = z.infer<typeof templateInstantiationResponseSchema>;
+export type TaskTemplateProvenance = z.infer<
+  typeof taskTemplateProvenanceSchema
+>;
+export type CreateTaskTemplateRequest = z.infer<
+  typeof createTaskTemplateRequestSchema
+>;
+export type CreateTemplateSetRequest = z.infer<
+  typeof createTemplateSetRequestSchema
+>;
+export type InstantiateTemplateRequest = z.infer<
+  typeof instantiateTemplateRequestSchema
+>;
+export type TemplateInstantiationResponse = z.infer<
+  typeof templateInstantiationResponseSchema
+>;
 export type ClientRegistrationRequest = z.infer<
   typeof clientRegistrationRequestSchema
 >;

@@ -30,9 +30,7 @@ const props = {
       archivedAt: null,
     },
   ],
-  projects: [
-    { id: "1b34cc57-972c-42e8-bafa-0ba455dced20", title: "Personal" },
-  ],
+  projects: [{ id: "1b34cc57-972c-42e8-bafa-0ba455dced20", title: "Personal" }],
   tags: [],
   busy: false,
   onCreate: vi.fn(async () => undefined),

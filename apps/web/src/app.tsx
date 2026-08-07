@@ -200,20 +200,35 @@ export const App = ({ initialState }: AppProps) => {
 
   const loadAuthenticated = useCallback(
     async (session: SessionResponse) => {
-      const [baikal, taskList, recoveryList, projectList, tagList, library, sets] =
-        await Promise.all([
-          getBaikalStatus(),
-          getTasks(),
-          getRecoveryTasks(),
-          getProjects(),
-          getTags(),
-          getTemplateLibrary(),
-          getTemplateSets(),
-        ]);
+      const [
+        baikal,
+        taskList,
+        recoveryList,
+        projectList,
+        tagList,
+        library,
+        sets,
+      ] = await Promise.all([
+        getBaikalStatus(),
+        getTasks(),
+        getRecoveryTasks(),
+        getProjects(),
+        getTags(),
+        getTemplateLibrary(),
+        getTemplateSets(),
+      ]);
       setProjects(projectList);
       setTags(tagList);
       setTemplates(library.templates);
       setTemplateBlueprints(library.blueprints);
+      setTemplateProvenance(
+        Object.fromEntries(
+          library.provenance.map((provenance) => [
+            provenance.taskId,
+            provenance.templateId,
+          ]),
+        ),
+      );
       setTemplateSets(sets.sets);
       const window = plannerWindow();
       const planner = baikal.connected
@@ -892,6 +907,14 @@ export const App = ({ initialState }: AppProps) => {
     ]);
     setTemplates(library.templates);
     setTemplateBlueprints(library.blueprints);
+    setTemplateProvenance(
+      Object.fromEntries(
+        library.provenance.map((provenance) => [
+          provenance.taskId,
+          provenance.templateId,
+        ]),
+      ),
+    );
     setTemplateSets(sets.sets);
   };
 
@@ -947,7 +970,12 @@ export const App = ({ initialState }: AppProps) => {
     setBusy(true);
     setFormError(null);
     try {
-      await patchTemplate(template.id, template.revision, draft, state.session.csrfToken);
+      await patchTemplate(
+        template.id,
+        template.revision,
+        draft,
+        state.session.csrfToken,
+      );
       await refreshTemplateLibrary();
     } catch (error: unknown) {
       handleTaskError(error);
