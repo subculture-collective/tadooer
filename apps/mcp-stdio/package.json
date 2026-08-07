@@ -1,0 +1,21 @@
+{
+  "name": "@suite/mcp-stdio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "suite-mcp": "dist/main.mjs"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/main.ts --bundle --platform=node --format=esm --out-extension:.js=.mjs --outfile=dist/main.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@suite/contracts": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@suite/test-support": "workspace:*",
+    "tsx": "4.23.8"
+  }
+}

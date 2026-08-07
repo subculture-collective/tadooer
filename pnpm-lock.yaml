@@ -39,6 +39,22 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.10.13)(vite@8.2.0(@types/node@24.10.13)(esbuild@0.28.1)(tsx@4.23.8))
 
+  apps/mcp-stdio:
+    dependencies:
+      '@suite/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@suite/test-support':
+        specifier: workspace:*
+        version: link:../../packages/test-support
+      tsx:
+        specifier: 4.23.8
+        version: 4.23.8
+
   apps/server:
     dependencies:
       '@suite/caldav':
