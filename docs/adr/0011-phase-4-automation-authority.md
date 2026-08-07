@@ -87,27 +87,32 @@ success. Automation derives a deterministic internal key when it invokes the
 existing task or calendar idempotency ledgers, so an automation retry cannot
 collide with a browser mutation or another agent's key.
 
-Local Suite changes, preview consumption, the durable response, and execution
-audit record commit in one SQLite transaction. Calendar writes remain a
-distributed operation: automation must use the existing reservation and
-reconciliation protocol with that deterministic key. It must not report a
-successful outcome until the durable calendar mapping is complete; uncertain
-remote writes remain reconcilable and retry the same reservation rather than
-creating another event.
+Each local command first enters its existing durable, namespaced idempotency
+ledger. Preview consumption, the automation response, and the execution audit
+then finalize atomically. A crash between those boundaries replays the same
+underlying command rather than applying it twice. Calendar writes remain a
+distributed operation and use the existing reservation and reconciliation
+protocol with that deterministic key. Automation does not report a successful
+outcome until the durable calendar mapping is complete; uncertain remote writes
+remain reconcilable and retry the same reservation rather than creating another
+event.
 
-Active session commands must record an explicit automation actor/controller
-kind and token identity. They must not impersonate a registered browser client
-or overload a null client ID. Revocation of a token controlling a running
-session follows an explicit safe-expiry/termination policy so an unrevocable
-controller cannot remain live.
+Automation credentials remain a distinct authorization boundary. Phase 2's
+interval tables require a controller foreign key, so issuance atomically adds
+an internal compatibility controller row with an unrecoverable random proof;
+it is hidden from browser sync-client inventory and cannot authenticate.
+Revocation atomically revokes both records and expires any nonterminal session
+controlled by that token, closing its open interval with an automation-revoked
+event so an uncommandable controller cannot remain live.
 
 ## Audit data is intentionally safe and append-only
 
-Every authorized read, denied request, preview, confirmation, execution,
-replay, and failure gets an append-only audit row with owner ID, token ID,
-catalog operation, phase, outcome, bounded error code, request hash, preview/
-outcome IDs, affected IDs/counts/revisions, and timestamp. Audit records do
-not contain bearer secrets, task titles or notes, preview input, connector
+Authenticated reads, previews, successful executions, confirmation replays,
+and scope/stale/expired denials get append-only audit rows with owner ID, token
+ID, catalog operation, phase, outcome, bounded error code, request hash,
+preview/outcome IDs, affected IDs, and timestamp. Malformed or unknown
+credentials fail before an actor can safely be attributed. Audit records do not
+contain bearer secrets, task titles or notes, preview input, connector
 credentials, provider response bodies, stack traces, or filesystem paths.
 Revocation retains audit history; it does not delete the token record.
 

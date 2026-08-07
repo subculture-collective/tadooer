@@ -5,15 +5,19 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phase 2 is complete. The runnable self-hosted suite includes secure single-owner
+Phase 4 automation is complete on top of the Phase 2 runtime. The runnable
+self-hosted suite includes secure single-owner
 authentication, encrypted Baïkal planning, a durable browser-local task cache,
 replay-safe queued task writes, explicit two-client conflicts, daily-use task
 organization, and one server-authoritative focus/break session with follower
-and takeover behavior. It does not claim offline calendar/focus mutation,
-closed-application background sync, Google Calendar, recurrence editing, or MCP
-product functionality.
+and takeover behavior, plus separately scoped automation credentials, a stable
+preview/confirm API, content-safe audit records, a catalog-driven local MCP
+stdio adapter, and quick-add through the same confirmed API. It does not claim
+offline calendar/focus mutation, closed-application background sync, Google
+Calendar, recurrence editing, or hosted MCP. Phase 3 Google federation is not
+present in this checkout.
 
-## Run Phase 2
+## Run the Suite
 
 Requirements: Docker with Compose, or Node.js 24+ and pnpm 11.15.1 for local
 development.
@@ -95,6 +99,7 @@ pnpm verify
 ./deploy/verify-compose.sh
 pnpm verify:phase1
 pnpm verify:phase2
+pnpm verify:phase4
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
@@ -121,11 +126,30 @@ The bounded Phase 1 projection, write, and recovery rules are recorded in
 [`docs/adr/0009-phase-1-planning-and-caldav.md`](docs/adr/0009-phase-1-planning-and-caldav.md).
 The Phase 2 task-sync and active-session authority rules are recorded in
 [`docs/adr/0010-phase-2-local-sync-and-active-session.md`](docs/adr/0010-phase-2-local-sync-and-active-session.md).
-The Google connector and MCP work remain deliberately deferred; Phase 0 records
-their feasibility boundaries in [`docs/spikes/`](docs/spikes/) without creating
-production credentials, using real calendar/task data, or exposing an automation
-transport. The disposable phase gates are local verification, not a production
-deployment or a universal CalDAV compatibility claim.
+The Phase 4 automation authority and local-only transport decision are recorded
+in [`docs/adr/0011-phase-4-automation-authority.md`](docs/adr/0011-phase-4-automation-authority.md).
+
+An owner issues, inventories, and revokes automation credentials through
+`/api/automation/tokens`; the raw `suite_at_...` credential is returned only at
+creation. Store it in a regular file owned by the current user with mode `0600`.
+The local clients are:
+
+```bash
+node apps/mcp-stdio/dist/main.mjs \
+  --url http://127.0.0.1:18080 --token-file /absolute/path/suite.token
+
+node apps/quick-add/dist/main.mjs \
+  --url http://127.0.0.1:18080 --token-file /absolute/path/suite.token \
+  --idempotency-key quick-add-20260806-001 "Capture this task"
+```
+
+Both clients reject non-loopback plaintext HTTP, reject token files that are
+not owner-only, and use only the cataloged automation API. The MCP adapter is
+newline-delimited JSON-RPC over stdio; no hosted MCP route, Super Productivity
+plugin IPC, or environment bearer-token shortcut is shipped. Google Calendar
+remains the unimplemented Phase 3 boundary. The disposable phase gates are
+local verification, not a production deployment or a universal CalDAV
+compatibility claim.
 
 ## Existing systems under consideration
 

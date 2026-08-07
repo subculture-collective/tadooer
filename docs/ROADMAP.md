@@ -54,7 +54,10 @@ Phase 0C was completed on 2026-08-05 on `codex/phase-0-foundation`:
   future automation state
 
 Phase 0 is complete. Phases 1 and 2 were subsequently completed as the first
-bounded planning and local-first focus slices; Phase 3 is next.
+bounded planning and local-first focus slices. Phase 4's provider-independent
+automation boundary was completed afterward; Phase 3 Google federation remains
+absent from this checkout and is still required before claiming the federated
+calendar outcome.
 
 ### Outcome
 
@@ -217,6 +220,31 @@ availability-aware reminders, and always sees the next scheduled task first.
 - Rendered tests prove scheduled-time ordering and reminder boundaries
 
 ## Phase 4: First-class automation and MCP
+
+### Implementation checkpoint
+
+Completed on 2026-08-06 on `codex/phase-4-automation-mcp`:
+
+- Suite-owned catalog and versioned Zod contracts for five owner-scoped read
+  resources, confirmed task/calendar/focus operations, and one generic confirm
+  tool shared by HTTP and MCP
+- separately issued, digest-only, expiring, scoped, revocable automation
+  credentials that do not reuse browser cookies or browser client proofs
+- durable previews, consumed confirmations, restart-safe outcomes, namespaced
+  task/calendar/session idempotency, and append-only content-safe audit metadata
+- task creation, Baïkal time-block scheduling, and focus-session commands behind
+  preview and explicit confirmation, including calendar reconciliation against
+  the reserved provider href and UID
+- local TypeScript MCP stdio adapter with catalog-derived tools/resources and a
+  mode-0600 token-file contract; hosted MCP explicitly disabled pending a
+  separate public OAuth/PKCE design
+- quick-add CLI using the same preview/confirm API and caller-stable retry key
+- contract, persistence, HTTP restart/replay/revocation, focus, MCP protocol,
+  quick-add, and full repository verification gates
+
+Phase 4 is complete for the providers actually present in the repository.
+Phase 3 is not retroactively complete: Google OAuth/federation, unified
+cross-provider availability, and reminders remain unimplemented.
 
 ### User outcome
 

@@ -1,19 +1,19 @@
 # Phase 4 verification plan: first-class automation and MCP
 
-**Status:** implementation verification design. This document does not claim a
-shipped automation API, MCP server, hosted transport, quick-add client, or
-Phase 3 calendar federation.
+**Status:** implemented and qualified on 2026-08-06. This document records the
+delivered verification layers; it does not claim Phase 3 calendar federation
+or a hosted MCP transport.
 
 ## Current baseline and scope boundary
 
-The checked repository is a Phase 2 implementation. Its runnable deployment
-has owner browser sessions, Baikal planning, browser-local task sync, and an
-authoritative active session. It does not yet contain Suite automation
-credentials, an automation audit ledger, a Suite-owned automation catalog, an
-MCP adapter, a quick-add client, or a Phase 3 Google Calendar connector.
+The checked repository contains the Phase 2 runtime plus the Phase 4
+provider-independent automation boundary: scoped credentials, audit and
+outcome ledgers, a Suite-owned catalog, confirmed task/calendar/focus commands,
+a local stdio MCP adapter, and quick-add. Phase 3 Google Calendar federation is
+still absent.
 
-Consequently, Phase 4 verification must first identify the actual calendar
-provider/application-service surface delivered by Phase 3. It must not assume
+Consequently, Phase 4 verification identifies the actual calendar provider
+surface in this checkout. It does not assume
 Google OAuth, unified availability, provider revocation, recurrence support,
 or hosted MCP from a roadmap entry alone. The test fixture may exercise
 Baikal-backed scheduling only while that is the qualified provider surface; its
@@ -25,11 +25,9 @@ The existing Super Productivity MCP repository is reference material only. The
 Suite must not use its file IPC bridge, private task identifiers, `sp://`
 resource URIs, or environment bearer-token convention as a production path.
 
-## Required preconditions before a Phase 4 Compose verifier is added
+## Delivered Phase 4 surfaces
 
-The following product surfaces must exist before adding
-`deploy/verify-phase4-compose.sh`, `deploy/phase4-*.mjs`, or a
-`verify:phase4` package script:
+The implementation and its verifier provide:
 
 1. A Suite-owned declarative automation catalog defining tool/resource names,
    input and output schemas, required scopes, mutation/preview/confirmation
@@ -53,18 +51,17 @@ The following product surfaces must exist before adding
 
 ## Verification layers
 
-| Layer | Command/test home once implemented | Purpose |
+| Layer | Command/test home | Purpose |
 | --- | --- | --- |
 | Contracts | `packages/contracts/src/*.test.ts` | Validate catalog schemas, public errors, scopes, preview and confirmation payload limits. |
 | Persistence | `packages/persistence/src/*.test.ts` | Prove atomic durable outcome, confirmation consumption, audit redaction, and calendar-write recovery. |
 | Server integration | `apps/server/src/phase4.test.ts` | Prove authorization, preview/confirm, retry/restart, scope, and revocation behavior through HTTP. |
-| MCP protocol | `apps/mcp/src/*.test.ts` or equivalent | Spawn the real stdio adapter and exercise JSON-RPC framing, negotiation, resources, and tools. |
+| MCP protocol | `apps/mcp-stdio/src/*.test.ts` and `deploy/phase4-runtime.mjs` | Validate protocol behavior and spawn the built stdio adapter against the deployed Suite. |
 | Quick-add | quick-add package test plus verifier helper | Prove it uses the same API/credential/confirmation path with no bypass. |
-| Disposable runtime | `deploy/verify-phase4-compose.sh` | Prove packaged Compose behavior with synthetic owner/calendar data, live browser session, real stdio child process, response-loss retry, restart, and cleanup. |
+| Disposable runtime | `deploy/verify-phase4-compose.sh` | Prove packaged Compose behavior with a synthetic owner, quick-add retry, real stdio child process, revocation, browser continuity, and cleanup. |
 
-`pnpm verify` remains the code-quality gate. A Phase 4 runtime gate should be
-added only after the implementation surfaces above exist, and should be named
-`pnpm verify:phase4` after its underlying Compose script is present.
+`pnpm verify` remains the code-quality gate. `pnpm verify:phase4` runs it, the
+focused automation suites, and the disposable Compose runtime verifier.
 
 ## Catalog/API parity checks
 
@@ -215,33 +212,24 @@ the adapter. Its test must:
 5. Assert it does not access Super Productivity IPC directories or private
    application data. The executable's stdout/stderr must not leak credentials.
 
-## Disposable Compose verifier design
+## Disposable Compose verifier
 
-When the implementation is present, `deploy/verify-phase4-compose.sh` should:
+`deploy/verify-phase4-compose.sh` creates a unique Compose project, builds and
+starts the packaged Suite/Baïkal topology, bootstraps a synthetic owner, issues
+a short-lived credential into a mode-0600 temporary file, and runs the built
+quick-add executable twice with the same input/key. It then spawns the built
+stdio MCP process, performs `initialize`, catalog discovery, and a real task
+resource read, revokes the credential, proves automation fails closed, and
+proves the browser session can still read tasks. Its exit trap removes volumes;
+the runtime helper removes the temporary credential file even on failure.
 
-1. Create a unique Compose project and a mode-0700 temporary working
-   directory; use synthetic, process-local test credentials only.
-2. Build and start the Suite plus the actually supported disposable calendar
-   provider(s), then run existing smoke/readiness checks.
-3. Bootstrap a single owner and qualified calendar identity using the
-   provider's supported test path.
-4. Start a persistent Chromium profile and retain the authenticated interactive
-   session.
-5. Run a real stdio MCP child process against the Suite, exercising catalog
-   parity, resources, preview/confirm, response-loss retry, and calendar
-   recovery.
-6. Restart the Suite between the durable write and replay steps.
-7. Run quick-add against the same server and validate exactly-once behavior.
-8. Revoke the MCP credential and demonstrate fail-closed MCP behavior alongside
-   continued interactive browser behavior.
-9. Assert provider resources by stable UID/href and Suite persistence/API by
-   stable IDs, not merely HTTP 200 status.
-10. Stop the Compose project and remove its disposable volumes and the
-    temporary test directory in an exit trap. Never print raw credentials.
-
-The gate's success line should state precisely what was qualified, for example:
-`Phase 4 catalog parity, confirmed idempotent task/calendar automation, stdio MCP, quick-add, and credential revocation verified.` It must name any
-provider limitation rather than imply universal calendar or hosted-MCP support.
+Calendar response-loss/restart qualification is intentionally exercised in
+`apps/server/src/phase4.test.ts`, where the synthetic DAV provider commits the
+PUT and drops its response, the Suite restarts, the same confirmation
+reconciles by reserved href/UID, and the test asserts one remote resource. The
+Compose gate qualifies the packaged local clients and authorization boundary;
+it does not claim a production Google provider, universal CalDAV behavior, or
+hosted MCP.
 
 ## Completion criteria
 
