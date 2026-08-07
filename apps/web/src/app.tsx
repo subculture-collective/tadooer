@@ -8,6 +8,11 @@ import type {
   Tag,
   Task,
   PlannerResponse,
+  ChoicePool,
+  ChoicePoolItem,
+  ChoicePoolHistoryEvent,
+  PlanningPlaceholder,
+  ChoicePoolSuggestionResponse,
 } from "@suite/contracts";
 import {
   ApiRequestError,
@@ -38,6 +43,11 @@ import {
   patchTemplate,
   instantiateTemplate,
   instantiateTemplateSet,
+  getChoicePools,
+  createChoicePool,
+  createPlanningPlaceholder,
+  suggestPlanningPlaceholder,
+  resolvePlanningPlaceholder,
   patchSubtask,
   login,
   logout,
@@ -55,6 +65,7 @@ import {
   type TemplateSetView,
   type TemplateView,
 } from "./template-library.tsx";
+import { ChoicePoolLibrary } from "./choice-pool-library.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -163,6 +174,16 @@ export const App = ({ initialState }: AppProps) => {
   const [templateProvenance, setTemplateProvenance] = useState<
     Readonly<Record<string, string>>
   >({});
+  const [choicePools, setChoicePools] = useState<readonly ChoicePool[]>([]);
+  const [choicePoolItems, setChoicePoolItems] = useState<
+    readonly ChoicePoolItem[]
+  >([]);
+  const [choicePoolHistory, setChoicePoolHistory] = useState<
+    readonly ChoicePoolHistoryEvent[]
+  >([]);
+  const [planningPlaceholders, setPlanningPlaceholders] = useState<
+    readonly PlanningPlaceholder[]
+  >([]);
 
   const cachedTaskState = useCallback(async () => {
     const snapshots = await localStore.loadCachedTasks({
@@ -208,6 +229,7 @@ export const App = ({ initialState }: AppProps) => {
         tagList,
         library,
         sets,
+        pools,
       ] = await Promise.all([
         getBaikalStatus(),
         getTasks(),
@@ -216,6 +238,7 @@ export const App = ({ initialState }: AppProps) => {
         getTags(),
         getTemplateLibrary(),
         getTemplateSets(),
+        getChoicePools(),
       ]);
       setProjects(projectList);
       setTags(tagList);
@@ -238,6 +261,10 @@ export const App = ({ initialState }: AppProps) => {
             .map((member) => member.templateId),
         })),
       );
+      setChoicePools(pools.pools);
+      setChoicePoolItems(pools.items);
+      setChoicePoolHistory(pools.history);
+      setPlanningPlaceholders(pools.placeholders);
       const window = plannerWindow();
       const planner = baikal.connected
         ? await getPlanner(window.from, window.to)
@@ -1106,6 +1133,105 @@ export const App = ({ initialState }: AppProps) => {
     }
   };
 
+  const refreshChoicePools = async (): Promise<void> => {
+    const library = await getChoicePools();
+    setChoicePools(library.pools);
+    setChoicePoolItems(library.items);
+    setChoicePoolHistory(library.history);
+    setPlanningPlaceholders(library.placeholders);
+  };
+
+  const submitChoicePool = async (input: {
+    title: string;
+    policy: "none" | "cooldown" | "cycle" | "one_shot";
+    pickCount: number;
+    cooldownSeconds: number | null;
+    items: readonly { title: string }[];
+  }): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await createChoicePool(input, state.session.csrfToken);
+      await refreshChoicePools();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitPlanningPlaceholder = async (
+    taskId: string,
+    poolId: string,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await createPlanningPlaceholder(taskId, poolId, state.session.csrfToken);
+      await refreshChoicePools();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const previewPlanningPlaceholder = async (
+    placeholderId: string,
+  ): Promise<ChoicePoolSuggestionResponse> => {
+    setFormError(null);
+    try {
+      return await suggestPlanningPlaceholder(placeholderId);
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+      throw error;
+    }
+  };
+
+  const submitPlaceholderResolution = async (
+    placeholder: PlanningPlaceholder,
+    suggestion: ChoicePoolSuggestionResponse,
+    selectedItemIds: readonly string[],
+    override: boolean,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const resolved = await resolvePlanningPlaceholder(
+        placeholder.id,
+        {
+          selectedItemIds,
+          logicalTime: suggestion.logicalTime,
+          override,
+          expectedRevision: placeholder.revision,
+        },
+        state.session.csrfToken,
+        crypto.randomUUID(),
+      );
+      setSubtasks((current) => ({
+        ...current,
+        [placeholder.taskId]: [
+          ...(current[placeholder.taskId] ?? []),
+          ...resolved.subtasks.filter(
+            ({ id }) =>
+              !(current[placeholder.taskId] ?? []).some(
+                (existing) => existing.id === id,
+              ),
+          ),
+        ],
+      }));
+      await refreshChoicePools();
+      await syncAfterLocalMutation();
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const exportDiagnostics = async (): Promise<void> => {
     const manifest = await localStore.recoverySupportManifest();
     const url = URL.createObjectURL(
@@ -1506,6 +1632,18 @@ export const App = ({ initialState }: AppProps) => {
               onCreateSet={submitTemplateSetCreate}
               onInstantiate={submitTemplateInstantiation}
               onInstantiateSet={submitTemplateSetInstantiation}
+            />
+            <ChoicePoolLibrary
+              pools={choicePools}
+              items={choicePoolItems}
+              history={choicePoolHistory}
+              placeholders={planningPlaceholders}
+              tasks={state.tasks}
+              busy={busy}
+              onCreatePool={submitChoicePool}
+              onCreatePlaceholder={submitPlanningPlaceholder}
+              onSuggest={previewPlanningPlaceholder}
+              onResolve={submitPlaceholderResolution}
             />
             <h3>Captured tasks</h3>
             {state.tasks.length === 0 ? (

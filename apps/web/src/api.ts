@@ -19,6 +19,13 @@ import {
   createTaskTemplateRequestSchema,
   taskTemplatePatchRequestSchema,
   instantiateTemplateRequestSchema,
+  choicePoolLibraryResponseSchema,
+  choicePoolSuggestionResponseSchema,
+  createChoicePoolRequestSchema,
+  createPlanningPlaceholderRequestSchema,
+  planningPlaceholderResolutionResponseSchema,
+  planningPlaceholderSchema,
+  resolvePlanningPlaceholderRequestSchema,
   taskListResponseSchema,
   taskMutationResponseSchema,
   conditionalTaskMutationResponseSchema,
@@ -674,6 +681,80 @@ export const instantiateTemplateSet = (
       body: JSON.stringify(
         instantiateTemplateRequestSchema.parse({
           destinationProjectId,
+          idempotencyKey,
+        }),
+      ),
+    },
+  );
+
+export const getChoicePools = () =>
+  request("/api/pools", choicePoolLibraryResponseSchema);
+
+export const createChoicePool = (
+  input: {
+    readonly title: string;
+    readonly policy: "none" | "cooldown" | "cycle" | "one_shot";
+    readonly pickCount: number;
+    readonly cooldownSeconds: number | null;
+    readonly items: readonly { readonly title: string }[];
+  },
+  csrfToken: string,
+) =>
+  request(
+    "/api/pools",
+    z.object({
+      pool: choicePoolLibraryResponseSchema.shape.pools.element,
+      items: choicePoolLibraryResponseSchema.shape.items,
+    }),
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(createChoicePoolRequestSchema.parse(input)),
+    },
+  );
+
+export const createPlanningPlaceholder = (
+  taskId: string,
+  poolId: string,
+  csrfToken: string,
+) =>
+  request("/api/placeholders", planningPlaceholderSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(
+      createPlanningPlaceholderRequestSchema.parse({ taskId, poolId }),
+    ),
+  });
+
+export const suggestPlanningPlaceholder = (
+  placeholderId: string,
+  logicalTime = new Date().toISOString(),
+) =>
+  request(
+    `/api/placeholders/${placeholderId}/suggestion?at=${encodeURIComponent(logicalTime)}`,
+    choicePoolSuggestionResponseSchema,
+  );
+
+export const resolvePlanningPlaceholder = (
+  placeholderId: string,
+  input: {
+    readonly selectedItemIds: readonly string[];
+    readonly logicalTime: string;
+    readonly override: boolean;
+    readonly expectedRevision: number;
+  },
+  csrfToken: string,
+  idempotencyKey: string,
+) =>
+  request(
+    `/api/placeholders/${placeholderId}/resolve`,
+    planningPlaceholderResolutionResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(
+        resolvePlanningPlaceholderRequestSchema.parse({
+          ...input,
           idempotencyKey,
         }),
       ),
