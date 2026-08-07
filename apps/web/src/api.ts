@@ -36,6 +36,11 @@ import {
   calendarFeedCreateRequestSchema,
   calendarFeedCreateResponseSchema,
   calendarFeedListResponseSchema,
+  googleAuthorizationResponseSchema,
+  googleConnectorStatusResponseSchema,
+  googleSyncResponseSchema,
+  planningPreferencesSchema,
+  dayPlanResponseSchema,
   choicePoolHistoryEventSchema,
   taskListResponseSchema,
   taskMutationResponseSchema,
@@ -69,6 +74,10 @@ import {
   type SyncEntitySnapshot,
   type SyncSnapshotResponse,
   type Tag,
+  type GoogleConnectorStatusResponse,
+  type GoogleSyncResponse,
+  type PlanningPreferences,
+  type DayPlanResponse,
 } from "@suite/contracts";
 import { z } from "zod";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -183,6 +192,62 @@ export const connectBaikal = (
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(input),
   });
+
+export const getGoogleStatus = (): Promise<GoogleConnectorStatusResponse> =>
+  request("/api/connectors/google", googleConnectorStatusResponseSchema);
+
+export const beginGoogleAuthorization = (
+  csrfToken: string,
+): Promise<{ readonly authorizationUrl: string; readonly expiresAt: string }> =>
+  request(
+    "/api/connectors/google/authorize",
+    googleAuthorizationResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+    },
+  );
+
+export const synchronizeGoogle = (
+  csrfToken: string,
+): Promise<GoogleSyncResponse> =>
+  request("/api/connectors/google/sync", googleSyncResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+
+export const disconnectGoogle = (
+  csrfToken: string,
+): Promise<{
+  readonly disconnected: boolean;
+  readonly remoteRevoked: boolean;
+}> =>
+  request(
+    "/api/connectors/google",
+    z.object({ disconnected: z.boolean(), remoteRevoked: z.boolean() }),
+    {
+      method: "DELETE",
+      headers: { "X-CSRF-Token": csrfToken },
+    },
+  );
+
+export const getPlanningPreferences = (): Promise<PlanningPreferences> =>
+  request("/api/planning/preferences", planningPreferencesSchema);
+
+export const updatePlanningPreferences = (
+  input: PlanningPreferences,
+  csrfToken: string,
+): Promise<PlanningPreferences> =>
+  request("/api/planning/preferences", planningPreferencesSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(planningPreferencesSchema.parse(input)),
+  });
+
+export const getDayPlan = (
+  at = new Date().toISOString(),
+): Promise<DayPlanResponse> =>
+  request(`/api/day-plan?at=${encodeURIComponent(at)}`, dayPlanResponseSchema);
 
 export const getTasks = (): Promise<TaskListResponse> =>
   request("/api/tasks", taskListResponseSchema);

@@ -225,8 +225,8 @@ export const calendarEventProjectionSchema = z
     summary: z.string().max(1024),
     startsAt: z.iso.datetime(),
     endsAt: z.iso.datetime(),
-    allDay: z.literal(false),
-    recurrence: z.literal("none"),
+    allDay: z.boolean(),
+    recurrence: z.enum(["none", "instance"]),
     projectedAt: z.iso.datetime(),
   })
   .refine(({ startsAt, endsAt }) => Date.parse(endsAt) > Date.parse(startsAt), {
@@ -243,6 +243,90 @@ export const plannerResponseSchema = z.object({
   window: plannerWindowSchema,
   tasks: z.array(taskSchema),
   events: z.array(calendarEventProjectionSchema),
+  freshness: calendarProjectionFreshnessSchema,
+});
+
+export const googleConnectorStateSchema = z.enum([
+  "disconnected",
+  "connected",
+  "reconnect_required",
+  "stale",
+]);
+export const googleCalendarFreshnessSchema = z.object({
+  calendarId: entityIdSchema,
+  state: z.enum(["fresh", "stale", "unavailable"]),
+  lastSuccessfulSyncAt: z.iso.datetime().nullable(),
+  message: z.string().min(1).max(240),
+});
+export const googleConnectorStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  connected: z.boolean(),
+  state: googleConnectorStateSchema,
+  providerId: entityIdSchema.nullable(),
+  accountLabel: z.string().nullable(),
+  grantedScopes: z.array(z.string()),
+  calendars: z.array(calendarCollectionSchema),
+  freshness: z.array(googleCalendarFreshnessSchema),
+});
+export const googleAuthorizationResponseSchema = z.object({
+  authorizationUrl: z.url(),
+  expiresAt: z.iso.datetime(),
+});
+export const googleSyncResponseSchema = z.object({
+  status: googleConnectorStatusResponseSchema,
+  resetCalendars: z.array(entityIdSchema),
+});
+
+export const planningPreferencesSchema = z
+  .object({
+    workingDays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+    workdayStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    workdayEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    breakStart: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .nullable(),
+    breakEnd: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .nullable(),
+    timeZone: z.literal("UTC"),
+  })
+  .refine(({ workdayStart, workdayEnd }) => workdayStart < workdayEnd, {
+    message: "Workday end must follow start",
+  })
+  .refine(
+    ({ breakStart, breakEnd, workdayStart, workdayEnd }) =>
+      breakStart === null
+        ? breakEnd === null
+        : breakEnd !== null &&
+          breakStart < breakEnd &&
+          breakStart >= workdayStart &&
+          breakEnd <= workdayEnd,
+    { message: "Break boundaries must be a valid pair" },
+  );
+export const dayPlanResponseSchema = z.object({
+  at: z.iso.datetime(),
+  state: z.enum([
+    "working",
+    "scheduled_break",
+    "unavailable",
+    "finished_for_today",
+  ]),
+  preferences: planningPreferencesSchema,
+  orderedTasks: z.array(taskSchema),
+  nextTask: taskSchema.nullable(),
+  reminder: z.object({
+    suppressed: z.boolean(),
+    reason: z.enum([
+      "ready",
+      "stale_calendar",
+      "outside_working_hours",
+      "scheduled_break",
+      "calendar_busy",
+      "no_scheduled_task",
+    ]),
+  }),
   freshness: calendarProjectionFreshnessSchema,
 });
 
@@ -1604,6 +1688,12 @@ export type CalendarProjectionFreshness = z.infer<
   typeof calendarProjectionFreshnessSchema
 >;
 export type PlannerResponse = z.infer<typeof plannerResponseSchema>;
+export type GoogleConnectorStatusResponse = z.infer<
+  typeof googleConnectorStatusResponseSchema
+>;
+export type GoogleSyncResponse = z.infer<typeof googleSyncResponseSchema>;
+export type PlanningPreferences = z.infer<typeof planningPreferencesSchema>;
+export type DayPlanResponse = z.infer<typeof dayPlanResponseSchema>;
 export type CreateTaskTimeBlockRequest = z.infer<
   typeof createTaskTimeBlockRequestSchema
 >;

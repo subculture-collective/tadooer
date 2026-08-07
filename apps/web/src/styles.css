@@ -163,6 +163,58 @@ h3 {
   line-height: 1.55;
 }
 
+.google-planning {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid rgb(16 37 30 / 12%);
+  background: rgb(239 242 234 / 70%);
+}
+
+.compact-list,
+.day-plan-summary {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.compact-list {
+  padding-left: 1.2rem;
+}
+
+.day-plan-summary {
+  margin: 1rem 0;
+  padding: 0.8rem;
+  border-left: 0.25rem solid #647f72;
+  background: white;
+}
+
+.planning-preferences {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(10rem, 1fr));
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.planning-preferences fieldset,
+.planning-preferences .hint,
+.planning-preferences button {
+  grid-column: 1 / -1;
+}
+
+.planning-preferences fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.button-link {
+  display: inline-block;
+  padding: 0.65rem 0.9rem;
+  border-radius: 0.25rem;
+  color: white;
+  background: #294f40;
+  font-weight: 700;
+}
+
 .choice-pool-library {
   margin: 2rem 0;
   padding: 1rem;
@@ -657,6 +709,10 @@ button:disabled {
   .template-edit form,
   .choice-pool-create,
   .placeholder-create {
+    grid-template-columns: 1fr;
+  }
+
+  .planning-preferences {
     grid-template-columns: 1fr;
   }
 }

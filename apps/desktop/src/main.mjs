@@ -1,7 +1,11 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import process from "node:process";
 import console from "node:console";
-import { allowedNavigation, suiteOrigin } from "./policy.mjs";
+import {
+  allowedExternalOAuth,
+  allowedNavigation,
+  suiteOrigin,
+} from "./policy.mjs";
 
 if (process.argv.includes("--suite-smoke")) {
   console.log(
@@ -35,7 +39,10 @@ if (process.argv.includes("--suite-smoke")) {
         partition: "persist:suite-owner",
       },
     });
-    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      if (allowedExternalOAuth(url)) void shell.openExternal(url);
+      return { action: "deny" };
+    });
     window.webContents.on("will-navigate", (event, url) => {
       if (!allowedNavigation(url, origin)) event.preventDefault();
     });

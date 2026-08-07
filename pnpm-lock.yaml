@@ -85,6 +85,9 @@ importers:
       '@suite/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@suite/google-calendar':
+        specifier: workspace:*
+        version: link:../../packages/google-calendar
       '@suite/import-export':
         specifier: workspace:*
         version: link:../../packages/import-export

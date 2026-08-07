@@ -7,6 +7,7 @@ export interface ServerConfig {
   readonly webRoot: string;
   readonly baikalEndpoint: string;
   readonly credentialKeyPath: string;
+  readonly googleOAuthConfigPath?: string;
   readonly secureCookies: boolean;
   readonly build: {
     readonly version: string;
@@ -66,6 +67,10 @@ export const loadConfig = (
   credentialKeyPath: resolve(
     environment.SUITE_CREDENTIAL_KEY_PATH ?? "./data/credential.key",
   ),
+  ...(environment.GOOGLE_OAUTH_CONFIG_PATH === undefined ||
+  environment.GOOGLE_OAUTH_CONFIG_PATH === ""
+    ? {}
+    : { googleOAuthConfigPath: resolve(environment.GOOGLE_OAUTH_CONFIG_PATH) }),
   secureCookies: parseBoolean(
     "SUITE_SECURE_COOKIES",
     environment.SUITE_SECURE_COOKIES,

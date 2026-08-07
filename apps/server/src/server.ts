@@ -46,6 +46,7 @@ import type {
   ChoicePoolHistoryEvent,
   PlanningPlaceholder,
   PlanningPlaceholderResolutionResponse,
+  DayPlanResponse,
 } from "@suite/contracts";
 import {
   baikalConnectRequestSchema,
@@ -81,6 +82,7 @@ import {
   calendarImportPreviewRequestSchema,
   calendarImportReportSchema,
   calendarFeedCreateRequestSchema,
+  planningPreferencesSchema,
 } from "@suite/contracts";
 import { parseIcsImport, serializeCalendarFeed } from "@suite/import-export";
 import {
@@ -102,6 +104,7 @@ import {
   type SessionClock,
   suggestChoicePool,
   validateChoicePoolSelection,
+  buildCalmDay,
 } from "@suite/domain";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { ServerConfig } from "./config.ts";
@@ -117,6 +120,7 @@ import {
   type CalendarOperationResult,
   type ConnectorFailure,
 } from "./connector.ts";
+import { GoogleConnectorService } from "./google-connector.ts";
 
 const mimeTypes: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
@@ -651,6 +655,7 @@ export interface RunningSuiteServer {
 
 export interface SuiteServerOptions {
   readonly connectorFetch?: typeof fetch;
+  readonly googleFetch?: typeof fetch;
   readonly sessionClock?: SessionClock;
 }
 
@@ -668,6 +673,12 @@ export const startSuiteServer = async (
     new URL(config.baikalEndpoint),
     config.credentialKeyPath,
     options.connectorFetch,
+  );
+  const google = new GoogleConnectorService(
+    database,
+    config.credentialKeyPath,
+    config.googleOAuthConfigPath,
+    options.googleFetch,
   );
   const startedAt = Date.now();
   const requestCounts = new Map<number, number>();
@@ -1478,6 +1489,195 @@ export const startSuiteServer = async (
           }
           console.info("connector.baikal.verified");
           sendJson(response, 200, result.status);
+          return;
+        }
+
+        if (method === "GET" && url.pathname === "/api/connectors/google") {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          sendJson(response, 200, google.status(session.owner.id));
+          return;
+        }
+
+        if (
+          method === "POST" &&
+          url.pathname === "/api/connectors/google/authorize"
+        ) {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          const authorization = google.begin(session.owner.id);
+          if (authorization === undefined) {
+            sendError(
+              response,
+              503,
+              "GOOGLE_OAUTH_NOT_CONFIGURED",
+              "Google OAuth configuration is not installed",
+            );
+            return;
+          }
+          sendJson(response, 200, authorization, {
+            "Cache-Control": "no-store",
+          });
+          return;
+        }
+
+        if (
+          method === "GET" &&
+          url.pathname === "/api/connectors/google/callback"
+        ) {
+          const state = url.searchParams.get("state");
+          const code = url.searchParams.get("code");
+          if (
+            url.searchParams.get("error") !== null ||
+            state === null ||
+            code === null ||
+            state.length < 32 ||
+            state.length > 256 ||
+            code.length < 4 ||
+            code.length > 4096
+          ) {
+            sendError(
+              response,
+              400,
+              "GOOGLE_AUTHORIZATION_REJECTED",
+              "Google authorization was not completed",
+            );
+            return;
+          }
+          const ownerId = await google.complete(state, code);
+          if (ownerId === undefined) {
+            sendError(
+              response,
+              400,
+              "GOOGLE_AUTHORIZATION_INVALID",
+              "Google authorization state or grant was invalid",
+            );
+            return;
+          }
+          response.writeHead(303, {
+            ...securityHeaders,
+            "Cache-Control": "no-store",
+            Location: "/?google=connected",
+          });
+          response.end();
+          return;
+        }
+
+        if (
+          method === "POST" &&
+          url.pathname === "/api/connectors/google/sync"
+        ) {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          sendJson(response, 200, await google.synchronize(session.owner.id));
+          return;
+        }
+
+        if (method === "DELETE" && url.pathname === "/api/connectors/google") {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          sendJson(response, 200, await google.disconnect(session.owner.id));
           return;
         }
 
@@ -3847,6 +4047,83 @@ export const startSuiteServer = async (
           return;
         }
 
+        if (method === "GET" && url.pathname === "/api/planning/preferences") {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          sendJson(
+            response,
+            200,
+            database.getPlanningPreferences(session.owner.id),
+          );
+          return;
+        }
+
+        if (method === "PUT" && url.pathname === "/api/planning/preferences") {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          const parsed = planningPreferencesSchema.safeParse(
+            await readJson(request),
+          );
+          if (!parsed.success) {
+            sendError(
+              response,
+              400,
+              "INVALID_PLANNING_PREFERENCES",
+              "Planning preferences are invalid",
+            );
+            return;
+          }
+          sendJson(
+            response,
+            200,
+            database.putPlanningPreferences(
+              session.owner.id,
+              parsed.data,
+              new Date().toISOString(),
+            ),
+          );
+          return;
+        }
+
         if (method === "GET" && url.pathname === "/api/planner") {
           const session = auth.authenticate(request, false);
           if (session === undefined) {
@@ -3872,9 +4149,12 @@ export const startSuiteServer = async (
             return;
           }
           const status = await connector.status(session.owner.id);
+          const googleStatus = google.status(session.owner.id);
           let fresh = true;
+          let connectedProviders = 0;
           let projectedAt: string | null = null;
           if (status.ok && status.status.connected) {
+            connectedProviders += 1;
             for (const calendar of status.status.calendars.filter(
               (candidate) => candidate.supportsEvents,
             )) {
@@ -3895,30 +4175,44 @@ export const startSuiteServer = async (
                 calendar.id,
                 window.data.from,
                 window.data.to,
-                result.value
-                  .filter((resource) => !resource.event.allDay)
-                  .map((resource) => ({
-                    id: randomUUID(),
-                    providerId: calendar.providerId,
-                    calendarId: calendar.id,
-                    href: resource.href,
-                    uid: resource.event.uid,
-                    etag: resource.etag,
-                    rawIcs: resource.rawIcs,
-                    summary: resource.event.summary,
-                    startsAt: new Date(resource.event.startsAt).toISOString(),
-                    endsAt: new Date(resource.event.endsAt).toISOString(),
-                    allDay: false,
-                    freshness: "current" as const,
-                    mutable: false,
-                    revision: 1,
-                    projectedAt: now,
-                  })),
+                result.value.map((resource) => ({
+                  id: randomUUID(),
+                  providerId: calendar.providerId,
+                  calendarId: calendar.id,
+                  href: resource.href,
+                  uid: resource.event.uid,
+                  etag: resource.etag,
+                  rawIcs: resource.rawIcs,
+                  summary: resource.event.summary,
+                  startsAt: new Date(resource.event.startsAt).toISOString(),
+                  endsAt: new Date(resource.event.endsAt).toISOString(),
+                  allDay: resource.event.allDay,
+                  recurrence: "none" as const,
+                  freshness: "current" as const,
+                  mutable: false,
+                  revision: 1,
+                  projectedAt: now,
+                })),
               );
             }
-          } else {
-            fresh = false;
           }
+          if (googleStatus.connected) {
+            connectedProviders += 1;
+            if (
+              googleStatus.state !== "connected" ||
+              googleStatus.freshness.some(({ state }) => state !== "fresh")
+            )
+              fresh = false;
+            for (const item of googleStatus.freshness) {
+              if (
+                item.lastSuccessfulSyncAt !== null &&
+                (projectedAt === null ||
+                  item.lastSuccessfulSyncAt > projectedAt)
+              )
+                projectedAt = item.lastSuccessfulSyncAt;
+            }
+          }
+          if (connectedProviders === 0) fresh = false;
           const events = database.listCalendarEvents(
             session.owner.id,
             window.data.from,
@@ -3926,7 +4220,20 @@ export const startSuiteServer = async (
           );
           const body: PlannerResponse = {
             window: window.data,
-            tasks: database.listTasks(session.owner.id).map(taskResponse),
+            tasks: database
+              .listTasks(session.owner.id)
+              .toSorted((left, right) => {
+                const leftTime =
+                  left.plannedStart === null
+                    ? Number.POSITIVE_INFINITY
+                    : Date.parse(left.plannedStart);
+                const rightTime =
+                  right.plannedStart === null
+                    ? Number.POSITIVE_INFINITY
+                    : Date.parse(right.plannedStart);
+                return leftTime - rightTime || left.id.localeCompare(right.id);
+              })
+              .map(taskResponse),
             events: events.map((event) => ({
               identity: {
                 providerId: event.providerId,
@@ -3939,8 +4246,8 @@ export const startSuiteServer = async (
               summary: event.summary,
               startsAt: event.startsAt,
               endsAt: event.endsAt,
-              allDay: false,
-              recurrence: "none",
+              allDay: event.allDay,
+              recurrence: event.recurrence ?? "none",
               projectedAt: event.projectedAt,
             })),
             freshness: fresh
@@ -3952,6 +4259,102 @@ export const startSuiteServer = async (
               : {
                   state: events.length === 0 ? "unavailable" : "stale",
                   projectedAt: events.at(0)?.projectedAt ?? null,
+                  message:
+                    events.length === 0
+                      ? "Calendar projection is unavailable"
+                      : "Showing the last safe calendar projection",
+                },
+          };
+          sendJson(response, 200, body);
+          return;
+        }
+
+        if (method === "GET" && url.pathname === "/api/day-plan") {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          const requestedAt = url.searchParams.get("at");
+          const at = requestedAt === null ? new Date() : new Date(requestedAt);
+          if (!Number.isFinite(at.getTime())) {
+            sendError(
+              response,
+              400,
+              "INVALID_DAY_PLAN_TIME",
+              "Day-plan time must be an ISO timestamp",
+            );
+            return;
+          }
+          const dayStart = new Date(at);
+          dayStart.setUTCHours(0, 0, 0, 0);
+          const dayEnd = new Date(dayStart);
+          dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+          const tasks = database.listTasks(session.owner.id).map(taskResponse);
+          const events = database.listCalendarEvents(
+            session.owner.id,
+            dayStart.toISOString(),
+            dayEnd.toISOString(),
+          );
+          const googleStatus = google.status(session.owner.id);
+          const baikalStatus = await connector.status(session.owner.id);
+          const providerFreshness: boolean[] = [];
+          if (baikalStatus.ok && baikalStatus.status.connected)
+            providerFreshness.push(true);
+          if (googleStatus.connected)
+            providerFreshness.push(
+              googleStatus.state === "connected" &&
+                googleStatus.freshness.every(({ state }) => state === "fresh"),
+            );
+          const calendarFresh =
+            providerFreshness.length > 0 && providerFreshness.every(Boolean);
+          const preferences = database.getPlanningPreferences(session.owner.id);
+          const calm = buildCalmDay({
+            at: at.toISOString(),
+            tasks: tasks.map((task) => ({
+              id: task.id,
+              status: task.status,
+              plannedStart: task.plannedStart ?? null,
+            })),
+            busy: events.map(({ startsAt, endsAt }) => ({
+              startsAt,
+              endsAt,
+            })),
+            preferences,
+            calendarFresh,
+          });
+          const byId = new Map(tasks.map((task) => [task.id, task]));
+          const projectedAt = events.at(-1)?.projectedAt ?? null;
+          const body: DayPlanResponse = {
+            at: at.toISOString(),
+            state: calm.state,
+            preferences: {
+              ...preferences,
+              workingDays: [...preferences.workingDays],
+            },
+            orderedTasks: calm.orderedTaskIds.flatMap((id) => {
+              const task = byId.get(id);
+              return task === undefined ? [] : [task];
+            }),
+            nextTask:
+              calm.nextTaskId === null
+                ? null
+                : (byId.get(calm.nextTaskId) ?? null),
+            reminder: calm.reminder,
+            freshness: calendarFresh
+              ? {
+                  state: "fresh",
+                  projectedAt,
+                  message: "Calendar projection is current",
+                }
+              : {
+                  state: events.length === 0 ? "unavailable" : "stale",
+                  projectedAt,
                   message:
                     events.length === 0
                       ? "Calendar projection is unavailable"

@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 11,
-        expectedMigrationCount: 11,
+        appliedMigrationCount: 12,
+        expectedMigrationCount: 12,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(11);
-      expect(reopenedState.expectedMigrationCount).toBe(11);
+      expect(reopenedState.appliedMigrationCount).toBe(12);
+      expect(reopenedState.expectedMigrationCount).toBe(12);
     });
   });
 
@@ -1322,6 +1322,185 @@ describe("SuiteDatabase", () => {
         )?.revokedAt,
       ).toBe(now);
       database.close();
+    });
+  });
+
+  it("persists Google state, incremental projections, and preferences without exposing grants", async () => {
+    await withTemporaryDirectory((directory) => {
+      const path = join(directory, "suite.sqlite");
+      const database = SuiteDatabase.open(path);
+      const now = "2026-08-07T12:00:00.000Z";
+      database.createOwner({
+        id: "google-owner",
+        username: "google-owner",
+        displayName: "Google owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      database.createGoogleOAuthState({
+        stateHash: "state-digest",
+        ownerId: "google-owner",
+        expiresAt: "2026-08-07T12:10:00.000Z",
+        createdAt: now,
+      });
+      expect(
+        database.consumeGoogleOAuthState(
+          "state-digest",
+          "2026-08-07T12:01:00.000Z",
+        ),
+      ).toBe("google-owner");
+      expect(
+        database.consumeGoogleOAuthState(
+          "state-digest",
+          "2026-08-07T12:02:00.000Z",
+        ),
+      ).toBeUndefined();
+      database.createGoogleOAuthState({
+        stateHash: "expired-digest",
+        ownerId: "google-owner",
+        expiresAt: "2026-08-07T12:03:00.000Z",
+        createdAt: "2026-08-07T12:02:00.000Z",
+      });
+      expect(
+        database.consumeGoogleOAuthState(
+          "expired-digest",
+          "2026-08-07T12:04:00.000Z",
+        ),
+      ).toBeUndefined();
+
+      database.putGoogleConnector({
+        id: "google-connector",
+        ownerId: "google-owner",
+        credentialKeyId: "key-id",
+        credentialNonce: new Uint8Array([1, 2, 3]),
+        credentialCiphertext: new Uint8Array([4, 5, 6]),
+        credentialTag: new Uint8Array([7, 8, 9]),
+        grantedScopes: ["scope-b", "scope-a"],
+        accountLabel: "owner@example.test",
+        state: "connected",
+        createdAt: now,
+        updatedAt: now,
+        revokedAt: null,
+      });
+      expect(database.getGoogleConnector("google-owner")).toMatchObject({
+        accountLabel: "owner@example.test",
+        grantedScopes: ["scope-a", "scope-b"],
+      });
+      const provider = database.ensureCalendarProvider(
+        "google-owner",
+        "google",
+        "google-connector",
+        now,
+      );
+      const calendar = database.putCalendarCollections(
+        provider.id,
+        [
+          {
+            href: "primary@example.test",
+            displayName: "Primary",
+            supportsEvents: true,
+            supportsTodos: false,
+          },
+        ],
+        now,
+      )[0];
+      if (calendar === undefined) throw new Error("Calendar fixture missing");
+      database.applyGoogleEventSync({
+        ownerId: "google-owner",
+        calendarId: calendar.id,
+        externalCalendarId: "primary@example.test",
+        providerId: provider.id,
+        syncToken: "sync-1",
+        reset: true,
+        events: [
+          {
+            id: "event-1",
+            uid: "event-1@example.test",
+            etag: '"event-1"',
+            summary: "Recurring instance",
+            startsAt: "2026-08-07T13:00:00.000Z",
+            endsAt: "2026-08-07T14:00:00.000Z",
+            allDay: false,
+            recurrence: "instance",
+            deleted: false,
+            rawIcs: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+          },
+        ],
+        now,
+      });
+      expect(
+        database.listCalendarEvents(
+          "google-owner",
+          "2026-08-07T00:00:00.000Z",
+          "2026-08-08T00:00:00.000Z",
+        ),
+      ).toMatchObject([
+        { href: "event-1", recurrence: "instance", mutable: false },
+      ]);
+      expect(database.listGoogleCalendarSync("google-owner")).toMatchObject([
+        { syncToken: "sync-1", state: "fresh" },
+      ]);
+      database.applyGoogleEventSync({
+        ownerId: "google-owner",
+        calendarId: calendar.id,
+        externalCalendarId: "primary@example.test",
+        providerId: provider.id,
+        syncToken: "sync-2",
+        reset: false,
+        events: [
+          {
+            id: "event-1",
+            uid: "event-1@example.test",
+            etag: '"event-2"',
+            summary: "",
+            startsAt: "1970-01-01T00:00:00.000Z",
+            endsAt: "1970-01-01T00:00:00.001Z",
+            allDay: false,
+            recurrence: "none",
+            deleted: true,
+            rawIcs: "",
+          },
+        ],
+        now: "2026-08-07T12:05:00.000Z",
+      });
+      expect(
+        database.listCalendarEvents(
+          "google-owner",
+          "2026-08-07T00:00:00.000Z",
+          "2026-08-08T00:00:00.000Z",
+        ),
+      ).toEqual([]);
+      expect(database.getPlanningPreferences("google-owner")).toMatchObject({
+        workingDays: [1, 2, 3, 4, 5],
+        timeZone: "UTC",
+      });
+      expect(
+        database.putPlanningPreferences(
+          "google-owner",
+          {
+            workingDays: [1, 3, 5],
+            workdayStart: "08:00",
+            workdayEnd: "16:00",
+            breakStart: null,
+            breakEnd: null,
+            timeZone: "UTC",
+          },
+          now,
+        ),
+      ).toMatchObject({ workingDays: [1, 3, 5], breakStart: null });
+      database.pruneGoogleCalendars("google-owner", provider.id, []);
+      expect(database.listOwnedCalendars("google-owner", "google")).toEqual([]);
+      expect(database.disconnectGoogle("google-owner")).toBe(true);
+      expect(database.getGoogleConnector("google-owner")).toBeUndefined();
+      expect(database.listOwnedCalendars("google-owner", "google")).toEqual([]);
+      database.close();
+
+      const raw = new DatabaseSync(path, { readOnly: true });
+      const connectorRows = raw
+        .prepare("SELECT COUNT(*) AS count FROM google_connectors")
+        .get() as unknown as { readonly count: number };
+      expect(connectorRows.count).toBe(0);
+      raw.close();
     });
   });
 });

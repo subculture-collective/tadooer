@@ -14,6 +14,9 @@ import type {
   PlanningPlaceholder,
   ChoicePoolSuggestionResponse,
   TemplatePoolSlot,
+  GoogleConnectorStatusResponse,
+  PlanningPreferences,
+  DayPlanResponse,
 } from "@suite/contracts";
 import {
   ApiRequestError,
@@ -27,6 +30,13 @@ import {
   assignTaskProject,
   assignTaskTags,
   getBaikalStatus,
+  getGoogleStatus,
+  beginGoogleAuthorization,
+  synchronizeGoogle,
+  disconnectGoogle,
+  getPlanningPreferences,
+  updatePlanningPreferences,
+  getDayPlan,
   getActiveSession,
   getSetupStatus,
   getTasks,
@@ -71,6 +81,7 @@ import {
 } from "./template-library.tsx";
 import { ChoicePoolLibrary } from "./choice-pool-library.tsx";
 import { CalendarMigration } from "./calendar-migration.tsx";
+import { GooglePlanning } from "./google-planning.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -87,6 +98,9 @@ export type AppState =
       readonly tasks: readonly Task[];
       readonly recovery: readonly Task[];
       readonly planner: PlannerResponse | null;
+      readonly google?: GoogleConnectorStatusResponse;
+      readonly planningPreferences?: PlanningPreferences;
+      readonly dayPlan?: DayPlanResponse;
       readonly client?: LocalClientIdentity;
       readonly activeSession?: ActiveSession | null;
       readonly syncStatus?: "online" | "offline" | "syncing";
@@ -231,6 +245,9 @@ export const App = ({ initialState }: AppProps) => {
     async (session: SessionResponse) => {
       const [
         baikal,
+        google,
+        planningPreferences,
+        dayPlan,
         taskList,
         recoveryList,
         projectList,
@@ -240,6 +257,9 @@ export const App = ({ initialState }: AppProps) => {
         pools,
       ] = await Promise.all([
         getBaikalStatus(),
+        getGoogleStatus(),
+        getPlanningPreferences(),
+        getDayPlan(),
         getTasks(),
         getRecoveryTasks(),
         getProjects(),
@@ -275,9 +295,10 @@ export const App = ({ initialState }: AppProps) => {
       setChoicePoolHistory(pools.history);
       setPlanningPlaceholders(pools.placeholders);
       const window = plannerWindow();
-      const planner = baikal.connected
-        ? await getPlanner(window.from, window.to)
-        : null;
+      const planner =
+        baikal.connected || google.connected
+          ? await getPlanner(window.from, window.to)
+          : null;
       let local: Awaited<ReturnType<typeof synchronize>> | undefined;
       try {
         local = await synchronize(session);
@@ -296,6 +317,9 @@ export const App = ({ initialState }: AppProps) => {
         kind: "authenticated",
         session,
         baikal,
+        google,
+        planningPreferences,
+        dayPlan,
         tasks: visibleTasks,
         recovery: local?.recovery ?? recoveryList.tasks,
         planner,
@@ -460,6 +484,93 @@ export const App = ({ initialState }: AppProps) => {
       );
       await loadAuthenticated(state.session);
       form.reset();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const authorizeGoogle = async (): Promise<string> => {
+    if (state.kind !== "authenticated") throw new Error("Sign in required");
+    setBusy(true);
+    setFormError(null);
+    try {
+      const authorization = await beginGoogleAuthorization(
+        state.session.csrfToken,
+      );
+      return authorization.authorizationUrl;
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+      throw error;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refreshGooglePlanning = async (): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    const [google, dayPlan] = await Promise.all([
+      getGoogleStatus(),
+      getDayPlan(),
+    ]);
+    const window = plannerWindow();
+    const planner =
+      state.baikal.connected || google.connected
+        ? await getPlanner(window.from, window.to)
+        : null;
+    setState((current) =>
+      current.kind === "authenticated"
+        ? { ...current, google, dayPlan, planner }
+        : current,
+    );
+  };
+
+  const syncGoogleCalendar = async (): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await synchronizeGoogle(state.session.csrfToken);
+      await refreshGooglePlanning();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeGoogleCalendar = async (): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await disconnectGoogle(state.session.csrfToken);
+      await refreshGooglePlanning();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePlanningPreferences = async (
+    preferences: PlanningPreferences,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const saved = await updatePlanningPreferences(
+        preferences,
+        state.session.csrfToken,
+      );
+      const dayPlan = await getDayPlan();
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, planningPreferences: saved, dayPlan }
+          : current,
+      );
     } catch (error: unknown) {
       setFormError(messageFor(error));
     } finally {
@@ -1611,6 +1722,20 @@ export const App = ({ initialState }: AppProps) => {
               Task sync: {state.syncStatus ?? "offline"} · visible conflicts:{" "}
               {state.conflictCount ?? 0}
             </p>
+            {state.google !== undefined &&
+              state.planningPreferences !== undefined &&
+              state.dayPlan !== undefined && (
+                <GooglePlanning
+                  status={state.google}
+                  preferences={state.planningPreferences}
+                  dayPlan={state.dayPlan}
+                  busy={busy}
+                  onAuthorize={authorizeGoogle}
+                  onSynchronize={syncGoogleCalendar}
+                  onDisconnect={removeGoogleCalendar}
+                  onSavePreferences={savePlanningPreferences}
+                />
+              )}
             <button
               type="button"
               className="text-button"

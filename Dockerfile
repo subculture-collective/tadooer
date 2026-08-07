@@ -11,6 +11,7 @@ COPY packages/caldav/package.json packages/caldav/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/domain/package.json packages/domain/package.json
 COPY packages/import-export/package.json packages/import-export/package.json
+COPY packages/google-calendar/package.json packages/google-calendar/package.json
 COPY packages/persistence/package.json packages/persistence/package.json
 COPY packages/test-support/package.json packages/test-support/package.json
 RUN pnpm install --frozen-lockfile

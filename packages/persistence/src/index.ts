@@ -133,6 +133,7 @@ export interface CalendarEventProjectionRecord {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly allDay: boolean;
+  readonly recurrence?: "none" | "instance";
   readonly freshness: "current" | "stale" | "unavailable" | "unsupported";
   readonly mutable: boolean;
   readonly revision: number;
@@ -430,6 +431,38 @@ export interface CalendarFeedCapabilityRecord {
   readonly secretHash: string;
   readonly createdAt: string;
   readonly revokedAt: string | null;
+}
+export interface GoogleConnectorRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly credentialKeyId: string;
+  readonly credentialNonce: Uint8Array;
+  readonly credentialCiphertext: Uint8Array;
+  readonly credentialTag: Uint8Array;
+  readonly grantedScopes: readonly string[];
+  readonly accountLabel: string | null;
+  readonly state: "connected" | "reconnect_required" | "stale";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly revokedAt: string | null;
+}
+export interface GoogleCalendarSyncRecord {
+  readonly calendarId: string;
+  readonly ownerId: string;
+  readonly externalCalendarId: string;
+  readonly syncToken: string | null;
+  readonly state: "fresh" | "stale" | "unavailable";
+  readonly lastSuccessfulSyncAt: string | null;
+  readonly lastAttemptAt: string | null;
+  readonly errorCode: string | null;
+}
+export interface PlanningPreferencesRecord {
+  readonly workingDays: readonly number[];
+  readonly workdayStart: string;
+  readonly workdayEnd: string;
+  readonly breakStart: string | null;
+  readonly breakEnd: string | null;
+  readonly timeZone: "UTC";
 }
 export interface SyncChangeRecord {
   readonly ownerId: string;
@@ -937,6 +970,37 @@ const migrations: readonly Migration[] = [
       CREATE INDEX calendar_feeds_by_owner ON calendar_feed_capabilities(owner_id, created_at, id);
     `,
   },
+  {
+    id: "0012_phase_3_google_federation",
+    sql: `
+      ALTER TABLE calendar_event_projections ADD COLUMN recurrence TEXT NOT NULL DEFAULT 'none'
+        CHECK(recurrence IN ('none','instance'));
+      CREATE TABLE google_oauth_states (
+        state_hash TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL, consumed_at TEXT, created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE google_connectors (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL UNIQUE REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        credential_key_id TEXT NOT NULL, credential_nonce BLOB NOT NULL, credential_ciphertext BLOB NOT NULL,
+        credential_tag BLOB NOT NULL, granted_scopes_json TEXT NOT NULL, account_label TEXT,
+        state TEXT NOT NULL CHECK(state IN ('connected','reconnect_required','stale')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, revoked_at TEXT
+      ) STRICT;
+      CREATE TABLE google_calendar_sync (
+        calendar_id TEXT PRIMARY KEY REFERENCES calendar_collections(id) ON DELETE CASCADE,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        external_calendar_id TEXT NOT NULL, sync_token TEXT,
+        state TEXT NOT NULL CHECK(state IN ('fresh','stale','unavailable')),
+        last_successful_sync_at TEXT, last_attempt_at TEXT, error_code TEXT,
+        UNIQUE(owner_id, external_calendar_id)
+      ) STRICT;
+      CREATE TABLE owner_planning_preferences (
+        owner_id TEXT PRIMARY KEY REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        working_days_json TEXT NOT NULL, workday_start TEXT NOT NULL, workday_end TEXT NOT NULL,
+        break_start TEXT, break_end TEXT, time_zone TEXT NOT NULL CHECK(time_zone='UTC'), updated_at TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -1375,6 +1439,64 @@ export class SuiteDatabase {
         };
   }
 
+  listOwnedCalendars(
+    ownerId: string,
+    kind?: CalendarProviderRecord["kind"],
+  ): readonly OwnedCalendarRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT c.id,c.provider_id,c.href,c.display_name,c.supports_events,c.supports_todos,p.owner_id,p.kind,p.connector_id
+       FROM calendar_collections c JOIN calendar_providers p ON p.id=c.provider_id
+       WHERE p.owner_id=? AND (? IS NULL OR p.kind=?) ORDER BY p.kind,c.display_name COLLATE NOCASE,c.id`,
+      )
+      .all(ownerId, kind ?? null, kind ?? null) as unknown as readonly Record<
+      string,
+      string | number
+    >[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      providerId: String(row.provider_id),
+      href: String(row.href),
+      displayName: String(row.display_name),
+      supportsEvents: Number(row.supports_events) === 1,
+      supportsTodos: Number(row.supports_todos) === 1,
+      ownerId: String(row.owner_id),
+      kind: String(row.kind) as CalendarProviderRecord["kind"],
+      connectorId: String(row.connector_id),
+    }));
+  }
+
+  pruneGoogleCalendars(
+    ownerId: string,
+    providerId: string,
+    activeExternalCalendarIds: readonly string[],
+  ): void {
+    const active = new Set(activeExternalCalendarIds);
+    const rows = this.#database
+      .prepare(
+        `SELECT c.id,c.href FROM calendar_collections c
+         JOIN calendar_providers p ON p.id=c.provider_id
+         WHERE p.owner_id=? AND p.kind='google' AND p.id=?`,
+      )
+      .all(ownerId, providerId) as unknown as readonly {
+      readonly id: string;
+      readonly href: string;
+    }[];
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const remove = this.#database.prepare(
+        "DELETE FROM calendar_collections WHERE id=? AND provider_id=?",
+      );
+      for (const row of rows) {
+        if (!active.has(row.href)) remove.run(row.id, providerId);
+      }
+      this.#database.exec("COMMIT;");
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   createCalendarImportPreview(input: {
     readonly id: string;
     readonly ownerId: string;
@@ -1599,6 +1721,304 @@ export class SuiteDatabase {
       createdAt: String(row.created_at),
       revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
     };
+  }
+
+  createGoogleOAuthState(record: {
+    readonly stateHash: string;
+    readonly ownerId: string;
+    readonly expiresAt: string;
+    readonly createdAt: string;
+  }): void {
+    this.#database
+      .prepare(
+        "DELETE FROM google_oauth_states WHERE owner_id=? OR expires_at<=?",
+      )
+      .run(record.ownerId, record.createdAt);
+    this.#database
+      .prepare(
+        "INSERT INTO google_oauth_states (state_hash,owner_id,expires_at,consumed_at,created_at) VALUES (?,?,?,NULL,?)",
+      )
+      .run(
+        record.stateHash,
+        record.ownerId,
+        record.expiresAt,
+        record.createdAt,
+      );
+  }
+
+  consumeGoogleOAuthState(stateHash: string, now: string): string | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT owner_id FROM google_oauth_states WHERE state_hash=? AND consumed_at IS NULL AND expires_at>?",
+      )
+      .get(stateHash, now) as unknown as
+      { readonly owner_id: string } | undefined;
+    if (row === undefined) return undefined;
+    const consumed = this.#database
+      .prepare(
+        "UPDATE google_oauth_states SET consumed_at=? WHERE state_hash=? AND consumed_at IS NULL AND expires_at>?",
+      )
+      .run(now, stateHash, now);
+    return consumed.changes === 1 ? row.owner_id : undefined;
+  }
+
+  putGoogleConnector(record: GoogleConnectorRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO google_connectors (id,owner_id,credential_key_id,credential_nonce,credential_ciphertext,credential_tag,granted_scopes_json,account_label,state,created_at,updated_at,revoked_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET id=excluded.id,credential_key_id=excluded.credential_key_id,
+       credential_nonce=excluded.credential_nonce,credential_ciphertext=excluded.credential_ciphertext,credential_tag=excluded.credential_tag,
+       granted_scopes_json=excluded.granted_scopes_json,account_label=excluded.account_label,state=excluded.state,updated_at=excluded.updated_at,revoked_at=NULL`,
+      )
+      .run(
+        record.id,
+        record.ownerId,
+        record.credentialKeyId,
+        record.credentialNonce,
+        record.credentialCiphertext,
+        record.credentialTag,
+        JSON.stringify([...record.grantedScopes].sort()),
+        record.accountLabel,
+        record.state,
+        record.createdAt,
+        record.updatedAt,
+        record.revokedAt,
+      );
+  }
+
+  getGoogleConnector(ownerId: string): GoogleConnectorRecord | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT * FROM google_connectors WHERE owner_id=? AND revoked_at IS NULL",
+      )
+      .get(ownerId) as unknown as
+      Record<string, string | Uint8Array | null> | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          id: String(row.id),
+          ownerId: String(row.owner_id),
+          credentialKeyId: String(row.credential_key_id),
+          credentialNonce: row.credential_nonce as Uint8Array,
+          credentialCiphertext: row.credential_ciphertext as Uint8Array,
+          credentialTag: row.credential_tag as Uint8Array,
+          grantedScopes: JSON.parse(
+            String(row.granted_scopes_json),
+          ) as string[],
+          accountLabel:
+            row.account_label === null ? null : String(row.account_label),
+          state: String(row.state) as GoogleConnectorRecord["state"],
+          createdAt: String(row.created_at),
+          updatedAt: String(row.updated_at),
+          revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
+        };
+  }
+
+  markGoogleConnectorState(
+    ownerId: string,
+    state: GoogleConnectorRecord["state"],
+    now: string,
+  ): void {
+    this.#database
+      .prepare(
+        "UPDATE google_connectors SET state=?,updated_at=? WHERE owner_id=? AND revoked_at IS NULL",
+      )
+      .run(state, now, ownerId);
+  }
+
+  putGoogleCalendarSync(record: GoogleCalendarSyncRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO google_calendar_sync (calendar_id,owner_id,external_calendar_id,sync_token,state,last_successful_sync_at,last_attempt_at,error_code)
+       VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(calendar_id) DO UPDATE SET external_calendar_id=excluded.external_calendar_id,sync_token=excluded.sync_token,
+       state=excluded.state,last_successful_sync_at=excluded.last_successful_sync_at,last_attempt_at=excluded.last_attempt_at,error_code=excluded.error_code`,
+      )
+      .run(
+        record.calendarId,
+        record.ownerId,
+        record.externalCalendarId,
+        record.syncToken,
+        record.state,
+        record.lastSuccessfulSyncAt,
+        record.lastAttemptAt,
+        record.errorCode,
+      );
+  }
+
+  listGoogleCalendarSync(ownerId: string): readonly GoogleCalendarSyncRecord[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT * FROM google_calendar_sync WHERE owner_id=? ORDER BY calendar_id",
+        )
+        .all(ownerId) as unknown as readonly Record<string, string | null>[]
+    ).map((row) => ({
+      calendarId: String(row.calendar_id),
+      ownerId: String(row.owner_id),
+      externalCalendarId: String(row.external_calendar_id),
+      syncToken: row.sync_token === null ? null : String(row.sync_token),
+      state: String(row.state) as GoogleCalendarSyncRecord["state"],
+      lastSuccessfulSyncAt:
+        row.last_successful_sync_at === null
+          ? null
+          : String(row.last_successful_sync_at),
+      lastAttemptAt:
+        row.last_attempt_at === null ? null : String(row.last_attempt_at),
+      errorCode: row.error_code === null ? null : String(row.error_code),
+    }));
+  }
+
+  applyGoogleEventSync(input: {
+    readonly ownerId: string;
+    readonly calendarId: string;
+    readonly externalCalendarId: string;
+    readonly providerId: string;
+    readonly syncToken: string;
+    readonly reset: boolean;
+    readonly events: readonly {
+      id: string;
+      uid: string;
+      etag: string;
+      summary: string;
+      startsAt: string;
+      endsAt: string;
+      allDay: boolean;
+      recurrence: "none" | "instance";
+      deleted: boolean;
+      rawIcs: string;
+    }[];
+    readonly now: string;
+  }): void {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (input.reset)
+        this.#database
+          .prepare(
+            "DELETE FROM calendar_event_projections WHERE owner_id=? AND calendar_id=?",
+          )
+          .run(input.ownerId, input.calendarId);
+      for (const event of input.events) {
+        if (event.deleted)
+          this.#database
+            .prepare(
+              "DELETE FROM calendar_event_projections WHERE owner_id=? AND calendar_id=? AND href=?",
+            )
+            .run(input.ownerId, input.calendarId, event.id);
+        else
+          this.#putCalendarEvent(input.ownerId, {
+            id: randomUUID(),
+            providerId: input.providerId,
+            calendarId: input.calendarId,
+            href: event.id,
+            uid: event.uid,
+            etag: event.etag,
+            rawIcs: event.rawIcs,
+            summary: event.summary,
+            startsAt: event.startsAt,
+            endsAt: event.endsAt,
+            allDay: event.allDay,
+            recurrence: event.recurrence,
+            freshness: "current",
+            mutable: false,
+            revision: 1,
+            projectedAt: input.now,
+          });
+      }
+      this.putGoogleCalendarSync({
+        calendarId: input.calendarId,
+        ownerId: input.ownerId,
+        externalCalendarId: input.externalCalendarId,
+        syncToken: input.syncToken,
+        state: "fresh",
+        lastSuccessfulSyncAt: input.now,
+        lastAttemptAt: input.now,
+        errorCode: null,
+      });
+      this.#database.exec("COMMIT;");
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  markGoogleCalendarSyncFailure(
+    ownerId: string,
+    calendarId: string,
+    state: "stale" | "unavailable",
+    errorCode: string,
+    now: string,
+  ): void {
+    this.#database
+      .prepare(
+        "UPDATE google_calendar_sync SET state=?,last_attempt_at=?,error_code=? WHERE owner_id=? AND calendar_id=?",
+      )
+      .run(state, now, errorCode, ownerId, calendarId);
+  }
+
+  disconnectGoogle(ownerId: string): boolean {
+    const connector = this.getGoogleConnector(ownerId);
+    if (connector === undefined) return false;
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.#database
+        .prepare(
+          "DELETE FROM calendar_providers WHERE owner_id=? AND kind='google' AND connector_id=?",
+        )
+        .run(ownerId, connector.id);
+      this.#database
+        .prepare("DELETE FROM google_connectors WHERE owner_id=?")
+        .run(ownerId);
+      this.#database.exec("COMMIT;");
+      return true;
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  getPlanningPreferences(ownerId: string): PlanningPreferencesRecord {
+    const row = this.#database
+      .prepare("SELECT * FROM owner_planning_preferences WHERE owner_id=?")
+      .get(ownerId) as unknown as Record<string, string | null> | undefined;
+    return row === undefined
+      ? {
+          workingDays: [1, 2, 3, 4, 5],
+          workdayStart: "09:00",
+          workdayEnd: "17:00",
+          breakStart: "12:00",
+          breakEnd: "12:30",
+          timeZone: "UTC",
+        }
+      : {
+          workingDays: JSON.parse(String(row.working_days_json)) as number[],
+          workdayStart: String(row.workday_start),
+          workdayEnd: String(row.workday_end),
+          breakStart: row.break_start === null ? null : String(row.break_start),
+          breakEnd: row.break_end === null ? null : String(row.break_end),
+          timeZone: "UTC",
+        };
+  }
+
+  putPlanningPreferences(
+    ownerId: string,
+    preferences: PlanningPreferencesRecord,
+    now: string,
+  ): PlanningPreferencesRecord {
+    this.#database
+      .prepare(
+        `INSERT INTO owner_planning_preferences (owner_id,working_days_json,workday_start,workday_end,break_start,break_end,time_zone,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET working_days_json=excluded.working_days_json,workday_start=excluded.workday_start,workday_end=excluded.workday_end,break_start=excluded.break_start,break_end=excluded.break_end,time_zone=excluded.time_zone,updated_at=excluded.updated_at`,
+      )
+      .run(
+        ownerId,
+        JSON.stringify(preferences.workingDays),
+        preferences.workdayStart,
+        preferences.workdayEnd,
+        preferences.breakStart,
+        preferences.breakEnd,
+        preferences.timeZone,
+        now,
+      );
+    return this.getPlanningPreferences(ownerId);
   }
 
   replaceCalendarEventWindow(
@@ -1997,13 +2417,13 @@ export class SuiteDatabase {
       .prepare(
         `INSERT INTO calendar_event_projections
           (id, owner_id, provider_id, calendar_id, href, uid, etag, raw_ics,
-           summary, starts_at, ends_at, all_day, freshness, mutable, revision,
+           summary, starts_at, ends_at, all_day, recurrence, freshness, mutable, revision,
            projected_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(calendar_id, href) DO UPDATE SET
            uid = excluded.uid, etag = excluded.etag, raw_ics = excluded.raw_ics,
            summary = excluded.summary, starts_at = excluded.starts_at,
-           ends_at = excluded.ends_at, all_day = excluded.all_day,
+           ends_at = excluded.ends_at, all_day = excluded.all_day, recurrence = excluded.recurrence,
            freshness = excluded.freshness, mutable = excluded.mutable,
            revision = calendar_event_projections.revision + 1,
            projected_at = excluded.projected_at`,
@@ -2021,6 +2441,7 @@ export class SuiteDatabase {
         event.startsAt,
         event.endsAt,
         event.allDay ? 1 : 0,
+        event.recurrence ?? "none",
         event.freshness,
         event.mutable ? 1 : 0,
         event.revision,
@@ -2073,6 +2494,7 @@ export class SuiteDatabase {
       startsAt: String(row.starts_at),
       endsAt: String(row.ends_at),
       allDay: Number(row.all_day) === 1,
+      recurrence: String(row.recurrence ?? "none") as "none" | "instance",
       freshness: String(
         row.freshness,
       ) as CalendarEventProjectionRecord["freshness"],

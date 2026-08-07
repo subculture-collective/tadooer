@@ -56,8 +56,8 @@ Phase 0C was completed on 2026-08-05 on `codex/phase-0-foundation`:
 Phase 0 is complete. Phases 1 and 2 were subsequently completed as the first
 bounded planning and local-first focus slices. Phase 4's provider-independent
 automation boundary was completed afterward; Phase 3 Google federation remains
-absent from this checkout and is still required before claiming the federated
-calendar outcome.
+credential-independent and is still awaiting real-provider qualification before
+claiming the federated calendar outcome.
 
 ### Outcome
 
@@ -197,6 +197,31 @@ takes over one active timer/focus/break session.
 
 ## Phase 3: Calendar federation and calm daily planning
 
+### Foundation checkpoint
+
+The credential-independent implementation landed on 2026-08-07 on
+`codex/phase-3-google-federation`:
+
+- narrow-scope web-server OAuth with digest-only, expiring, single-use state;
+  encrypted refresh grants; explicit reconnect-required state; revocation; and
+  a mode-0600, no-symlink operator configuration boundary
+- paginated calendar discovery plus event incremental sync, deletion tombstones,
+  recurring-instance/all-day projections, `410` cursor reset, per-calendar
+  freshness, and provider-qualified identities
+- unified Baïkal/Google planner projection, scheduled-task-first ordering,
+  UTC working hours and quiet breaks, calm day states, and deterministic reminder
+  suppression when availability cannot be trusted
+- browser controls and a constrained packaged-desktop handoff to Google's exact
+  system-browser authorization surface
+- deterministic protocol, persistence, HTTP, rendered UI, and desktop policy
+  tests, plus an explicitly named credential-independent verification gate
+
+This checkpoint is not Phase 3 completion. A real Google OAuth client, real
+owner grant, live calendar projection, incremental mutation/deletion, visible
+staleness, revocation/reconnect, and disconnect qualification remain required.
+The operator runbook is
+[`operations/google-calendar.md`](operations/google-calendar.md).
+
 ### User outcome
 
 The owner plans against Baikal and Google calendars in one view, receives quiet
@@ -244,7 +269,8 @@ Completed on 2026-08-06 on `codex/phase-4-automation-mcp`:
 
 Phase 4 is complete for the providers actually present in the repository.
 Phase 3 is not retroactively complete: Google OAuth/federation, unified
-cross-provider availability, and reminders remain unimplemented.
+cross-provider availability, and reminders now have a tested foundation, but
+the credential-dependent live Google exit evidence remains outstanding.
 
 ### User outcome
 

@@ -15,6 +15,7 @@ services:
       BAIKAL_ENDPOINT: ${BAIKAL_ENDPOINT:-http://baikal/dav.php/}
       SUITE_CREDENTIAL_KEY_PATH: /data/credential.key
       SUITE_SECURE_COOKIES: ${SUITE_SECURE_COOKIES:-false}
+      GOOGLE_OAUTH_CONFIG_PATH: /data/google-oauth.json
     volumes:
       - suite-data:/data
     depends_on:
