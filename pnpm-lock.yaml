@@ -132,6 +132,8 @@ importers:
 
   packages/domain: {}
 
+  packages/import-export: {}
+
   packages/persistence:
     devDependencies:
       '@suite/test-support':
