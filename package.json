@@ -22,6 +22,7 @@
     "test:phase6": "vitest run packages/domain/src/choice-pool.test.ts apps/server/src/phase6.test.ts apps/mcp-stdio/src",
     "test:phase7": "vitest run packages/import-export/src packages/persistence/src/index.test.ts apps/server/src/phase7.test.ts apps/web/src/app.test.tsx",
     "test:phase8": "vitest run apps/desktop/src/policy.test.mjs deploy/release-channel.test.mjs apps/server/src/phase8.test.ts",
+    "test:phase9": "vitest run apps/server/src/config.test.ts apps/server/src/phase9.test.ts",
     "verify:phase1": "./deploy/verify-phase1-compose.sh",
     "verify:phase2": "./deploy/verify-phase2-compose.sh",
     "verify:phase3:foundation": "./deploy/verify-phase3-foundation.sh",
@@ -30,6 +31,7 @@
     "verify:phase6": "./deploy/verify-phase6.sh",
     "verify:phase7": "./deploy/verify-phase7.sh",
     "verify:phase8": "./deploy/verify-phase8.sh",
+    "verify:phase9": "./deploy/verify-phase9.sh",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

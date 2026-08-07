@@ -11,7 +11,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import type { AddressInfo } from "node:net";
+import { isIP, type AddressInfo } from "node:net";
 import type {
   ApiError,
   BaikalStatusResponse,
@@ -138,6 +138,7 @@ const securityHeaders = {
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 } as const;
 
 const maxJsonBytes = 5 * 1024 * 1024;
@@ -415,6 +416,33 @@ const sameOrigin = (request: IncomingMessage): boolean => {
   } catch {
     return false;
   }
+};
+
+const normalizedAddress = (value: string): string =>
+  value.startsWith("::ffff:") ? value.slice(7) : value;
+
+const clientAddress = (
+  request: IncomingMessage,
+  trustedProxyCidrs: readonly string[],
+): string => {
+  const remote = normalizedAddress(request.socket.remoteAddress ?? "unknown");
+  const trusted = trustedProxyCidrs.some((cidr) => {
+    const [address, prefix] = cidr.split("/");
+    return (
+      address !== undefined &&
+      ((prefix === "32" && normalizedAddress(address) === remote) ||
+        (prefix === "128" && address === remote))
+    );
+  });
+  if (!trusted) return remote;
+  const forwarded = request.headers["x-forwarded-for"];
+  if (
+    typeof forwarded !== "string" ||
+    forwarded.includes(",") ||
+    isIP(forwarded.trim()) === 0
+  )
+    return remote;
+  return normalizedAddress(forwarded.trim());
 };
 
 const readJson = async (request: IncomingMessage): Promise<unknown> => {
@@ -764,6 +792,31 @@ export const startSuiteServer = async (
         const method = request.method ?? "GET";
         const url = new URL(request.url ?? "/", "http://suite.local");
         const timestamp = new Date().toISOString();
+
+        if (config.publicOrigin !== undefined) {
+          const expected = new URL(config.publicOrigin);
+          if (request.headers.host !== expected.host) {
+            sendError(
+              response,
+              421,
+              "PUBLIC_ORIGIN_MISMATCH",
+              "Request host does not match the configured public origin",
+            );
+            return;
+          }
+          if (
+            request.headers.origin !== undefined &&
+            request.headers.origin !== expected.origin
+          ) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Request origin does not match the configured public origin",
+            );
+            return;
+          }
+        }
 
         const publicFeedMatch =
           /^\/feeds\/([0-9a-f-]{36})\/([A-Za-z0-9_-]{43})\.ics$/.exec(
@@ -1311,7 +1364,7 @@ export const startSuiteServer = async (
             );
             return;
           }
-          const limiterKey = `${request.socket.remoteAddress ?? "unknown"}:${parsed.data.username.toLowerCase()}`;
+          const limiterKey = `${clientAddress(request, config.trustedProxyCidrs ?? [])}:${parsed.data.username.toLowerCase()}`;
           if (!loginLimiter.allows(limiterKey)) {
             console.warn("auth.login.rate_limited");
             sendError(

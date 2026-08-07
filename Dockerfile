@@ -52,6 +52,6 @@ EXPOSE 8080
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=6 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "const http=require('node:http');const origin=new URL(process.env.SUITE_PUBLIC_ORIGIN||'http://127.0.0.1:8080');const request=http.get({host:'127.0.0.1',port:8080,path:'/api/ready',headers:{Host:origin.host}},response=>process.exit(response.statusCode===200?0:1));request.on('error',()=>process.exit(1))"]
 
 CMD ["node", "/app/server/main.mjs"]
