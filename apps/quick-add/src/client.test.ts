@@ -21,33 +21,37 @@ const task = {
 const jsonResponse = (body: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
-  json: async () => body,
+  json: () => Promise.resolve(body),
 });
 
 describe("quick-add automation HTTP client", () => {
   it("uses only preview then confirmation with one caller-provided key", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
-    const mockFetch: FetchLike = async (url, init) => {
+    const mockFetch: FetchLike = (url, init) => {
       calls.push({ url, init });
       if (calls.length === 1)
-        return jsonResponse({
-          preview: {
-            id,
-            operation: "tasks.create",
-            inputHash: "a".repeat(64),
-            summary: "Create one task",
-            affected: [],
-            baseRevisions: [],
-            expiresAt: "2026-08-06T16:10:00.000Z",
-            requiresConfirmation: true,
-          },
-        });
-      return jsonResponse({
-        previewId: id,
-        operation: "tasks.create",
-        replayed: false,
-        result: { task, replayed: false },
-      });
+        return Promise.resolve(
+          jsonResponse({
+            preview: {
+              id,
+              operation: "tasks.create",
+              inputHash: "a".repeat(64),
+              summary: "Create one task",
+              affected: [],
+              baseRevisions: [],
+              expiresAt: "2026-08-06T16:10:00.000Z",
+              requiresConfirmation: true,
+            },
+          }),
+        );
+      return Promise.resolve(
+        jsonResponse({
+          previewId: id,
+          operation: "tasks.create",
+          replayed: false,
+          result: { task, replayed: false },
+        }),
+      );
     };
 
     const result = await submitQuickAdd(
@@ -79,13 +83,15 @@ describe("quick-add automation HTTP client", () => {
   });
 
   it("returns the bounded Suite error rather than continuing to confirmation", async () => {
-    const mockFetch: FetchLike = async () =>
-      jsonResponse(
-        {
-          code: "AUTOMATION_SCOPE_DENIED",
-          message: "Task write scope required",
-        },
-        403,
+    const mockFetch: FetchLike = () =>
+      Promise.resolve(
+        jsonResponse(
+          {
+            code: "AUTOMATION_SCOPE_DENIED",
+            message: "Task write scope required",
+          },
+          403,
+        ),
       );
     await expect(
       submitQuickAdd(

@@ -482,7 +482,7 @@ describe("Suite contracts", () => {
     const ids = automationCatalog.map((entry) => entry.id);
     const names = automationCatalog.map((entry) => entry.mcpName);
     const uris = automationCatalog.flatMap((entry) =>
-      "mcpUri" in entry && entry.mcpUri !== undefined ? [entry.mcpUri] : [],
+      "mcpUri" in entry ? [entry.mcpUri] : [],
     );
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
@@ -491,11 +491,9 @@ describe("Suite contracts", () => {
     for (const entry of automationCatalog) {
       expect(entry.apiPath).toMatch(/^\/api\/automation\/v1\//);
       expect(entry.mcpName.startsWith("suite.")).toBe(true);
-      expect(
-        "mcpUri" in entry && entry.mcpUri !== undefined
-          ? entry.mcpUri.startsWith("sp://")
-          : false,
-      ).toBe(false);
+      expect("mcpUri" in entry ? entry.mcpUri.startsWith("sp://") : false).toBe(
+        false,
+      );
       expect(entry.scopes.length).toBeGreaterThan(0);
       if (entry.kind === "tool" && entry.id !== "automation.confirm")
         expect(entry.confirmationRequired).toBe(true);

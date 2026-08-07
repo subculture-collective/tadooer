@@ -27,7 +27,7 @@ const errorFor = async (
     return new Error(`${code}: ${message}`);
   } catch {
     return new Error(
-      `AUTOMATION_REQUEST_FAILED: Suite returned HTTP ${response.status}`,
+      `AUTOMATION_REQUEST_FAILED: Suite returned HTTP ${String(response.status)}`,
     );
   }
 };

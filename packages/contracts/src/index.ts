@@ -841,7 +841,7 @@ export const automationActiveSessionResourceSchema = z
   .object({ session: activeSessionSchema.nullable() })
   .strict();
 
-export type AutomationCatalogEntry = {
+export interface AutomationCatalogEntry {
   readonly id: string;
   readonly kind: "resource" | "tool";
   readonly scopes: readonly z.infer<typeof automationTokenScopeSchema>[];
@@ -851,7 +851,7 @@ export type AutomationCatalogEntry = {
   readonly mcpUri?: string;
   readonly inputSchema: z.ZodType;
   readonly outputSchema: z.ZodType;
-};
+}
 
 // This is the only automation catalog. HTTP handlers and the stdio adapter must
 // import it instead of maintaining parallel operation lists.
