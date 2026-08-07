@@ -105,6 +105,7 @@ pnpm verify:phase1
 pnpm verify:phase2
 pnpm verify:phase4
 pnpm verify:phase5
+pnpm verify:phase6
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
@@ -132,6 +133,13 @@ local stdio MCP preview/confirmation, and paired Suite backup/restore. Choice
 Pools and Planning Placeholders are Phase 6 work and are not asserted by this
 gate.
 
+`pnpm verify:phase6` qualifies dedicated Choice Pools and ordered candidates,
+logical-time cooldown/cycle/one-shot eligibility explanations, editable history-
+preserving pools, template pool slots, two-client placeholder resolution,
+catalog-derived local MCP preview/confirmation, restart replay, and SQLite
+backup/restore. Suggestions are read-only; only confirmation creates ordinary
+subtasks and append-only selection history.
+
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
 The bounded Phase 1 projection, write, and recovery rules are recorded in
@@ -143,6 +151,9 @@ in [`docs/adr/0011-phase-4-automation-authority.md`](docs/adr/0011-phase-4-autom
 The Phase 5 reusable-work identities, snapshot, and exact-once decisions are
 recorded in
 [`docs/adr/0012-phase-5-reusable-work.md`](docs/adr/0012-phase-5-reusable-work.md).
+The Phase 6 logical-time policy, placeholder, conflict, and history authority is
+recorded in
+[`docs/adr/0013-phase-6-choice-pool-authority.md`](docs/adr/0013-phase-6-choice-pool-authority.md).
 
 An owner issues, inventories, and revokes automation credentials through
 `/api/automation/tokens`; the raw `suite_at_...` credential is returned only at

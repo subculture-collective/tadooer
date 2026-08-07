@@ -17,10 +17,12 @@
     "test:e2e:phase1": "node deploy/phase1-browser.mjs",
     "test:phase4": "vitest run apps/server/src/phase4.test.ts apps/mcp-stdio/src apps/quick-add/src",
     "test:phase5": "vitest run apps/server/src/phase5.test.ts apps/mcp-stdio/src",
+    "test:phase6": "vitest run packages/domain/src/choice-pool.test.ts apps/server/src/phase6.test.ts apps/mcp-stdio/src",
     "verify:phase1": "./deploy/verify-phase1-compose.sh",
     "verify:phase2": "./deploy/verify-phase2-compose.sh",
     "verify:phase4": "./deploy/verify-phase4.sh",
     "verify:phase5": "./deploy/verify-phase5.sh",
+    "verify:phase6": "./deploy/verify-phase6.sh",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

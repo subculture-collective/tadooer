@@ -3,10 +3,10 @@
 ## Status
 
 The Task Template and Template Set portion was accepted and implemented in
-Phase 5 on 2026-08-07. Choice Pools and Planning Placeholders are now governed
-by the accepted Phase 6 authority decision in ADR 0013: cooldown begins at
-selection, generated work is attached as subtasks to an ordinary parent task,
-and the parent's calendar placement remains authoritative.
+Phase 5 on 2026-08-07. Choice Pools and Planning Placeholders were implemented
+in Phase 6 on 2026-08-07 under ADR 0013: cooldown begins at selection,
+generated work is attached as subtasks to an ordinary parent task, and the
+parent's calendar placement remains authoritative.
 
 ## Goal
 

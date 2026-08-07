@@ -237,12 +237,18 @@ describe("Phase 6 choice pool integration", () => {
         );
         expect(raced.map(({ status }) => status).sort()).toEqual([201, 412]);
         const winnerIndex = raced.findIndex(({ status }) => status === 201);
+        const winnerResponse = raced[winnerIndex];
+        if (winnerResponse === undefined)
+          throw new Error("No placeholder race winner was returned");
         const winner = planningPlaceholderResolutionResponseSchema.parse(
-          await raced[winnerIndex]!.json(),
+          await winnerResponse.json(),
         );
         expect(winner.subtasks).toHaveLength(2);
+        const completedHistory = winner.history[0];
+        if (completedHistory === undefined)
+          throw new Error("Resolution did not return selection history");
         const completion = await post(
-          `/api/pools/${createdPool.pool.id}/items/${winner.history[0]!.itemId}/completions`,
+          `/api/pools/${createdPool.pool.id}/items/${completedHistory.itemId}/completions`,
           {
             placeholderId: placeholder.id,
             occurredAt: "2026-08-07T13:00:00.000Z",

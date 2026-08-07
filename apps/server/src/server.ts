@@ -1560,10 +1560,7 @@ export const startSuiteServer = async (
               token.ownerId,
               command.input.placeholderId,
             );
-            if (
-              placeholder === undefined ||
-              placeholder.state !== "unresolved"
-            ) {
+            if (placeholder?.state !== "unresolved") {
               sendError(
                 response,
                 404,

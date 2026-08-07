@@ -337,6 +337,17 @@ activities with explainable cooldown, cycle, or one-shot behavior.
 - Two clients cannot silently commit different resolutions to one placeholder
 - Every unavailable item has a visible reason and eligibility boundary
 
+Phase 6 is complete. The Suite now provides dedicated inert Choice Pools,
+ordered editable candidate records, append-only selection/completion history,
+logical-time cooldown/cycle/one-shot explanations, explicit override audit,
+Planning Placeholders on ordinary parent tasks, and ordered pool slots inside
+Task Templates. Suggestions are pure; browser and scoped automation
+confirmation share one exact-once transaction that creates ordered subtasks,
+records history, advances the placeholder revision, rejects a competing client,
+and replays identical identities across restart and backup/restore. The
+catalog-derived local MCP surface lists pools and previews resolution without a
+direct mutation bypass.
+
 ## Phase 7: Migration, publication, and connector breadth
 
 ### User outcome

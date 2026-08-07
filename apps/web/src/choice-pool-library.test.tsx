@@ -69,15 +69,13 @@ describe("ChoicePoolLibrary", () => {
         templates={[]}
         poolSlots={[]}
         busy={false}
-        onCreatePool={async () => undefined}
-        onCreatePlaceholder={async () => undefined}
-        onEditPool={async () => undefined}
-        onCreateTemplateSlot={async () => undefined}
-        onRecordCompletion={async () => undefined}
-        onSuggest={async () => {
-          throw new Error("not invoked during SSR");
-        }}
-        onResolve={async () => undefined}
+        onCreatePool={() => Promise.resolve()}
+        onCreatePlaceholder={() => Promise.resolve()}
+        onEditPool={() => Promise.resolve()}
+        onCreateTemplateSlot={() => Promise.resolve()}
+        onRecordCompletion={() => Promise.resolve()}
+        onSuggest={() => Promise.reject(new Error("not invoked during SSR"))}
+        onResolve={() => Promise.resolve()}
       />,
     );
     expect(markup).toContain("Choice Pools");

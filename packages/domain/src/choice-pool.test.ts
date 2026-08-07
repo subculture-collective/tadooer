@@ -108,13 +108,13 @@ describe("choice pool policy", () => {
       const generatedItems = Array.from(
         { length: 3 + (seed % 7) },
         (_, index) => ({
-          id: `item-${index}`,
+          id: `item-${String(index)}`,
           position: index,
           archived: index === seed % 11,
         }),
       );
       const history = Array.from({ length: seed % 13 }, (_, index) => ({
-        itemId: `item-${index % generatedItems.length}`,
+        itemId: `item-${String(index % generatedItems.length)}`,
         selectedAt: new Date(Date.UTC(2026, 7, 1, index)).toISOString(),
         cycle: 1 + Math.floor(index / generatedItems.length),
       }));

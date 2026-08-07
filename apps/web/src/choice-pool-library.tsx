@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type SyntheticEvent } from "react";
 import type {
   ChoicePool,
   ChoicePoolHistoryEvent,
@@ -102,7 +102,7 @@ export const ChoicePoolLibrary = ({
     Readonly<Record<string, readonly string[]>>
   >({});
 
-  const createPool = async (event: FormEvent<HTMLFormElement>) => {
+  const createPool = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
@@ -126,7 +126,7 @@ export const ChoicePoolLibrary = ({
     form.reset();
   };
 
-  const createPlaceholder = async (event: FormEvent<HTMLFormElement>) => {
+  const createPlaceholder = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     await onCreatePlaceholder(value(data, "taskId"), value(data, "poolId"));
@@ -431,7 +431,7 @@ export const ChoicePoolLibrary = ({
               <p className="hint">
                 {placeholder.state === "resolved"
                   ? "Resolved into concrete subtasks"
-                  : `Unresolved · choose ${placeholder.pickCount}`}
+                  : `Unresolved · choose ${String(placeholder.pickCount)}`}
               </p>
               {placeholder.state === "resolved" &&
                 history
