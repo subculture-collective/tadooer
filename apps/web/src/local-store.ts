@@ -22,7 +22,14 @@ const conflictStore = "conflicts";
 const diagnosticStore = "diagnostics";
 
 export type CachedEntityKind =
-  "task" | "project" | "tag" | "subtask" | "active_session";
+  | "task"
+  | "project"
+  | "tag"
+  | "subtask"
+  | "template"
+  | "template_blueprint"
+  | "template_set"
+  | "active_session";
 
 export interface CachedEntity {
   readonly entityKind: CachedEntityKind;

@@ -10,6 +10,15 @@ import {
   syncRoundResponseSchema,
   syncSnapshotResponseSchema,
   tagSchema,
+  taskTemplateLibraryResponseSchema,
+  taskTemplateSchema,
+  templateSetLibraryResponseSchema,
+  templateSetSchema,
+  createTemplateSetRequestSchema,
+  templateInstantiationResponseSchema,
+  createTaskTemplateRequestSchema,
+  taskTemplatePatchRequestSchema,
+  instantiateTemplateRequestSchema,
   taskListResponseSchema,
   taskMutationResponseSchema,
   conditionalTaskMutationResponseSchema,
@@ -560,4 +569,102 @@ export const deleteSubtask = (
   requestEmpty(`/api/subtasks/${subtaskId}`, {
     method: "DELETE",
     headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export type TemplateDraft = {
+  readonly title: string;
+  readonly notes: string;
+  readonly estimateMinutes: number | null;
+  readonly suggestedProjectId: string | null;
+  readonly tagIds: readonly string[];
+  readonly subtasks: readonly { readonly title: string }[];
+};
+
+export const getTemplateLibrary = (query = "", includeArchived = false) =>
+  request(
+    `/api/templates?query=${encodeURIComponent(query)}&includeArchived=${String(includeArchived)}`,
+    taskTemplateLibraryResponseSchema,
+  );
+
+export const createTemplate = (
+  input: TemplateDraft,
+  csrfToken: string,
+) =>
+  request("/api/templates", taskTemplateSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(createTaskTemplateRequestSchema.parse(input)),
+  });
+
+export const createTemplateFromTask = (taskId: string, csrfToken: string) =>
+  request(`/api/templates/from-task/${taskId}`, taskTemplateSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ taskId }),
+  });
+
+export const patchTemplate = (
+  templateId: string,
+  revision: number,
+  input: Partial<TemplateDraft> & { readonly archived?: boolean },
+  csrfToken: string,
+) =>
+  request(`/api/templates/${templateId}`, taskTemplateSchema, {
+    method: "PATCH",
+    headers: conditionalHeaders(revision, csrfToken),
+    body: JSON.stringify(taskTemplatePatchRequestSchema.parse(input)),
+  });
+
+export const archiveTemplate = (
+  templateId: string,
+  revision: number,
+  csrfToken: string,
+) =>
+  request(`/api/templates/${templateId}/archive`, taskTemplateSchema, {
+    method: "POST",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const getTemplateSets = () =>
+  request("/api/template-sets", templateSetLibraryResponseSchema);
+
+export const createTemplateSet = (
+  title: string,
+  templateIds: readonly string[],
+  csrfToken: string,
+) =>
+  request("/api/template-sets", templateSetSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(
+      createTemplateSetRequestSchema.parse({ title, templateIds }),
+    ),
+  });
+
+export const instantiateTemplate = (
+  templateId: string,
+  destinationProjectId: string,
+  csrfToken: string,
+  idempotencyKey: string,
+) =>
+  request(`/api/templates/${templateId}/instantiate`, templateInstantiationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(
+      instantiateTemplateRequestSchema.parse({ destinationProjectId, idempotencyKey }),
+    ),
+  });
+
+export const instantiateTemplateSet = (
+  setId: string,
+  destinationProjectId: string,
+  csrfToken: string,
+  idempotencyKey: string,
+) =>
+  request(`/api/template-sets/${setId}/instantiate`, templateInstantiationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(
+      instantiateTemplateRequestSchema.parse({ destinationProjectId, idempotencyKey }),
+    ),
   });

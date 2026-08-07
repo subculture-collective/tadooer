@@ -29,6 +29,15 @@ import {
   getRecoveryTasks,
   getSubtasks,
   getTags,
+  getTemplateLibrary,
+  getTemplateSets,
+  createTemplate,
+  createTemplateSet,
+  createTemplateFromTask,
+  archiveTemplate as archiveTemplateRequest,
+  patchTemplate,
+  instantiateTemplate,
+  instantiateTemplateSet,
   patchSubtask,
   login,
   logout,
@@ -40,6 +49,12 @@ import {
 import { LocalStore, type LocalClientIdentity } from "./local-store.ts";
 import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
 import { FocusPanel, type FocusPanelCommand } from "./focus-panel.tsx";
+import {
+  TemplateLibrary,
+  type TemplateBlueprintView,
+  type TemplateSetView,
+  type TemplateView,
+} from "./template-library.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -138,6 +153,16 @@ export const App = ({ initialState }: AppProps) => {
   const [subtasks, setSubtasks] = useState<
     Readonly<Record<string, readonly Subtask[]>>
   >({});
+  const [templates, setTemplates] = useState<readonly TemplateView[]>([]);
+  const [templateBlueprints, setTemplateBlueprints] = useState<
+    readonly TemplateBlueprintView[]
+  >([]);
+  const [templateSets, setTemplateSets] = useState<readonly TemplateSetView[]>(
+    [],
+  );
+  const [templateProvenance, setTemplateProvenance] = useState<
+    Readonly<Record<string, string>>
+  >({});
 
   const cachedTaskState = useCallback(async () => {
     const snapshots = await localStore.loadCachedTasks({
@@ -175,16 +200,21 @@ export const App = ({ initialState }: AppProps) => {
 
   const loadAuthenticated = useCallback(
     async (session: SessionResponse) => {
-      const [baikal, taskList, recoveryList, projectList, tagList] =
+      const [baikal, taskList, recoveryList, projectList, tagList, library, sets] =
         await Promise.all([
           getBaikalStatus(),
           getTasks(),
           getRecoveryTasks(),
           getProjects(),
           getTags(),
+          getTemplateLibrary(),
+          getTemplateSets(),
         ]);
       setProjects(projectList);
       setTags(tagList);
+      setTemplates(library.templates);
+      setTemplateBlueprints(library.blueprints);
+      setTemplateSets(sets.sets);
       const window = plannerWindow();
       const planner = baikal.connected
         ? await getPlanner(window.from, window.to)
@@ -855,6 +885,181 @@ export const App = ({ initialState }: AppProps) => {
     }
   };
 
+  const refreshTemplateLibrary = async (query = ""): Promise<void> => {
+    const [library, sets] = await Promise.all([
+      getTemplateLibrary(query),
+      getTemplateSets(),
+    ]);
+    setTemplates(library.templates);
+    setTemplateBlueprints(library.blueprints);
+    setTemplateSets(sets.sets);
+  };
+
+  const submitTemplateCreate = async (draft: {
+    title: string;
+    notes: string;
+    estimateMinutes: number | null;
+    suggestedProjectId: string | null;
+    tagIds: readonly string[];
+    subtasks: readonly { title: string }[];
+  }): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await createTemplate(draft, state.session.csrfToken);
+      await refreshTemplateLibrary();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archiveTemplate = async (template: TemplateView): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await archiveTemplateRequest(
+        template.id,
+        template.revision,
+        state.session.csrfToken,
+      );
+      await refreshTemplateLibrary();
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editTemplate = async (
+    template: TemplateView,
+    draft: {
+      title: string;
+      notes: string;
+      estimateMinutes: number | null;
+      suggestedProjectId: string | null;
+    },
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await patchTemplate(template.id, template.revision, draft, state.session.csrfToken);
+      await refreshTemplateLibrary();
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitTemplateSetCreate = async (
+    title: string,
+    templateIds: readonly string[],
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await createTemplateSet(title, templateIds, state.session.csrfToken);
+      await refreshTemplateLibrary();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyInstantiation = async (
+    response: Awaited<ReturnType<typeof instantiateTemplate>>,
+  ): Promise<void> => {
+    const newTasks = response.tasks.map(({ task }) => task);
+    setState((current) =>
+      current.kind === "authenticated"
+        ? { ...current, tasks: [...current.tasks, ...newTasks] }
+        : current,
+    );
+    setSubtasks((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        response.tasks.map(({ task, subtasks: items }) => [task.id, items]),
+      ),
+    }));
+    setTemplateProvenance((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        response.tasks.map(({ provenance }) => [
+          provenance.taskId,
+          provenance.templateId,
+        ]),
+      ),
+    }));
+    await syncAfterLocalMutation();
+  };
+
+  const submitTemplateInstantiation = async (
+    templateId: string,
+    destinationProjectId: string,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await applyInstantiation(
+        await instantiateTemplate(
+          templateId,
+          destinationProjectId,
+          state.session.csrfToken,
+          crypto.randomUUID(),
+        ),
+      );
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitTemplateSetInstantiation = async (
+    setId: string,
+    destinationProjectId: string,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await applyInstantiation(
+        await instantiateTemplateSet(
+          setId,
+          destinationProjectId,
+          state.session.csrfToken,
+          crypto.randomUUID(),
+        ),
+      );
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveTaskAsTemplate = async (task: Task): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await createTemplateFromTask(task.id, state.session.csrfToken);
+      await refreshTemplateLibrary();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const exportDiagnostics = async (): Promise<void> => {
     const manifest = await localStore.recoverySupportManifest();
     const url = URL.createObjectURL(
@@ -1237,6 +1442,25 @@ export const App = ({ initialState }: AppProps) => {
                 </form>
               </div>
             </section>
+            <TemplateLibrary
+              templates={templates}
+              blueprints={templateBlueprints}
+              sets={templateSets}
+              projects={projects
+                .filter((project) => project.archivedAt === null)
+                .map(({ id, title }) => ({ id, title }))}
+              tags={tags
+                .filter((tag) => tag.archivedAt === null)
+                .map(({ id, displayName }) => ({ id, displayName }))}
+              busy={busy}
+              onCreate={submitTemplateCreate}
+              onSearch={(query) => void refreshTemplateLibrary(query)}
+              onArchive={archiveTemplate}
+              onEdit={editTemplate}
+              onCreateSet={submitTemplateSetCreate}
+              onInstantiate={submitTemplateInstantiation}
+              onInstantiateSet={submitTemplateSetInstantiation}
+            />
             <h3>Captured tasks</h3>
             {state.tasks.length === 0 ? (
               <p className="muted">No tasks captured yet.</p>
@@ -1257,6 +1481,11 @@ export const App = ({ initialState }: AppProps) => {
                       </small>
                     </div>
                     {task.notes !== "" && <span>{task.notes}</span>}
+                    {templateProvenance[task.id] !== undefined && (
+                      <p className="template-provenance">
+                        Created from a reusable template.
+                      </p>
+                    )}
                     {task.plannedStart != null && (
                       <p className="planned-time">
                         Planned {new Date(task.plannedStart).toLocaleString()} ·{" "}
@@ -1438,6 +1667,13 @@ export const App = ({ initialState }: AppProps) => {
                       </form>
                     </div>
                     <div className="task-actions">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void saveTaskAsTemplate(task)}
+                      >
+                        Save as template
+                      </button>
                       <button
                         type="button"
                         disabled={busy}

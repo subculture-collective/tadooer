@@ -32,7 +32,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -165,7 +166,9 @@ h3 {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea,
+.template-search input {
   width: 100%;
   padding: 0.85rem 0.95rem;
   border: 1px solid #bcc8c0;
@@ -176,7 +179,9 @@ h3 {
 }
 
 .field input:focus,
-.field select:focus {
+.field select:focus,
+.field textarea:focus,
+.template-search input:focus {
   border-color: #3c8065;
   box-shadow: 0 0 0 3px rgb(60 128 101 / 16%);
 }
@@ -222,6 +227,160 @@ button:disabled {
   padding: 0.75rem 0.9rem;
   border-left: 3px solid;
   font-size: 0.85rem;
+}
+
+.template-library,
+.template-sets {
+  margin: 2rem 0;
+  padding: 1rem;
+  border: 1px solid rgb(16 37 30 / 12%);
+  background: rgb(228 234 223 / 30%);
+}
+
+.template-set-create {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(14rem, 2fr) auto;
+  align-items: end;
+  gap: 0.75rem;
+  padding: 0.8rem 0;
+  border-bottom: 1px solid rgb(16 37 30 / 12%);
+}
+
+.template-set-create .field,
+.template-set-create fieldset {
+  margin: 0;
+}
+
+.template-set-create button {
+  margin: 0;
+}
+
+.template-sets {
+  margin-bottom: 0;
+  background: #fff;
+}
+
+.template-create {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 1rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid rgb(16 37 30 / 12%);
+  background: #fff;
+}
+
+.template-create h4,
+.template-create fieldset,
+.template-create button,
+.template-create .field:has(textarea) {
+  grid-column: 1 / -1;
+}
+
+.template-create h4,
+.template-sets h4 {
+  margin: 0.3rem 0;
+  color: #314e43;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.template-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.template-search input {
+  width: 11rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #bcc8c0;
+  border-radius: 0.25rem;
+}
+
+.template-list,
+.template-blueprints {
+  display: grid;
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.template-edit {
+  padding-top: 0.6rem;
+  border-top: 1px solid rgb(16 37 30 / 10%);
+}
+
+.template-edit summary {
+  cursor: pointer;
+  color: #385348;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.template-edit form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 0.75rem;
+}
+
+.template-edit form button {
+  justify-self: start;
+}
+
+.template-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem;
+  border: 1px solid rgb(16 37 30 / 12%);
+  background: #fff;
+}
+
+.template-card p,
+.template-blueprints {
+  margin: 0;
+  color: #526c62;
+  font-size: 0.85rem;
+}
+
+.template-blueprints {
+  padding-left: 1.2rem;
+  list-style: decimal;
+}
+
+.template-destination {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.compact-field {
+  flex: 1 1 14rem;
+  margin: 0;
+}
+
+.template-destination button {
+  margin: 0;
+}
+
+.template-provenance {
+  margin: 0;
+  color: #526c62;
+  font-size: 0.78rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .success {
@@ -407,7 +566,10 @@ button:disabled {
   }
 
   .timeline li,
-  .time-block {
+  .time-block,
+  .template-create,
+  .template-set-create,
+  .template-edit form {
     grid-template-columns: 1fr;
   }
 }

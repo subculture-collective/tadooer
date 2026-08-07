@@ -5,6 +5,7 @@ import {
   createSyncTransport,
   getActiveSession,
   getSyncSnapshot,
+  instantiateTemplate,
   syncRound,
 } from "./api.ts";
 import { SyncCursorResetRequired } from "./sync-engine.ts";
@@ -25,6 +26,60 @@ const response = (body: unknown, status = 200): Response =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Phase 2 API transport", () => {
+  it("instantiates a template with an explicit destination and retry key", async () => {
+    const fetcher = vi.fn((path: string, init: RequestInit) => {
+      expect(path).toBe(
+        "/api/templates/d1054acd-c04d-4bd8-a814-254b007154ba/instantiate",
+      );
+      const headers = new Headers(init.headers);
+      expect(init.method).toBe("POST");
+      expect(headers.get("x-csrf-token")).toBe("csrf-token");
+      expect(headers.get("idempotency-key")).toBe("instantiate-0001");
+      expect(JSON.parse(String(init.body))).toEqual({
+        destinationProjectId: "1b34cc57-972c-42e8-bafa-0ba455dced20",
+        idempotencyKey: "instantiate-0001",
+      });
+      return Promise.resolve(
+        response({
+          instantiationId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+          replayed: false,
+          tasks: [
+            {
+              task: {
+                id: "afcab502-2199-43fd-b9d3-c8b556c6f25b",
+                title: "Weekly review",
+                notes: "",
+                status: "open",
+                revision: 1,
+                createdAt: "2026-08-06T12:00:00.000Z",
+                updatedAt: "2026-08-06T12:00:00.000Z",
+                completedAt: null,
+                deletedAt: null,
+              },
+              subtasks: [],
+              provenance: {
+                taskId: "afcab502-2199-43fd-b9d3-c8b556c6f25b",
+                templateId: "d1054acd-c04d-4bd8-a814-254b007154ba",
+                templateRevision: 1,
+                instantiationId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+                instantiatedAt: "2026-08-06T12:00:00.000Z",
+              },
+            },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    const result = await instantiateTemplate(
+      "d1054acd-c04d-4bd8-a814-254b007154ba",
+      "1b34cc57-972c-42e8-bafa-0ba455dced20",
+      "csrf-token",
+      "instantiate-0001",
+    );
+    expect(result.tasks[0]?.task.title).toBe("Weekly review");
+  });
+
   it("registers a client through the stable SyncTransport factory", async () => {
     const fetcher = vi.fn((_path: string, init: RequestInit) => {
       expect(init.method).toBe("POST");
