@@ -541,6 +541,7 @@ export const createPlanningPlaceholderRequestSchema = z
   .strict();
 export const resolvePlanningPlaceholderPreviewInputSchema = z
   .object({
+    placeholderId: entityIdSchema,
     selectedItemIds: z.array(entityIdSchema).min(1).max(25),
     logicalTime: z.iso.datetime(),
     override: z.boolean().default(false),
@@ -556,6 +557,7 @@ export const resolvePlanningPlaceholderPreviewInputSchema = z
   );
 export const resolvePlanningPlaceholderRequestSchema = z
   .object({
+    placeholderId: entityIdSchema.optional(),
     selectedItemIds: z.array(entityIdSchema).min(1).max(25),
     logicalTime: z.iso.datetime(),
     override: z.boolean().default(false),

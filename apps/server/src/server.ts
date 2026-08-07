@@ -36,6 +36,11 @@ import type {
   TemplateSubtaskBlueprint,
   TemplateSet,
   TemplateInstantiationResponse,
+  ChoicePool,
+  ChoicePoolItem,
+  ChoicePoolHistoryEvent,
+  PlanningPlaceholder,
+  PlanningPlaceholderResolutionResponse,
 } from "@suite/contracts";
 import {
   baikalConnectRequestSchema,
@@ -62,6 +67,9 @@ import {
   createTemplateSetRequestSchema,
   instantiateTemplateRequestSchema,
   templateSearchRequestSchema,
+  createChoicePoolRequestSchema,
+  createPlanningPlaceholderRequestSchema,
+  resolvePlanningPlaceholderRequestSchema,
 } from "@suite/contracts";
 import {
   SuiteDatabase,
@@ -71,6 +79,8 @@ import {
   type ActiveSessionIntervalRecord,
   type ActiveSessionEventRecord,
   type TemplateInstantiationResult,
+  type PlanningPlaceholderResolutionResult,
+  type PlanningPlaceholderResolutionRecord,
 } from "@suite/persistence";
 import {
   createActiveSession,
@@ -78,6 +88,8 @@ import {
   transitionActiveSession,
   type ActiveSession,
   type SessionClock,
+  suggestChoicePool,
+  validateChoicePoolSelection,
 } from "@suite/domain";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { ServerConfig } from "./config.ts";
@@ -161,6 +173,7 @@ const requiredAutomationResources = [
   "active-session.get",
   "templates.list",
   "template-sets.list",
+  "pools.list",
 ] as const;
 if (
   automationPreviewPath === undefined ||
@@ -222,6 +235,77 @@ const templateSetResponse = (set: {
   readonly updatedAt: string;
   readonly archivedAt: string | null;
 }): TemplateSet => ({ ...set });
+
+const choicePoolResponse = (pool: ChoicePool): ChoicePool => ({ ...pool });
+const choicePoolItemResponse = (item: ChoicePoolItem): ChoicePoolItem => ({
+  ...item,
+});
+const choicePoolHistoryResponse = (
+  event: ChoicePoolHistoryEvent,
+): ChoicePoolHistoryEvent => ({ ...event });
+const planningPlaceholderResponse = (
+  placeholder: PlanningPlaceholder,
+): PlanningPlaceholder => ({ ...placeholder });
+const planningResolutionResponse = (
+  resolution: PlanningPlaceholderResolutionRecord,
+) => ({
+  ...resolution,
+  selectedItemIds: [...resolution.selectedItemIds],
+  subtaskIds: [...resolution.subtaskIds],
+  historyIds: [...resolution.historyIds],
+});
+const placeholderResolutionResponse = (
+  result: PlanningPlaceholderResolutionResult,
+): PlanningPlaceholderResolutionResponse => {
+  if (
+    result.placeholder === undefined ||
+    result.resolution === undefined ||
+    result.subtasks === undefined ||
+    result.history === undefined
+  )
+    throw new Error("Resolved placeholder result is incomplete");
+  return {
+    placeholder: planningPlaceholderResponse(result.placeholder),
+    resolution: planningResolutionResponse(result.resolution),
+    subtasks: result.subtasks.map(subtaskResponse),
+    history: result.history.map(choicePoolHistoryResponse),
+    replayed: result.kind === "replayed",
+  };
+};
+
+const choiceSuggestion = (
+  database: SuiteDatabase,
+  ownerId: string,
+  poolId: string,
+  logicalTime: string,
+) => {
+  const pool = database.getChoicePool(ownerId, poolId);
+  if (pool === undefined) return undefined;
+  const items = database.listChoicePoolItems(poolId, true);
+  const history = database
+    .listChoicePoolHistory(poolId)
+    .filter(({ kind }) => kind === "selected")
+    .map(({ itemId, occurredAt, cycle }) => ({
+      itemId,
+      selectedAt: occurredAt,
+      cycle,
+    }));
+  const suggestion = suggestChoicePool(
+    {
+      policy: pool.policy,
+      pickCount: pool.pickCount,
+      cooldownSeconds: pool.cooldownSeconds,
+    },
+    items.map(({ id, position, archivedAt }) => ({
+      id,
+      position,
+      archived: archivedAt !== null,
+    })),
+    history,
+    logicalTime,
+  );
+  return { pool, items, history, suggestion };
+};
 
 const sendJson = (
   response: ServerResponse,
@@ -1157,6 +1241,24 @@ export const startSuiteServer = async (
                 database.listTemplateSetMembers(set.id),
               ),
             };
+          } else if (resource === "pools.list") {
+            const pools = database.listChoicePools(token.ownerId, true);
+            body = {
+              pools: pools.map(choicePoolResponse),
+              items: pools.flatMap((pool) =>
+                database
+                  .listChoicePoolItems(pool.id, true)
+                  .map(choicePoolItemResponse),
+              ),
+              history: pools.flatMap((pool) =>
+                database
+                  .listChoicePoolHistory(pool.id)
+                  .map(choicePoolHistoryResponse),
+              ),
+              placeholders: database
+                .listPlanningPlaceholders(token.ownerId)
+                .map(planningPlaceholderResponse),
+            };
           } else if (resource === "active-session.get") {
             const stored = database.getActiveSession(token.ownerId);
             body = {
@@ -1284,7 +1386,10 @@ export const startSuiteServer = async (
               | "active_session"
               | "template"
               | "template_set"
-              | "project";
+              | "project"
+              | "choice_pool"
+              | "planning_placeholder"
+              | "pool_item";
             entityId: string;
           }[] = [];
           const baseRevisions: {
@@ -1293,7 +1398,10 @@ export const startSuiteServer = async (
               | "active_session"
               | "template"
               | "template_set"
-              | "project";
+              | "project"
+              | "choice_pool"
+              | "planning_placeholder"
+              | "pool_item";
             entityId: string;
             revision: number;
           }[] = [];
@@ -1439,6 +1547,96 @@ export const startSuiteServer = async (
                 entityKind: "template" as const,
                 entityId: template.id,
                 revision: template.revision,
+              })),
+            );
+          } else if (command.operation === "placeholders.resolve") {
+            const placeholder = database.getPlanningPlaceholder(
+              token.ownerId,
+              command.input.placeholderId,
+            );
+            if (
+              placeholder === undefined ||
+              placeholder.state !== "unresolved"
+            ) {
+              sendError(
+                response,
+                404,
+                "PLANNING_PLACEHOLDER_NOT_FOUND",
+                "Unresolved planning placeholder not found",
+              );
+              return;
+            }
+            const evaluated = choiceSuggestion(
+              database,
+              token.ownerId,
+              placeholder.poolId,
+              command.input.logicalTime,
+            );
+            if (evaluated === undefined)
+              throw new Error("Placeholder pool could not be evaluated");
+            const selection = validateChoicePoolSelection(
+              {
+                policy: evaluated.pool.policy,
+                pickCount: placeholder.pickCount,
+                cooldownSeconds: evaluated.pool.cooldownSeconds,
+              },
+              evaluated.items.map(({ id, position, archivedAt }) => ({
+                id,
+                position,
+                archived: archivedAt !== null,
+              })),
+              evaluated.history,
+              command.input.logicalTime,
+              command.input.selectedItemIds,
+              command.input.override,
+            );
+            if (
+              !selection.valid ||
+              command.input.expectedRevision !== placeholder.revision
+            ) {
+              sendError(
+                response,
+                409,
+                "POOL_ITEM_INELIGIBLE",
+                `Selection is unavailable: ${selection.reason ?? "stale placeholder"}`,
+              );
+              return;
+            }
+            const task = database.getTask(token.ownerId, placeholder.taskId);
+            if (task === undefined)
+              throw new Error("Placeholder parent task could not be read");
+            const selected = evaluated.items.filter(({ id }) =>
+              command.input.selectedItemIds.includes(id),
+            );
+            affected.push(
+              { entityKind: "planning_placeholder", entityId: placeholder.id },
+              { entityKind: "choice_pool", entityId: evaluated.pool.id },
+              { entityKind: "task", entityId: task.id },
+              ...selected.map(({ id }) => ({
+                entityKind: "pool_item" as const,
+                entityId: id,
+              })),
+            );
+            baseRevisions.push(
+              {
+                entityKind: "planning_placeholder",
+                entityId: placeholder.id,
+                revision: placeholder.revision,
+              },
+              {
+                entityKind: "choice_pool",
+                entityId: evaluated.pool.id,
+                revision: evaluated.pool.revision,
+              },
+              {
+                entityKind: "task",
+                entityId: task.id,
+                revision: task.revision,
+              },
+              ...selected.map(({ id, revision }) => ({
+                entityKind: "pool_item" as const,
+                entityId: id,
+                revision,
               })),
             );
           } else if (command.operation.startsWith("focus.")) {
@@ -1626,6 +1824,12 @@ export const startSuiteServer = async (
                 .find(({ id }) => id === entityId) ??
               database
                 .listProjects(token.ownerId)
+                .find(({ id }) => id === entityId) ??
+              database.getChoicePool(token.ownerId, entityId, true) ??
+              database.getPlanningPlaceholder(token.ownerId, entityId) ??
+              database
+                .listChoicePools(token.ownerId, true)
+                .flatMap((pool) => database.listChoicePoolItems(pool.id, true))
                 .find(({ id }) => id === entityId) ??
               database.getActiveSession(token.ownerId);
             if (current?.id !== entityId || current.revision !== revision) {
@@ -1972,6 +2176,87 @@ export const startSuiteServer = async (
               return;
             }
             result = templateInstantiationResponse(instantiated);
+          } else if (command.operation === "placeholders.resolve") {
+            const input = command.input;
+            const placeholder = database.getPlanningPlaceholder(
+              token.ownerId,
+              input.placeholderId,
+            );
+            if (placeholder === undefined) {
+              sendError(
+                response,
+                404,
+                "PLANNING_PLACEHOLDER_NOT_FOUND",
+                "Planning placeholder not found",
+              );
+              return;
+            }
+            const evaluated = choiceSuggestion(
+              database,
+              token.ownerId,
+              placeholder.poolId,
+              input.logicalTime,
+            );
+            if (evaluated === undefined)
+              throw new Error("Placeholder pool could not be evaluated");
+            const selection = validateChoicePoolSelection(
+              {
+                policy: evaluated.pool.policy,
+                pickCount: placeholder.pickCount,
+                cooldownSeconds: evaluated.pool.cooldownSeconds,
+              },
+              evaluated.items.map(({ id, position, archivedAt }) => ({
+                id,
+                position,
+                archived: archivedAt !== null,
+              })),
+              evaluated.history,
+              input.logicalTime,
+              input.selectedItemIds,
+              input.override,
+            );
+            if (!selection.valid) {
+              sendError(
+                response,
+                409,
+                "POOL_ITEM_INELIGIBLE",
+                `Selection is unavailable: ${selection.reason ?? "unknown"}`,
+              );
+              return;
+            }
+            const resolved = database.resolvePlanningPlaceholderIdempotently({
+              ownerId: token.ownerId,
+              placeholderId: placeholder.id,
+              expectedRevision: input.expectedRevision,
+              selectedItemIds: input.selectedItemIds,
+              logicalTime: input.logicalTime,
+              cycle: selection.cycle,
+              overridden: input.override,
+              idempotencyKey: internalKey,
+              requestHash,
+              now: new Date().toISOString(),
+            });
+            if (resolved.kind === "conflict" || resolved.kind === "stale") {
+              sendError(
+                response,
+                resolved.kind === "stale" ? 412 : 409,
+                resolved.kind === "stale"
+                  ? "AUTOMATION_PREVIEW_STALE"
+                  : "IDEMPOTENCY_CONFLICT",
+                "Placeholder resolution conflicted",
+              );
+              return;
+            }
+            if (resolved.kind === "not-found") {
+              sendError(
+                response,
+                404,
+                "PLANNING_PLACEHOLDER_NOT_FOUND",
+                "Planning placeholder not found",
+              );
+              return;
+            }
+            result = placeholderResolutionResponse(resolved);
           } else {
             const before = database.getActiveSession(token.ownerId);
             const focusInput = automationFocusCommandInputSchema.parse(
@@ -2119,7 +2404,11 @@ export const startSuiteServer = async (
           url.pathname === "/api/templates" ||
           url.pathname.startsWith("/api/templates/") ||
           url.pathname === "/api/template-sets" ||
-          url.pathname.startsWith("/api/template-sets/")
+          url.pathname.startsWith("/api/template-sets/") ||
+          url.pathname === "/api/pools" ||
+          url.pathname.startsWith("/api/pools/") ||
+          url.pathname === "/api/placeholders" ||
+          url.pathname.startsWith("/api/placeholders/")
         ) {
           const mutating = method !== "GET";
           const session = auth.authenticate(request, mutating);
@@ -2145,6 +2434,320 @@ export const startSuiteServer = async (
               403,
               "CSRF_REQUIRED",
               "Same-origin session and CSRF token required",
+            );
+            return;
+          }
+
+          if (method === "GET" && url.pathname === "/api/pools") {
+            const pools = database.listChoicePools(session.owner.id, true);
+            sendJson(response, 200, {
+              pools: pools.map(choicePoolResponse),
+              items: pools.flatMap((pool) =>
+                database
+                  .listChoicePoolItems(pool.id, true)
+                  .map(choicePoolItemResponse),
+              ),
+              history: pools.flatMap((pool) =>
+                database
+                  .listChoicePoolHistory(pool.id)
+                  .map(choicePoolHistoryResponse),
+              ),
+              placeholders: database
+                .listPlanningPlaceholders(session.owner.id)
+                .map(planningPlaceholderResponse),
+            });
+            return;
+          }
+
+          if (method === "POST" && url.pathname === "/api/pools") {
+            const parsed = createChoicePoolRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (
+              !parsed.success ||
+              parsed.data.items.length < parsed.data.pickCount
+            ) {
+              sendError(
+                response,
+                400,
+                "INVALID_CHOICE_POOL",
+                "Choice pool input is invalid or has too few items",
+              );
+              return;
+            }
+            const now = new Date().toISOString();
+            const poolId = randomUUID();
+            const pool = database.createChoicePool(
+              {
+                id: poolId,
+                ownerId: session.owner.id,
+                title: parsed.data.title,
+                policy: parsed.data.policy,
+                pickCount: parsed.data.pickCount,
+                cooldownSeconds: parsed.data.cooldownSeconds,
+                revision: 1,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+              },
+              parsed.data.items.map(({ title }, position) => ({
+                id: randomUUID(),
+                poolId,
+                title,
+                position,
+                revision: 1,
+                createdAt: now,
+                updatedAt: now,
+                archivedAt: null,
+              })),
+            );
+            sendJson(response, 201, {
+              pool: choicePoolResponse(pool),
+              items: database
+                .listChoicePoolItems(pool.id)
+                .map(choicePoolItemResponse),
+            });
+            return;
+          }
+
+          if (method === "POST" && url.pathname === "/api/placeholders") {
+            const parsed = createPlanningPlaceholderRequestSchema.safeParse(
+              await readJson(request),
+            );
+            if (!parsed.success) {
+              sendError(
+                response,
+                400,
+                "INVALID_PLANNING_PLACEHOLDER",
+                "Planning placeholder input is invalid",
+              );
+              return;
+            }
+            const pool = database.getChoicePool(
+              session.owner.id,
+              parsed.data.poolId,
+            );
+            if (pool === undefined) {
+              sendError(
+                response,
+                404,
+                "CHOICE_POOL_NOT_FOUND",
+                "Choice pool not found",
+              );
+              return;
+            }
+            const now = new Date().toISOString();
+            const placeholder = database.createPlanningPlaceholder({
+              id: randomUUID(),
+              ownerId: session.owner.id,
+              taskId: parsed.data.taskId,
+              poolId: pool.id,
+              pickCount: parsed.data.pickCount ?? pool.pickCount,
+              state: "unresolved",
+              revision: 1,
+              createdAt: now,
+              updatedAt: now,
+              resolvedAt: null,
+            });
+            if (placeholder === undefined) {
+              sendError(
+                response,
+                409,
+                "PLACEHOLDER_RESOURCE_INVALID",
+                "Task, pool, or pick count is invalid",
+              );
+              return;
+            }
+            sendJson(response, 201, planningPlaceholderResponse(placeholder));
+            return;
+          }
+
+          const suggestionMatch =
+            /^\/api\/placeholders\/([0-9a-f-]{36})\/suggestion$/.exec(
+              url.pathname,
+            );
+          if (method === "GET" && suggestionMatch !== null) {
+            const placeholder = database.getPlanningPlaceholder(
+              session.owner.id,
+              suggestionMatch[1] ?? "",
+            );
+            const logicalTime =
+              url.searchParams.get("at") ?? new Date().toISOString();
+            if (
+              placeholder === undefined ||
+              !Number.isFinite(Date.parse(logicalTime))
+            ) {
+              sendError(
+                response,
+                placeholder === undefined ? 404 : 400,
+                placeholder === undefined
+                  ? "PLANNING_PLACEHOLDER_NOT_FOUND"
+                  : "INVALID_LOGICAL_TIME",
+                "Placeholder or logical time is invalid",
+              );
+              return;
+            }
+            const evaluated = choiceSuggestion(
+              database,
+              session.owner.id,
+              placeholder.poolId,
+              logicalTime,
+            );
+            if (evaluated === undefined)
+              throw new Error("Placeholder pool could not be evaluated");
+            const suggestion = suggestChoicePool(
+              {
+                policy: evaluated.pool.policy,
+                pickCount: placeholder.pickCount,
+                cooldownSeconds: evaluated.pool.cooldownSeconds,
+              },
+              evaluated.items.map(({ id, position, archivedAt }) => ({
+                id,
+                position,
+                archived: archivedAt !== null,
+              })),
+              evaluated.history,
+              logicalTime,
+            );
+            sendJson(response, 200, {
+              pool: choicePoolResponse(evaluated.pool),
+              selectedItemIds: [...suggestion.selectedItemIds],
+              cycle: suggestion.cycle,
+              eligibility: suggestion.eligibility,
+              logicalTime,
+            });
+            return;
+          }
+
+          const resolutionMatch =
+            /^\/api\/placeholders\/([0-9a-f-]{36})\/resolve$/.exec(
+              url.pathname,
+            );
+          if (method === "POST" && resolutionMatch !== null) {
+            const parsed = resolvePlanningPlaceholderRequestSchema.safeParse(
+              await readJson(request),
+            );
+            const placeholderId = resolutionMatch[1] ?? "";
+            const placeholder = database.getPlanningPlaceholder(
+              session.owner.id,
+              placeholderId,
+            );
+            if (!parsed.success || placeholder === undefined) {
+              sendError(
+                response,
+                placeholder === undefined ? 404 : 400,
+                placeholder === undefined
+                  ? "PLANNING_PLACEHOLDER_NOT_FOUND"
+                  : "INVALID_PLACEHOLDER_RESOLUTION",
+                "Placeholder resolution input is invalid",
+              );
+              return;
+            }
+            const requestHash = createHash("sha256")
+              .update(
+                JSON.stringify({
+                  selectedItemIds: parsed.data.selectedItemIds,
+                  logicalTime: parsed.data.logicalTime,
+                  override: parsed.data.override,
+                }),
+              )
+              .digest("hex");
+            if (placeholder.state === "resolved") {
+              const replay = database.resolvePlanningPlaceholderIdempotently({
+                ownerId: session.owner.id,
+                placeholderId,
+                expectedRevision: parsed.data.expectedRevision,
+                selectedItemIds: parsed.data.selectedItemIds,
+                logicalTime: parsed.data.logicalTime,
+                cycle: 1,
+                overridden: parsed.data.override,
+                idempotencyKey: parsed.data.idempotencyKey,
+                requestHash,
+                now: new Date().toISOString(),
+              });
+              if (replay.kind === "replayed") {
+                sendJson(response, 200, placeholderResolutionResponse(replay));
+                return;
+              }
+              sendError(
+                response,
+                replay.kind === "conflict" ? 409 : 412,
+                replay.kind === "conflict"
+                  ? "IDEMPOTENCY_CONFLICT"
+                  : "PLANNING_PLACEHOLDER_STALE",
+                "Placeholder was already resolved",
+              );
+              return;
+            }
+            const evaluated = choiceSuggestion(
+              database,
+              session.owner.id,
+              placeholder.poolId,
+              parsed.data.logicalTime,
+            );
+            if (evaluated === undefined)
+              throw new Error("Placeholder pool could not be evaluated");
+            const selection = validateChoicePoolSelection(
+              {
+                policy: evaluated.pool.policy,
+                pickCount: placeholder.pickCount,
+                cooldownSeconds: evaluated.pool.cooldownSeconds,
+              },
+              evaluated.items.map(({ id, position, archivedAt }) => ({
+                id,
+                position,
+                archived: archivedAt !== null,
+              })),
+              evaluated.history,
+              parsed.data.logicalTime,
+              parsed.data.selectedItemIds,
+              parsed.data.override,
+            );
+            if (!selection.valid) {
+              sendError(
+                response,
+                409,
+                "POOL_ITEM_INELIGIBLE",
+                `Selection is unavailable: ${selection.reason ?? "unknown"}`,
+              );
+              return;
+            }
+            const result = database.resolvePlanningPlaceholderIdempotently({
+              ownerId: session.owner.id,
+              placeholderId,
+              expectedRevision: parsed.data.expectedRevision,
+              selectedItemIds: parsed.data.selectedItemIds,
+              logicalTime: parsed.data.logicalTime,
+              cycle: selection.cycle,
+              overridden: parsed.data.override,
+              idempotencyKey: parsed.data.idempotencyKey,
+              requestHash,
+              now: new Date().toISOString(),
+            });
+            if (result.kind === "conflict" || result.kind === "stale") {
+              sendError(
+                response,
+                result.kind === "stale" ? 412 : 409,
+                result.kind === "stale"
+                  ? "PLANNING_PLACEHOLDER_STALE"
+                  : "IDEMPOTENCY_CONFLICT",
+                "Placeholder resolution conflicted",
+              );
+              return;
+            }
+            if (result.kind === "not-found") {
+              sendError(
+                response,
+                404,
+                "PLANNING_PLACEHOLDER_NOT_FOUND",
+                "Placeholder not found",
+              );
+              return;
+            }
+            sendJson(
+              response,
+              result.kind === "created" ? 201 : 200,
+              placeholderResolutionResponse(result),
             );
             return;
           }
@@ -3562,6 +4165,37 @@ export const startSuiteServer = async (
                   members: [...database.listTemplateSetMembers(set.id)],
                 },
               })),
+              ...database
+                .listChoicePools(session.owner.id, true)
+                .map((pool) => ({
+                  entityKind: "choice_pool" as const,
+                  value: {
+                    pool: choicePoolResponse(pool),
+                    items: database
+                      .listChoicePoolItems(pool.id, true)
+                      .map(choicePoolItemResponse),
+                    history: database
+                      .listChoicePoolHistory(pool.id)
+                      .map(choicePoolHistoryResponse),
+                  },
+                })),
+              ...database
+                .listPlanningPlaceholders(session.owner.id)
+                .map((placeholder) => ({
+                  entityKind: "planning_placeholder" as const,
+                  value: {
+                    placeholder: planningPlaceholderResponse(placeholder),
+                    resolution: (() => {
+                      const resolution =
+                        database.getPlanningPlaceholderResolution(
+                          placeholder.id,
+                        );
+                      return resolution === undefined
+                        ? null
+                        : planningResolutionResponse(resolution);
+                    })(),
+                  },
+                })),
             ];
             const offset = Number(url.searchParams.get("offset") ?? "0");
             if (!Number.isInteger(offset) || offset < 0) {
@@ -3795,6 +4429,21 @@ export const startSuiteServer = async (
                       .listTemplateSets(session.owner.id, true)
                       .find(({ id }) => id === change.entityId)
                   : undefined;
+              const choicePool =
+                change.entityType === "choice_pool"
+                  ? database.getChoicePool(
+                      session.owner.id,
+                      change.entityId,
+                      true,
+                    )
+                  : undefined;
+              const planningPlaceholder =
+                change.entityType === "planning_placeholder"
+                  ? database.getPlanningPlaceholder(
+                      session.owner.id,
+                      change.entityId,
+                    )
+                  : undefined;
               return {
                 sequence: change.sequence,
                 entityKind: change.entityType as
@@ -3804,6 +4453,8 @@ export const startSuiteServer = async (
                   | "subtask"
                   | "template"
                   | "template_set"
+                  | "choice_pool"
+                  | "planning_placeholder"
                   | "active_session",
                 entityId: change.entityId,
                 kind:
@@ -3869,14 +4520,52 @@ export const startSuiteServer = async (
                                     ],
                                   },
                                 }
-                              : active?.id === change.entityId
+                              : choicePool !== undefined
                                 ? {
-                                    entityKind: "active_session" as const,
-                                    value: activeResponse(
-                                      activeFromRecord(active, database),
-                                    ),
+                                    entityKind: "choice_pool" as const,
+                                    value: {
+                                      pool: choicePoolResponse(choicePool),
+                                      items: database
+                                        .listChoicePoolItems(
+                                          choicePool.id,
+                                          true,
+                                        )
+                                        .map(choicePoolItemResponse),
+                                      history: database
+                                        .listChoicePoolHistory(choicePool.id)
+                                        .map(choicePoolHistoryResponse),
+                                    },
                                   }
-                                : null,
+                                : planningPlaceholder !== undefined
+                                  ? {
+                                      entityKind:
+                                        "planning_placeholder" as const,
+                                      value: {
+                                        placeholder:
+                                          planningPlaceholderResponse(
+                                            planningPlaceholder,
+                                          ),
+                                        resolution: (() => {
+                                          const resolution =
+                                            database.getPlanningPlaceholderResolution(
+                                              planningPlaceholder.id,
+                                            );
+                                          return resolution === undefined
+                                            ? null
+                                            : planningResolutionResponse(
+                                                resolution,
+                                              );
+                                        })(),
+                                      },
+                                    }
+                                  : active?.id === change.entityId
+                                    ? {
+                                        entityKind: "active_session" as const,
+                                        value: activeResponse(
+                                          activeFromRecord(active, database),
+                                        ),
+                                      }
+                                    : null,
               };
             }),
             nextCursor: cursorFor({

@@ -28,6 +28,8 @@ export type CachedEntityKind =
   | "subtask"
   | "template"
   | "template_set"
+  | "choice_pool"
+  | "planning_placeholder"
   | "active_session";
 
 export interface CachedEntity {
@@ -481,6 +483,24 @@ export class LocalStore {
           id: value.set.id,
           value,
           revision: value.set.revision,
+          changeSequence: 0,
+        } satisfies CachedEntity);
+      } else if (snapshot.entityKind === "choice_pool") {
+        const value = snapshot.value;
+        entities.put({
+          entityKind: "choice_pool",
+          id: value.pool.id,
+          value,
+          revision: value.pool.revision,
+          changeSequence: 0,
+        } satisfies CachedEntity);
+      } else if (snapshot.entityKind === "planning_placeholder") {
+        const value = snapshot.value;
+        entities.put({
+          entityKind: "planning_placeholder",
+          id: value.placeholder.id,
+          value,
+          revision: value.placeholder.revision,
           changeSequence: 0,
         } satisfies CachedEntity);
       } else {
