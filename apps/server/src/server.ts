@@ -669,6 +669,8 @@ export const startSuiteServer = async (
     config.credentialKeyPath,
     options.connectorFetch,
   );
+  const startedAt = Date.now();
+  const requestCounts = new Map<number, number>();
 
   const authenticateAutomation = (
     request: IncomingMessage,
@@ -741,6 +743,12 @@ export const startSuiteServer = async (
 
   const server = createServer(
     (request: IncomingMessage, response: ServerResponse) => {
+      response.once("finish", () =>
+        requestCounts.set(
+          response.statusCode,
+          (requestCounts.get(response.statusCode) ?? 0) + 1,
+        ),
+      );
       const handleRequest = async (): Promise<void> => {
         const method = request.method ?? "GET";
         const url = new URL(request.url ?? "/", "http://suite.local");
@@ -807,6 +815,34 @@ export const startSuiteServer = async (
             timestamp,
           };
           sendJson(response, 200, body);
+          return;
+        }
+
+        if (method === "GET" && url.pathname === "/api/metrics") {
+          const state = database.state();
+          const lines = [
+            "# HELP suite_uptime_seconds Process uptime in seconds.",
+            "# TYPE suite_uptime_seconds gauge",
+            `suite_uptime_seconds ${String(Math.floor((Date.now() - startedAt) / 1000))}`,
+            "# HELP suite_database_migrations Applied SQLite migrations.",
+            "# TYPE suite_database_migrations gauge",
+            `suite_database_migrations ${String(state.appliedMigrationCount)}`,
+            "# HELP suite_http_requests_total Completed HTTP responses by status.",
+            "# TYPE suite_http_requests_total counter",
+            ...[...requestCounts.entries()]
+              .sort(([left], [right]) => left - right)
+              .map(
+                ([status, count]) =>
+                  `suite_http_requests_total{status="${String(status)}"} ${String(count)}`,
+              ),
+            "",
+          ];
+          response.writeHead(200, {
+            ...securityHeaders,
+            "Cache-Control": "no-store",
+            "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+          });
+          response.end(lines.join("\n"));
           return;
         }
 

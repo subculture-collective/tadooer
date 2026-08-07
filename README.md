@@ -5,7 +5,7 @@ self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phases 5 through 7 are complete on top of the Phase 2 and Phase 4 runtime.
+Phases 5 through 8 are complete on top of the Phase 2 and Phase 4 runtime.
 The runnable
 self-hosted suite includes secure single-owner
 authentication, encrypted Baïkal planning, a durable browser-local task cache,
@@ -29,6 +29,13 @@ resource identities. Authenticated exports and opaque capability feeds preserve
 the original VEVENT fields; capability URLs support GET/HEAD only and can be
 revoked immediately. This is migration and read-only publication, not Google
 OAuth, CalDAV write access, or background mirroring.
+
+Phase 8 adds a packaged Linux Electron client that displays the same Suite
+origin without Node integration or a second data authority. Release operations
+use immutable version/revision/image-digest manifests, explicit promotion and
+rollback history, coherent backup/restore, and content-free Prometheus metrics
+at `/api/metrics`. Android/iOS, PostgreSQL, and multi-user mode are deliberately
+not shipped because their conditional roadmap prerequisites are not met.
 
 ## Run the Suite
 
@@ -116,6 +123,7 @@ pnpm verify:phase4
 pnpm verify:phase5
 pnpm verify:phase6
 pnpm verify:phase7
+pnpm verify:phase8
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
@@ -156,6 +164,19 @@ retry and Suite restart leave exactly one remote resource, performs a coherent
 full-stack backup/restore, checks preserved ICS export, and finally revokes the
 GET-only capability feed.
 
+`pnpm verify:phase8` runs the canonical gate, release-channel and metrics tests,
+creates an actual Linux x64 Electron directory bundle, starts its executable in
+non-graphical smoke mode, and qualifies a versioned production Compose image
+through readiness, metrics, restart, backup/restore, and candidate promotion.
+Production rollout and rollback procedures are in
+[`docs/operations/release-and-rollback.md`](docs/operations/release-and-rollback.md).
+
+Build the desktop bundle with `pnpm package:desktop`. Its default authority is
+`http://127.0.0.1:18080`; set `SUITE_SERVER_URL` to an HTTPS origin for a remote
+deployment. The shell rejects non-loopback plaintext HTTP, URL credentials,
+paths, queries, fragments, cross-origin navigation, embedded webviews, and
+renderer Node access.
+
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
 The bounded Phase 1 projection, write, and recovery rules are recorded in
@@ -173,6 +194,9 @@ recorded in
 The Phase 7 preserved-import, stable-identity, and read-only publication rules
 are recorded in
 [`docs/adr/0014-phase-7-import-publication.md`](docs/adr/0014-phase-7-import-publication.md).
+The Phase 8 desktop authority, release channel, observability, and conditional
+platform decisions are recorded in
+[`docs/adr/0015-phase-8-packaged-operations.md`](docs/adr/0015-phase-8-packaged-operations.md).
 
 An owner issues, inventories, and revokes automation credentials through
 `/api/automation/tokens`; the raw `suite_at_...` credential is returned only at

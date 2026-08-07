@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://suite.local/schemas/release-manifest-v1.json",
+  "title": "Suite immutable release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "version",
+    "revision",
+    "imageDigest",
+    "desktopArtifact",
+    "qualifiedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+    "imageDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "desktopArtifact": { "type": "string", "minLength": 1 },
+    "qualifiedAt": { "type": "string", "format": "date-time" }
+  }
+}

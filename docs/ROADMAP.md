@@ -393,6 +393,24 @@ no background mirror is enabled.
 - Upgrade channels, rollback, observability, and production qualification
 - Multi-user discovery only after owner-scoped authorization has been audited
 
+Phase 8 was completed on 2026-08-07 on
+`codex/phase-8-packaged-operations` for the deployment needs supported by
+evidence. The Suite now builds an actual Linux x64 Electron bundle whose only
+authority is the configured HTTPS (or loopback-development HTTP) Suite origin;
+Node integration, webviews, cross-origin navigation, and alternate local data
+authority are disabled. Immutable release manifests, candidate/stable
+promotion, append-only channel history, explicit rollback selection, a
+release/restore runbook, content-free Prometheus metrics, versioned image
+metadata, and a disposable production qualification gate are present.
+
+Android/iOS delivery is explicitly not enabled because platform-specific
+offline/background and credential storage have not been designed. PostgreSQL
+is not enabled because no measured SQLite limitation justifies its operational
+cost. Multi-user mode is not enabled because the required owner-scoped
+authorization audit has not occurred. These are satisfied roadmap decisions
+under the phase's conditional scope, not claims that unsupported clients or
+database adapters were shipped.
+
 ## Explicit non-roadmap commitments
 
 The following do not enter a phase without a new decision and evidence:

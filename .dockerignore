@@ -1,6 +1,7 @@
 .git
 .env
 **/dist
+**/dist-packages
 **/node_modules
 coverage
 data

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow } from "electron";
 import process from "node:process";
 import console from "node:console";
 import { allowedNavigation, suiteOrigin } from "./policy.mjs";
@@ -35,11 +35,7 @@ if (process.argv.includes("--suite-smoke")) {
         partition: "persist:suite-owner",
       },
     });
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      if (allowedNavigation(url, origin)) return { action: "allow" };
-      if (url.startsWith("https://")) void shell.openExternal(url);
-      return { action: "deny" };
-    });
+    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.webContents.on("will-navigate", (event, url) => {
       if (!allowedNavigation(url, origin)) event.preventDefault();
     });
