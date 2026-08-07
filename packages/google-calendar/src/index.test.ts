@@ -26,7 +26,11 @@ describe("Google Calendar provider boundary", () => {
   it("paginates discovery without widening authorization", async () => {
     const calls: URL[] = [];
     const result = await listGoogleCalendars("access", async (input) => {
-      const url = input instanceof URL ? input : new URL(String(input));
+      await Promise.resolve();
+      const url =
+        input instanceof URL
+          ? input
+          : new URL(typeof input === "string" ? input : input.url);
       calls.push(url);
       return new Response(
         JSON.stringify(
