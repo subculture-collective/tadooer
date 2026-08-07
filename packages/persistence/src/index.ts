@@ -2091,6 +2091,66 @@ export class SuiteDatabase {
       );
   }
 
+  completeAutomationConfirmation(
+    previewId: string,
+    outcome: AutomationOutcomeRecord,
+    audit: AutomationAuditRecord,
+    now: string,
+  ): boolean {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const consumed = this.#database
+        .prepare(
+          "UPDATE automation_previews SET consumed_at=? WHERE id=? AND consumed_at IS NULL AND expires_at>?",
+        )
+        .run(now, previewId, now).changes;
+      if (consumed !== 1) {
+        this.#database.exec("ROLLBACK;");
+        return false;
+      }
+      this.#database
+        .prepare(
+          `INSERT INTO automation_operation_outcomes
+            (owner_id,token_id,operation,idempotency_key,request_hash,preview_id,response_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          outcome.ownerId,
+          outcome.tokenId,
+          outcome.operation,
+          outcome.idempotencyKey,
+          outcome.requestHash,
+          outcome.previewId,
+          JSON.stringify(outcome.response),
+          outcome.createdAt,
+        );
+      this.#database
+        .prepare(
+          `INSERT INTO automation_audit_log
+            (id,owner_id,token_id,operation,phase,outcome,error_code,preview_id,
+             affected_ids_json,request_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          audit.id,
+          audit.ownerId,
+          audit.tokenId,
+          audit.operation,
+          audit.phase,
+          audit.outcome,
+          audit.errorCode,
+          audit.previewId,
+          JSON.stringify(audit.affectedIds),
+          audit.requestHash,
+          audit.createdAt,
+        );
+      this.#database.exec("COMMIT;");
+      return true;
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   appendAutomationAudit(record: AutomationAuditRecord): void {
     this.#database
       .prepare(
