@@ -8,15 +8,17 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "pnpm --filter @suite/web build && pnpm --filter @suite/server build",
+    "build": "pnpm --filter @suite/web build && pnpm --filter @suite/server build && pnpm --filter @suite/mcp-stdio build && pnpm --filter @suite/quick-add build",
     "dev": "pnpm --parallel --filter @suite/web --filter @suite/server dev",
     "format": "prettier --write apps packages *.json *.js *.yaml",
     "format:check": "prettier --check apps packages *.json *.js *.yaml",
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e:phase1": "node deploy/phase1-browser.mjs",
+    "test:phase4": "vitest run apps/server/src/phase4.test.ts apps/mcp-stdio/src apps/quick-add/src",
     "verify:phase1": "./deploy/verify-phase1-compose.sh",
     "verify:phase2": "./deploy/verify-phase2-compose.sh",
+    "verify:phase4": "./deploy/verify-phase4.sh",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
