@@ -51,6 +51,7 @@ import {
   automationFocusCommandInputSchema,
   automationPreviewCommandSchema,
   createAutomationTokenRequestSchema,
+  automationCatalog,
 } from "@suite/contracts";
 import {
   SuiteDatabase,
@@ -124,12 +125,31 @@ const automationTokenResponse = (token: {
 
 const automationScopeFor = (
   operation: AutomationPreviewCommand["operation"],
-): AutomationTokenScope =>
-  operation === "tasks.create"
-    ? "tasks:write"
-    : operation === "schedule.create_time_block"
-      ? "schedule:write"
-      : "focus:write";
+): AutomationTokenScope => {
+  const entry = automationCatalog.find(({ id }) => id === operation);
+  const scope = entry?.scopes[0];
+  if (scope === undefined)
+    throw new Error(`Automation catalog scope is missing for ${operation}`);
+  return scope;
+};
+
+const automationPreviewPath = automationCatalog.find(
+  ({ id }) => id === "tasks.create",
+)?.apiPath;
+const automationConfirmPath = automationCatalog.find(
+  ({ id }) => id === "automation.confirm",
+)?.apiPath;
+const automationResourceEntries = automationCatalog.filter(
+  (entry) => entry.kind === "resource",
+);
+if (
+  automationPreviewPath === undefined ||
+  automationConfirmPath === undefined ||
+  automationResourceEntries.length !== 5
+)
+  throw new Error(
+    "Suite automation catalog and HTTP handlers are out of parity",
+  );
 
 const taskResponse = (task: TaskRecord): Task => ({
   id: task.id,
@@ -932,20 +952,13 @@ export const startSuiteServer = async (
               expiresAt: parsed.data.expiresAt,
               revokedAt: null,
             };
-            database.createAutomationToken(record);
-            // Active-session storage currently uses the shared principal ID
-            // table for interval foreign keys. No sync credential is exposed.
-            database.registerSyncClient({
-              id,
-              ownerId: session.owner.id,
-              label: `automation:${parsed.data.label}`,
-              credentialHash: createHash("sha256")
-                .update(randomBytes(32))
-                .digest("base64url"),
-              createdAt,
-              lastSeenAt: createdAt,
-              revokedAt: null,
-            });
+            // The compatibility controller row has an unrecoverable random
+            // proof and is created atomically with the separately authorized
+            // automation token. It exists only for Phase 2 interval FKs.
+            database.createAutomationTokenWithController(
+              record,
+              createHash("sha256").update(randomBytes(32)).digest("base64url"),
+            );
             sendJson(response, 201, {
               token: `suite_at_${id}.${secret}`,
               record: automationTokenResponse(record),
@@ -1008,39 +1021,28 @@ export const startSuiteServer = async (
           return;
         }
 
-        const automationResource =
-          /^\/api\/automation\/v1\/resources\/(tasks|schedule|projects|tags|active-session)$/.exec(
-            url.pathname,
-          );
-        if (automationResource !== null && method === "GET") {
-          const resource = automationResource[1] ?? "";
-          const scope = (
-            resource === "tasks"
-              ? "tasks:read"
-              : resource === "schedule"
-                ? "schedule:read"
-                : resource === "projects"
-                  ? "projects:read"
-                  : resource === "tags"
-                    ? "tags:read"
-                    : "focus:read"
-          ) satisfies AutomationTokenScope;
+        const automationResource = automationResourceEntries.find(
+          ({ apiPath }) => apiPath === url.pathname,
+        );
+        if (automationResource !== undefined && method === "GET") {
+          const resource = automationResource.id;
+          const scope = automationResource.scopes[0];
           const token = authenticateAutomation(request, response, scope);
           if (token === undefined) return;
           let body: unknown;
-          if (resource === "tasks")
+          if (resource === "tasks.list")
             body = {
               tasks: database.listTasks(token.ownerId).map(taskResponse),
             };
-          else if (resource === "projects")
+          else if (resource === "projects.list")
             body = {
               projects: database
                 .listProjects(token.ownerId)
                 .map(projectResponse),
             };
-          else if (resource === "tags")
+          else if (resource === "tags.list")
             body = { tags: database.listTags(token.ownerId).map(tagResponse) };
-          else if (resource === "active-session") {
+          else if (resource === "active-session.get") {
             const stored = database.getActiveSession(token.ownerId);
             body = {
               session:
@@ -1108,7 +1110,7 @@ export const startSuiteServer = async (
             id: randomUUID(),
             ownerId: token.ownerId,
             tokenId: token.id,
-            operation: `${resource}.read`,
+            operation: resource,
             phase: "resource_read",
             outcome: "succeeded",
             errorCode: null,
@@ -1121,10 +1123,7 @@ export const startSuiteServer = async (
           return;
         }
 
-        if (
-          method === "POST" &&
-          url.pathname === "/api/automation/v1/previews"
-        ) {
+        if (method === "POST" && url.pathname === automationPreviewPath) {
           const token = authenticateAutomation(request, response);
           if (token === undefined) return;
           const parsed = automationPreviewCommandSchema.safeParse(
@@ -1142,6 +1141,19 @@ export const startSuiteServer = async (
           const command = parsed.data;
           const scope = automationScopeFor(command.operation);
           if (!token.scopes.includes(scope)) {
+            database.appendAutomationAudit({
+              id: randomUUID(),
+              ownerId: token.ownerId,
+              tokenId: token.id,
+              operation: command.operation,
+              phase: "preview",
+              outcome: "denied",
+              errorCode: "AUTOMATION_SCOPE_DENIED",
+              previewId: null,
+              affectedIds: [],
+              requestHash: null,
+              createdAt: new Date().toISOString(),
+            });
             sendError(
               response,
               403,
@@ -1270,10 +1282,10 @@ export const startSuiteServer = async (
           return;
         }
 
-        const automationConfirm =
-          /^\/api\/automation\/v1\/previews\/([0-9a-f-]{36})\/confirm$/.exec(
-            url.pathname,
-          );
+        const automationConfirmPattern = new RegExp(
+          `^${automationConfirmPath.replace("{previewId}", "([0-9a-f-]{36})")}$`,
+        );
+        const automationConfirm = automationConfirmPattern.exec(url.pathname);
         if (automationConfirm !== null && method === "POST") {
           const token = authenticateAutomation(request, response);
           if (token === undefined) return;
@@ -1296,7 +1308,9 @@ export const startSuiteServer = async (
             return;
           }
           const requestHash = createHash("sha256")
-            .update(`${preview.id}:${parsed.data.idempotencyKey}`)
+            .update(
+              `${preview.operation}:${preview.inputHash}:${parsed.data.idempotencyKey}`,
+            )
             .digest("hex");
           const prior = database.getAutomationOutcome(
             token.ownerId,
@@ -1305,10 +1319,7 @@ export const startSuiteServer = async (
             parsed.data.idempotencyKey,
           );
           if (prior !== undefined) {
-            if (
-              prior.requestHash !== requestHash ||
-              prior.previewId !== preview.id
-            ) {
+            if (prior.requestHash !== requestHash) {
               sendError(
                 response,
                 409,
@@ -1317,6 +1328,19 @@ export const startSuiteServer = async (
               );
               return;
             }
+            database.appendAutomationAudit({
+              id: randomUUID(),
+              ownerId: token.ownerId,
+              tokenId: token.id,
+              operation: preview.operation,
+              phase: "confirm",
+              outcome: "replayed",
+              errorCode: null,
+              previewId: preview.id,
+              affectedIds: preview.affectedIds,
+              requestHash,
+              createdAt: new Date().toISOString(),
+            });
             sendJson(response, 200, {
               ...(prior.response as object),
               replayed: true,
@@ -1327,6 +1351,19 @@ export const startSuiteServer = async (
             preview.consumedAt !== null ||
             Date.parse(preview.expiresAt) <= Date.now()
           ) {
+            database.appendAutomationAudit({
+              id: randomUUID(),
+              ownerId: token.ownerId,
+              tokenId: token.id,
+              operation: preview.operation,
+              phase: "confirm",
+              outcome: "denied",
+              errorCode: "AUTOMATION_CONFIRMATION_EXPIRED",
+              previewId: preview.id,
+              affectedIds: preview.affectedIds,
+              requestHash,
+              createdAt: new Date().toISOString(),
+            });
             sendError(
               response,
               409,
@@ -1342,6 +1379,19 @@ export const startSuiteServer = async (
               database.getTask(token.ownerId, entityId, true) ??
               database.getActiveSession(token.ownerId);
             if (current?.id !== entityId || current.revision !== revision) {
+              database.appendAutomationAudit({
+                id: randomUUID(),
+                ownerId: token.ownerId,
+                tokenId: token.id,
+                operation: preview.operation,
+                phase: "confirm",
+                outcome: "denied",
+                errorCode: "AUTOMATION_PREVIEW_STALE",
+                previewId: preview.id,
+                affectedIds: preview.affectedIds,
+                requestHash,
+                createdAt: new Date().toISOString(),
+              });
               sendError(
                 response,
                 412,

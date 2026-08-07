@@ -1,5 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, lstat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { automationTokenSecretSchema } from "@suite/contracts";
 
 export interface AdapterConfig {
   readonly baseUrl: URL;
@@ -57,8 +58,12 @@ export const parseConfigArguments = (
 };
 
 const readOwnerOnlyToken = async (tokenFile: string): Promise<string> => {
-  const metadata = await stat(tokenFile);
-  if (!metadata.isFile() || (metadata.mode & 0o777) !== 0o600) {
+  const metadata = await lstat(tokenFile);
+  if (
+    metadata.isSymbolicLink() ||
+    !metadata.isFile() ||
+    (metadata.mode & 0o777) !== 0o600
+  ) {
     throw new Error("Token file must be a regular owner-only (0600) file");
   }
   const uid = process.getuid?.();
@@ -66,7 +71,7 @@ const readOwnerOnlyToken = async (tokenFile: string): Promise<string> => {
     throw new Error("Token file must be owned by the current user");
   }
   const token = (await readFile(tokenFile, "utf8")).trim();
-  if (!/^[A-Za-z0-9._~-]{32,512}$/.test(token)) {
+  if (!automationTokenSecretSchema.safeParse(token).success) {
     throw new Error(
       "Token file does not contain a valid automation credential",
     );

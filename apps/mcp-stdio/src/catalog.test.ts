@@ -21,5 +21,12 @@ describe("shared automation catalog mapping", () => {
       method: "POST",
       path: "/api/automation/v1/previews/{previewId}/confirm",
     });
+    const taskCreateSchema = JSON.stringify(
+      catalog.tools.find((tool) => tool.name === "suite.tasks.create")
+        ?.inputSchema,
+    );
+    expect(taskCreateSchema).toContain("tasks.create");
+    expect(taskCreateSchema).not.toContain("focus.start");
+    expect(taskCreateSchema).not.toContain("schedule.create_time_block");
   });
 });

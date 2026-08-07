@@ -772,6 +772,37 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
   ],
 );
 
+const automationToolInputSchema = (
+  operation: z.infer<typeof automationOperationSchema>,
+): z.ZodType => {
+  if (operation === "tasks.create")
+    return z.object({
+      operation: z.literal("tasks.create"),
+      input: createTaskRequestSchema,
+    });
+  if (operation === "schedule.create_time_block")
+    return z.object({
+      operation: z.literal("schedule.create_time_block"),
+      input: z
+        .object({ taskId: entityIdSchema })
+        .extend(createTaskTimeBlockRequestSchema.shape),
+    });
+  if (operation === "focus.start")
+    return z.object({
+      operation: z.literal("focus.start"),
+      input: z.object({
+        operation: z.literal("focus.start"),
+        taskId: entityIdSchema,
+      }),
+    });
+  return z.object({
+    operation: z.literal(operation),
+    input: automationSessionCommandBaseSchema.extend({
+      operation: z.literal(operation),
+    }),
+  });
+};
+
 export const automationAffectedEntitySchema = z
   .object({
     entityKind: z.enum(["task", "calendar", "active_session"]),
@@ -813,9 +844,9 @@ export const automationConfirmToolInputSchema = z
   .strict();
 
 export const automationExecutionResultSchema = z.union([
-  taskMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
+  taskMutationResponseSchema,
 ]);
 
 export const automationConfirmationResponseSchema = z
@@ -924,7 +955,7 @@ export const automationCatalog = [
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
     mcpName: `suite.${id}`,
-    inputSchema: automationPreviewCommandSchema,
+    inputSchema: automationToolInputSchema(id),
     outputSchema: automationPreviewResponseSchema,
   })),
   {

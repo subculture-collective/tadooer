@@ -1901,7 +1901,8 @@ export class SuiteDatabase {
   listSyncClients(ownerId: string): readonly SyncClientRecord[] {
     const rows = this.#database
       .prepare(
-        `SELECT * FROM client_identities WHERE owner_id = ? AND credential_hash IS NOT NULL ORDER BY created_at, id`,
+        `SELECT * FROM client_identities WHERE owner_id = ? AND credential_hash IS NOT NULL
+         AND label NOT LIKE 'automation:%' ORDER BY created_at, id`,
       )
       .all(ownerId) as unknown as readonly Record<string, string | null>[];
     return rows.map((row) => ({
@@ -1945,6 +1946,34 @@ export class SuiteDatabase {
       );
   }
 
+  createAutomationTokenWithController(
+    record: AutomationTokenRecord,
+    controllerCredentialHash: string,
+  ): void {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.createAutomationToken(record);
+      this.#database
+        .prepare(
+          `INSERT INTO client_identities
+            (id,owner_id,label,credential_hash,created_at,last_seen_at,revoked_at)
+           VALUES (?,?,?,?,?,?,NULL)`,
+        )
+        .run(
+          record.id,
+          record.ownerId,
+          `automation:${record.label}`,
+          controllerCredentialHash,
+          record.createdAt,
+          record.createdAt,
+        );
+      this.#database.exec("COMMIT;");
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   listAutomationTokens(ownerId: string): readonly AutomationTokenRecord[] {
     const rows = this.#database
       .prepare(
@@ -1978,13 +2007,66 @@ export class SuiteDatabase {
     tokenId: string,
     now: string,
   ): boolean {
-    return (
-      this.#database
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const revoked = this.#database
         .prepare(
           "UPDATE automation_tokens SET revoked_at=? WHERE owner_id=? AND id=? AND revoked_at IS NULL",
         )
-        .run(now, ownerId, tokenId).changes === 1
-    );
+        .run(now, ownerId, tokenId).changes;
+      if (revoked !== 1) {
+        this.#database.exec("ROLLBACK;");
+        return false;
+      }
+      this.#database
+        .prepare(
+          "UPDATE client_identities SET revoked_at=? WHERE owner_id=? AND id=? AND revoked_at IS NULL",
+        )
+        .run(now, ownerId, tokenId);
+      const active = this.#database
+        .prepare(
+          `SELECT id,revision FROM active_sessions
+           WHERE owner_id=? AND controller_client_id=? AND ended_at IS NULL`,
+        )
+        .get(ownerId, tokenId) as unknown as
+        { readonly id: string; readonly revision: number } | undefined;
+      if (active !== undefined) {
+        const revision = active.revision + 1;
+        this.#database
+          .prepare(
+            `UPDATE active_session_intervals SET ended_at=?,closed_by='expiry'
+             WHERE session_id=? AND ended_at IS NULL`,
+          )
+          .run(now, active.id);
+        this.#database
+          .prepare(
+            `UPDATE active_sessions SET controller_client_id=NULL,state='expired',
+             revision=?,lease_expires_at=NULL,hard_expires_at=NULL,updated_at=?,ended_at=?
+             WHERE id=? AND revision=?`,
+          )
+          .run(revision, now, now, active.id, active.revision);
+        this.#database
+          .prepare(
+            `INSERT INTO active_session_events
+              (id,session_id,kind,revision,actor_client_id,created_at)
+             VALUES (?,?,'automation-revoked',?,NULL,?)`,
+          )
+          .run(randomUUID(), active.id, revision, now);
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "active_session",
+          active.id,
+          "upsert",
+          revision,
+          now,
+        );
+      }
+      this.#database.exec("COMMIT;");
+      return true;
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   createAutomationPreview(record: AutomationPreviewRecord): void {

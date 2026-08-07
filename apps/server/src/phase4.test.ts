@@ -11,8 +11,86 @@ import {
   taskMutationResponseSchema,
 } from "@suite/contracts";
 import { withTemporaryDirectory } from "@suite/test-support";
+import { SuiteDatabase } from "@suite/persistence";
 import type { ServerConfig } from "./config.ts";
 import { startSuiteServer, type RunningSuiteServer } from "./server.ts";
+
+const davMultiStatus = (body: string): string =>
+  `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">${body}</D:multistatus>`;
+
+const automationCalDav = () => {
+  const resources = new Map<string, { rawIcs: string; etag: string }>();
+  let failNextPutAfterCommit = false;
+  const fetcher: typeof fetch = async (input, init) => {
+    await Promise.resolve();
+    const url =
+      input instanceof URL
+        ? input
+        : new URL(typeof input === "string" ? input : input.url);
+    const method = init?.method ?? "GET";
+    if (method === "PROPFIND" && url.pathname === "/dav.php/")
+      return new Response(
+        davMultiStatus(
+          `<D:response><D:href>/dav.php/</D:href><D:propstat><D:prop><D:current-user-principal><D:href>/dav.php/principals/alice/</D:href></D:current-user-principal></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`,
+        ),
+        { status: 207, headers: { "content-type": "application/xml" } },
+      );
+    if (method === "PROPFIND" && url.pathname === "/dav.php/principals/alice/")
+      return new Response(
+        davMultiStatus(
+          `<D:response><D:href>/dav.php/principals/alice/</D:href><D:propstat><D:prop><C:calendar-home-set><D:href>/dav.php/calendars/alice/</D:href></C:calendar-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`,
+        ),
+        { status: 207, headers: { "content-type": "application/xml" } },
+      );
+    if (method === "PROPFIND" && url.pathname === "/dav.php/calendars/alice/")
+      return new Response(
+        davMultiStatus(
+          `<D:response><D:href>/dav.php/calendars/alice/work/</D:href><D:propstat><D:prop><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:displayname>Work</D:displayname><C:supported-calendar-component-set><C:comp name="VEVENT"/></C:supported-calendar-component-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`,
+        ),
+        { status: 207, headers: { "content-type": "application/xml" } },
+      );
+    if (method === "REPORT") {
+      const body = [...resources.entries()]
+        .map(
+          ([href, resource]) =>
+            `<D:response><D:href>${href}</D:href><D:propstat><D:prop><D:getetag>${resource.etag}</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`,
+        )
+        .join("");
+      return new Response(davMultiStatus(body), {
+        status: 207,
+        headers: { "content-type": "application/xml" },
+      });
+    }
+    if (method === "GET") {
+      const resource = resources.get(url.pathname);
+      return resource === undefined
+        ? new Response("", { status: 404 })
+        : new Response(resource.rawIcs, {
+            status: 200,
+            headers: { etag: resource.etag, "content-type": "text/calendar" },
+          });
+    }
+    if (method === "PUT") {
+      resources.set(url.pathname, {
+        rawIcs: typeof init?.body === "string" ? init.body : "",
+        etag: '"automation-1"',
+      });
+      if (failNextPutAfterCommit) {
+        failNextPutAfterCommit = false;
+        throw new Error("synthetic response loss after commit");
+      }
+      return new Response(null, { status: 204 });
+    }
+    return new Response("", { status: 404 });
+  };
+  return {
+    fetcher,
+    resources,
+    failNextPut: () => {
+      failNextPutAfterCommit = true;
+    },
+  };
+};
 
 const configuration = (directory: string): ServerConfig => ({
   host: "127.0.0.1",
@@ -30,7 +108,7 @@ const browserRequest = (
   cookie: string,
   csrfToken: string,
   path: string,
-  method: "POST" | "DELETE",
+  method: "POST" | "PUT" | "DELETE",
   body?: unknown,
 ): Promise<Response> =>
   fetch(`${server.baseUrl}${path}`, {
@@ -66,7 +144,10 @@ describe("Phase 4 automation HTTP integration", () => {
       await mkdir(join(directory, "web"));
       await writeFile(join(directory, "web", "index.html"), "<h1>Suite</h1>");
       const config = configuration(directory);
-      let server = await startSuiteServer(config);
+      const caldav = automationCalDav();
+      let server = await startSuiteServer(config, {
+        connectorFetch: caldav.fetcher,
+      });
       try {
         const setup = await fetch(`${server.baseUrl}/api/setup`, {
           method: "POST",
@@ -96,6 +177,20 @@ describe("Phase 4 automation HTTP integration", () => {
         const cookie = login.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
         const session = (await login.json()) as { csrfToken: string };
 
+        const connected = await browserRequest(
+          server,
+          cookie,
+          session.csrfToken,
+          "/api/connectors/baikal",
+          "PUT",
+          { username: "alice", password: "calendar password" },
+        );
+        expect(connected.status).toBe(200);
+        const calendarId = (
+          (await connected.json()) as { calendars: { id: string }[] }
+        ).calendars[0]?.id;
+        expect(calendarId).toBeTypeOf("string");
+
         const issued = await browserRequest(
           server,
           cookie,
@@ -104,7 +199,14 @@ describe("Phase 4 automation HTTP integration", () => {
           "POST",
           {
             label: "Phase 4 integration",
-            scopes: ["tasks:read", "tasks:write", "focus:read", "focus:write"],
+            scopes: [
+              "tasks:read",
+              "tasks:write",
+              "schedule:read",
+              "schedule:write",
+              "focus:read",
+              "focus:write",
+            ],
             expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           },
         );
@@ -207,7 +309,9 @@ describe("Phase 4 automation HTTP integration", () => {
         );
 
         await server.close();
-        server = await startSuiteServer(config);
+        server = await startSuiteServer(config, {
+          connectorFetch: caldav.fetcher,
+        });
         const replay = await automationRequest(
           server,
           credential.token,
@@ -240,6 +344,57 @@ describe("Phase 4 automation HTTP integration", () => {
             title: "Created by confirmed automation",
           }),
         ]);
+
+        if (calendarId === undefined)
+          throw new Error("Calendar was not discovered");
+        const schedulePreviewResponse = await automationRequest(
+          server,
+          credential.token,
+          "/api/automation/v1/previews",
+          "POST",
+          {
+            operation: "schedule.create_time_block",
+            input: {
+              taskId: firstTask.id,
+              calendarId,
+              startsAt: "2026-08-08T15:00:00.000Z",
+              durationMinutes: 30,
+            },
+          },
+        );
+        expect(schedulePreviewResponse.status).toBe(201);
+        const schedulePreview = automationPreviewResponseSchema.parse(
+          await schedulePreviewResponse.json(),
+        ).preview;
+        caldav.failNextPut();
+        const uncertainSchedule = await automationRequest(
+          server,
+          credential.token,
+          `/api/automation/v1/previews/${schedulePreview.id}/confirm`,
+          "POST",
+          { idempotencyKey: "phase4-schedule-001" },
+        );
+        expect(uncertainSchedule.status).toBe(409);
+        expect(caldav.resources.size).toBe(1);
+        await server.close();
+        server = await startSuiteServer(config, {
+          connectorFetch: caldav.fetcher,
+        });
+        const reconciledSchedule = await automationRequest(
+          server,
+          credential.token,
+          `/api/automation/v1/previews/${schedulePreview.id}/confirm`,
+          "POST",
+          { idempotencyKey: "phase4-schedule-001" },
+        );
+        expect(reconciledSchedule.status).toBe(200);
+        const reconciledBody: unknown = await reconciledSchedule.json();
+        expect(reconciledBody).toMatchObject({
+          operation: "schedule.create_time_block",
+          result: { mapping: { taskId: firstTask.id }, replayed: true },
+        });
+        automationConfirmationResponseSchema.parse(reconciledBody);
+        expect(caldav.resources.size).toBe(1);
 
         const focusPreviewResponse = await automationRequest(
           server,
@@ -279,6 +434,18 @@ describe("Phase 4 automation HTTP integration", () => {
           "DELETE",
         );
         expect(revoked.status).toBe(204);
+        await server.close();
+        const persisted = SuiteDatabase.open(config.databasePath);
+        expect(
+          persisted.getActiveSession(credential.record.ownerId),
+        ).toMatchObject({
+          state: "expired",
+          controllerClientId: null,
+        });
+        persisted.close();
+        server = await startSuiteServer(config, {
+          connectorFetch: caldav.fetcher,
+        });
         const denied = await automationRequest(
           server,
           credential.token,

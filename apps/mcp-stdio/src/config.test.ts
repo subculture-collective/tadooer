@@ -8,7 +8,7 @@ import {
   parseConfigArguments,
 } from "./config.ts";
 
-const validToken = "a".repeat(43);
+const validToken = `suite_at_00000000-0000-4000-8000-000000000001.${"a".repeat(43)}`;
 
 describe("MCP stdio adapter configuration", () => {
   it("requires exactly one Suite URL and one token file", () => {

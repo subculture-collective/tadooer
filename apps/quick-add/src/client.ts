@@ -1,5 +1,6 @@
 import {
   automationConfirmationResponseSchema,
+  automationCatalog,
   automationPreviewResponseSchema,
   type AutomationConfirmationResponse,
 } from "@suite/contracts";
@@ -9,6 +10,15 @@ export type FetchLike = (
   input: string,
   init: RequestInit,
 ) => Promise<Pick<Response, "ok" | "status" | "json">>;
+
+const taskPreviewPath = automationCatalog.find(
+  ({ id }) => id === "tasks.create",
+)?.apiPath;
+const confirmPath = automationCatalog.find(
+  ({ id }) => id === "automation.confirm",
+)?.apiPath;
+if (taskPreviewPath === undefined || confirmPath === undefined)
+  throw new Error("Suite automation catalog is missing quick-add operations");
 
 const errorFor = async (
   response: Pick<Response, "status" | "json">,
@@ -46,17 +56,14 @@ export const submitQuickAdd = async (
   token: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationConfirmationResponse> => {
-  const preview = await fetchImpl(
-    `${config.baseUrl}/api/automation/v1/previews`,
-    {
-      method: "POST",
-      headers: requestHeaders(token),
-      body: JSON.stringify({
-        operation: "tasks.create",
-        input: { title: config.title, notes: config.notes },
-      }),
-    },
-  );
+  const preview = await fetchImpl(`${config.baseUrl}${taskPreviewPath}`, {
+    method: "POST",
+    headers: requestHeaders(token),
+    body: JSON.stringify({
+      operation: "tasks.create",
+      input: { title: config.title, notes: config.notes },
+    }),
+  });
   if (!preview.ok) throw await errorFor(preview);
   const previewBody = automationPreviewResponseSchema.safeParse(
     await preview.json(),
@@ -67,7 +74,7 @@ export const submitQuickAdd = async (
     );
 
   const confirmation = await fetchImpl(
-    `${config.baseUrl}/api/automation/v1/previews/${encodeURIComponent(previewBody.data.preview.id)}/confirm`,
+    `${config.baseUrl}${confirmPath.replace("{previewId}", encodeURIComponent(previewBody.data.preview.id))}`,
     {
       method: "POST",
       headers: requestHeaders(token),
