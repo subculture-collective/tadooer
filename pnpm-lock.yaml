@@ -144,6 +144,8 @@ importers:
 
   packages/domain: {}
 
+  packages/google-calendar: {}
+
   packages/import-export: {}
 
   packages/persistence:
