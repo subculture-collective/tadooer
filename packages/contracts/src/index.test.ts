@@ -487,7 +487,7 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(15);
+    expect(automationCatalog).toHaveLength(19);
     for (const entry of automationCatalog) {
       expect(entry.apiPath).toMatch(/^\/api\/automation\/v1\//);
       expect(entry.mcpName.startsWith("suite.")).toBe(true);

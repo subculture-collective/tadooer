@@ -279,6 +279,23 @@ export interface SubtaskRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+export interface TaskTemplateRecord {
+  readonly id: string; readonly ownerId: string; readonly title: string; readonly notes: string;
+  readonly estimateMinutes: number | null; readonly suggestedProjectId: string | null;
+  readonly tagIds: readonly string[]; readonly revision: number; readonly createdAt: string;
+  readonly updatedAt: string; readonly archivedAt: string | null;
+}
+export interface TemplateSubtaskBlueprintRecord {
+  readonly id: string; readonly templateId: string; readonly title: string; readonly position: number;
+  readonly revision: number; readonly createdAt: string; readonly updatedAt: string;
+}
+export interface TemplateSetRecord {
+  readonly id: string; readonly ownerId: string; readonly title: string; readonly revision: number;
+  readonly createdAt: string; readonly updatedAt: string; readonly archivedAt: string | null;
+}
+export interface TemplateSetMemberRecord { readonly setId: string; readonly templateId: string; readonly position: number; }
+export interface TaskTemplateProvenanceRecord { readonly taskId: string; readonly templateId: string; readonly templateRevision: number; readonly instantiationId: string; readonly instantiatedAt: string; }
+export interface TemplateInstantiationResult { readonly kind: "created" | "replayed" | "conflict" | "not-found" | "project-not-found"; readonly instantiationId?: string; readonly tasks?: readonly { readonly task: TaskRecord; readonly subtasks: readonly SubtaskRecord[]; readonly provenance: TaskTemplateProvenanceRecord }[]; }
 export interface SyncChangeRecord {
   readonly ownerId: string;
   readonly epoch: string;
@@ -655,6 +672,53 @@ const migrations: readonly Migration[] = [
         request_hash TEXT, created_at TEXT NOT NULL
       ) STRICT;
       CREATE INDEX automation_audit_by_owner ON automation_audit_log(owner_id, created_at, id);
+    `,
+  },
+  {
+    id: "0009_phase_5_reusable_work",
+    sql: `
+      CREATE TABLE task_templates (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 240), notes TEXT NOT NULL CHECK(length(notes) <= 20000),
+        estimate_minutes INTEGER CHECK(estimate_minutes IS NULL OR estimate_minutes BETWEEN 1 AND 720),
+        suggested_project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        revision INTEGER NOT NULL CHECK(revision > 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT
+      ) STRICT;
+      CREATE INDEX task_templates_by_owner ON task_templates(owner_id, archived_at, title COLLATE NOCASE, id);
+      CREATE TABLE task_template_tags (
+        template_id TEXT NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
+        tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT, PRIMARY KEY(template_id, tag_id)
+      ) STRICT;
+      CREATE TABLE template_subtask_blueprints (
+        id TEXT PRIMARY KEY, template_id TEXT NOT NULL REFERENCES task_templates(id) ON DELETE CASCADE,
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 240), position INTEGER NOT NULL CHECK(position >= 0),
+        revision INTEGER NOT NULL CHECK(revision > 0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX template_blueprints_by_template ON template_subtask_blueprints(template_id, position, id);
+      CREATE TABLE template_sets (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 240), revision INTEGER NOT NULL CHECK(revision > 0),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT
+      ) STRICT;
+      CREATE TABLE template_set_members (
+        set_id TEXT NOT NULL REFERENCES template_sets(id) ON DELETE CASCADE,
+        template_id TEXT NOT NULL REFERENCES task_templates(id) ON DELETE RESTRICT,
+        position INTEGER NOT NULL CHECK(position >= 0), PRIMARY KEY(set_id, template_id), UNIQUE(set_id, position)
+      ) STRICT;
+      CREATE TABLE template_instantiations (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        source_kind TEXT NOT NULL CHECK(source_kind IN ('template','set')), source_id TEXT NOT NULL,
+        source_revision INTEGER NOT NULL CHECK(source_revision > 0), destination_project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+        idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, snapshot_json TEXT NOT NULL, result_task_ids_json TEXT NOT NULL,
+        created_at TEXT NOT NULL, UNIQUE(owner_id, source_kind, source_id, idempotency_key)
+      ) STRICT;
+      CREATE TABLE task_template_provenance (
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        template_id TEXT NOT NULL REFERENCES task_templates(id) ON DELETE RESTRICT,
+        template_revision INTEGER NOT NULL CHECK(template_revision > 0),
+        instantiation_id TEXT NOT NULL REFERENCES template_instantiations(id) ON DELETE RESTRICT,
+        instantiated_at TEXT NOT NULL
+      ) STRICT;
     `,
   },
 ];
@@ -2464,17 +2528,24 @@ export class SuiteDatabase {
     readonly projects: readonly ProjectRecord[];
     readonly tags: readonly TagRecord[];
     readonly subtasks: readonly SubtaskRecord[];
+    readonly templates: readonly TaskTemplateRecord[];
+    readonly templateBlueprints: readonly TemplateSubtaskBlueprintRecord[];
+    readonly templateSets: readonly TemplateSetRecord[];
     readonly cursor: { readonly epoch: string; readonly cursor: number };
   } {
     const tasks = this.listTasks(ownerId);
     const subtasks = tasks.flatMap((task) =>
       this.listSubtasks(ownerId, task.id),
     );
+    const templates = this.listTaskTemplates(ownerId, "", true);
     return {
       tasks,
       projects: this.listProjects(ownerId),
       tags: this.listTags(ownerId),
       subtasks,
+      templates,
+      templateBlueprints: templates.flatMap((template) => this.listTemplateSubtaskBlueprints(template.id)),
+      templateSets: this.listTemplateSets(ownerId, true),
       cursor: this.getSyncState(ownerId),
     };
   }
@@ -2795,6 +2866,70 @@ export class SuiteDatabase {
         .run(ownerId, id, expectedRevision).changes === 1
     );
   }
+
+  createTaskTemplate(input: Omit<TaskTemplateRecord, "tagIds"> & { readonly tagIds: readonly string[]; readonly blueprints: readonly Omit<TemplateSubtaskBlueprintRecord, "templateId">[] }): TaskTemplateRecord {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (input.suggestedProjectId !== null && this.#database.prepare("SELECT 1 FROM projects WHERE id=? AND owner_id=? AND archived_at IS NULL").get(input.suggestedProjectId,input.ownerId) === undefined) throw new Error("Template suggested project is not an active owner project");
+      if (new Set(input.tagIds).size !== input.tagIds.length || (this.#database.prepare(`SELECT count(*) AS count FROM tags WHERE owner_id=? AND archived_at IS NULL AND id IN (${input.tagIds.map(() => "?").join(",") || "NULL"})`).get(input.ownerId,...input.tagIds) as unknown as {count:number}).count !== input.tagIds.length) throw new Error("Template tags are not active owner tags");
+      this.#database.prepare("INSERT INTO task_templates (id,owner_id,title,notes,estimate_minutes,suggested_project_id,revision,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run(input.id,input.ownerId,input.title,input.notes,input.estimateMinutes,input.suggestedProjectId,input.revision,input.createdAt,input.updatedAt,input.archivedAt);
+      const tag = this.#database.prepare("INSERT INTO task_template_tags (template_id,tag_id) VALUES (?,?)");
+      for (const tagId of input.tagIds) tag.run(input.id,tagId);
+      const blueprint = this.#database.prepare("INSERT INTO template_subtask_blueprints (id,template_id,title,position,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?)");
+      for (const item of input.blueprints) blueprint.run(item.id,input.id,item.title,item.position,item.revision,item.createdAt,item.updatedAt);
+      this.#appendSyncChangeInTransaction(input.ownerId,"template",input.id,"upsert",input.revision,input.createdAt);
+      this.#database.exec("COMMIT;");
+      return this.getTaskTemplate(input.ownerId,input.id)!;
+    } catch (error) { this.#database.exec("ROLLBACK;"); throw error; }
+  }
+  getTaskTemplate(ownerId: string, id: string, includeArchived = false): TaskTemplateRecord | undefined {
+    const row = this.#database.prepare("SELECT * FROM task_templates WHERE owner_id=? AND id=? AND (?=1 OR archived_at IS NULL)").get(ownerId,id,includeArchived ? 1 : 0) as unknown as Record<string,string|number|null>|undefined;
+    return row === undefined ? undefined : this.#templateFromRow(row);
+  }
+  listTaskTemplates(ownerId: string, query = "", includeArchived = false): readonly TaskTemplateRecord[] {
+    const search = `%${query.replaceAll("%","\\%").replaceAll("_","\\_")}%`;
+    return (this.#database.prepare("SELECT * FROM task_templates WHERE owner_id=? AND (?=1 OR archived_at IS NULL) AND (title LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\') ORDER BY archived_at IS NOT NULL,title COLLATE NOCASE,id").all(ownerId,includeArchived ? 1 : 0,search,search) as unknown as readonly Record<string,string|number|null>[]).map((row) => this.#templateFromRow(row));
+  }
+  archiveTaskTemplate(ownerId: string, id: string, expectedRevision: number, now: string): TaskTemplateRecord | undefined {
+    const changed = this.#database.prepare("UPDATE task_templates SET archived_at=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=? AND archived_at IS NULL").run(now,now,ownerId,id,expectedRevision).changes;
+    if (changed !== 1) return undefined;
+    const template = this.getTaskTemplate(ownerId,id,true)!;
+    this.appendSyncChange(ownerId,"template",id,"upsert",template.revision,now);
+    return template;
+  }
+  createTaskTemplateFromTask(ownerId:string, taskId:string, template: Omit<TaskTemplateRecord,"tagIds"> & {readonly blueprints: readonly Omit<TemplateSubtaskBlueprintRecord,"templateId">[]}): TaskTemplateRecord | undefined {
+    const task=this.getTask(ownerId,taskId); if(task === undefined) return undefined;
+    return this.createTaskTemplate({...template,title:task.title,notes:task.notes,estimateMinutes:task.estimateMinutes,suggestedProjectId:task.projectId ?? null,tagIds:task.tagIds ?? []});
+  }
+  updateTaskTemplate(input: { readonly ownerId:string; readonly id:string; readonly expectedRevision:number; readonly title:string; readonly notes:string; readonly estimateMinutes:number|null; readonly suggestedProjectId:string|null; readonly tagIds:readonly string[]; readonly blueprints:readonly Omit<TemplateSubtaskBlueprintRecord,"templateId">[]; readonly now:string }): TaskTemplateRecord | undefined {
+    this.#database.exec("BEGIN IMMEDIATE;"); try {
+      const current=this.getTaskTemplate(input.ownerId,input.id); if(current === undefined || current.revision !== input.expectedRevision) { this.#database.exec("COMMIT;"); return undefined; }
+      if(input.suggestedProjectId !== null && this.#database.prepare("SELECT 1 FROM projects WHERE id=? AND owner_id=? AND archived_at IS NULL").get(input.suggestedProjectId,input.ownerId) === undefined) { this.#database.exec("ROLLBACK;"); return undefined; }
+      if(new Set(input.tagIds).size !== input.tagIds.length || (this.#database.prepare(`SELECT count(*) AS count FROM tags WHERE owner_id=? AND archived_at IS NULL AND id IN (${input.tagIds.map(() => "?").join(",") || "NULL"})`).get(input.ownerId,...input.tagIds) as unknown as {count:number}).count !== input.tagIds.length) { this.#database.exec("ROLLBACK;"); return undefined; }
+      const revision=current.revision+1; this.#database.prepare("UPDATE task_templates SET title=?,notes=?,estimate_minutes=?,suggested_project_id=?,revision=?,updated_at=? WHERE id=?").run(input.title,input.notes,input.estimateMinutes,input.suggestedProjectId,revision,input.now,input.id);
+      this.#database.prepare("DELETE FROM task_template_tags WHERE template_id=?").run(input.id); const tag=this.#database.prepare("INSERT INTO task_template_tags (template_id,tag_id) VALUES (?,?)"); for(const tagId of input.tagIds) tag.run(input.id,tagId);
+      this.#database.prepare("DELETE FROM template_subtask_blueprints WHERE template_id=?").run(input.id); const blueprint=this.#database.prepare("INSERT INTO template_subtask_blueprints (id,template_id,title,position,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?)"); for(const item of input.blueprints) blueprint.run(item.id,input.id,item.title,item.position,item.revision,item.createdAt,item.updatedAt);
+      this.#appendSyncChangeInTransaction(input.ownerId,"template",input.id,"upsert",revision,input.now); this.#database.exec("COMMIT;"); return this.getTaskTemplate(input.ownerId,input.id)!;
+    } catch(error) { this.#database.exec("ROLLBACK;"); throw error; }
+  }
+  getTaskTemplateProvenance(ownerId:string,taskId:string): TaskTemplateProvenanceRecord | undefined { const row=this.#database.prepare("SELECT p.* FROM task_template_provenance p JOIN tasks t ON t.id=p.task_id WHERE p.task_id=? AND t.owner_id=?").get(taskId,ownerId) as unknown as Record<string,string|number>|undefined; return row === undefined ? undefined : {taskId:String(row.task_id),templateId:String(row.template_id),templateRevision:Number(row.template_revision),instantiationId:String(row.instantiation_id),instantiatedAt:String(row.instantiated_at)}; }
+  listTemplateSubtaskBlueprints(templateId: string): readonly TemplateSubtaskBlueprintRecord[] {
+    return (this.#database.prepare("SELECT * FROM template_subtask_blueprints WHERE template_id=? ORDER BY position,id").all(templateId) as unknown as readonly Record<string,string|number>[]).map((row) => ({ id:String(row.id),templateId:String(row.template_id),title:String(row.title),position:Number(row.position),revision:Number(row.revision),createdAt:String(row.created_at),updatedAt:String(row.updated_at) }));
+  }
+  createTemplateSet(record: TemplateSetRecord, members: readonly TemplateSetMemberRecord[]): void {
+    this.#database.exec("BEGIN IMMEDIATE;"); try {
+      if (members.length === 0 || new Set(members.map((member) => member.templateId)).size !== members.length || new Set(members.map((member) => member.position)).size !== members.length) throw new Error("Template set members must be nonempty and uniquely ordered");
+      for (const member of members) if (this.getTaskTemplate(record.ownerId,member.templateId) === undefined) throw new Error("Template set member is not an active owner template");
+      this.#database.prepare("INSERT INTO template_sets (id,owner_id,title,revision,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?)").run(record.id,record.ownerId,record.title,record.revision,record.createdAt,record.updatedAt,record.archivedAt);
+      const insert = this.#database.prepare("INSERT INTO template_set_members (set_id,template_id,position) VALUES (?,?,?)"); for (const member of members) insert.run(record.id,member.templateId,member.position);
+      this.#appendSyncChangeInTransaction(record.ownerId,"template_set",record.id,"upsert",record.revision,record.createdAt); this.#database.exec("COMMIT;");
+    } catch(error) { this.#database.exec("ROLLBACK;"); throw error; }
+  }
+  listTemplateSets(ownerId: string, includeArchived = false): readonly TemplateSetRecord[] { return (this.#database.prepare("SELECT * FROM template_sets WHERE owner_id=? AND (?=1 OR archived_at IS NULL) ORDER BY archived_at IS NOT NULL,title COLLATE NOCASE,id").all(ownerId,includeArchived ? 1 : 0) as unknown as readonly Record<string,string|number|null>[]).map((row) => ({id:String(row.id),ownerId:String(row.owner_id),title:String(row.title),revision:Number(row.revision),createdAt:String(row.created_at),updatedAt:String(row.updated_at),archivedAt:row.archived_at === null ? null : String(row.archived_at)})); }
+  archiveTemplateSet(ownerId:string,id:string,expectedRevision:number,now:string): TemplateSetRecord | undefined { const changed=this.#database.prepare("UPDATE template_sets SET archived_at=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=? AND archived_at IS NULL").run(now,now,ownerId,id,expectedRevision).changes; if(changed !== 1) return undefined; const set=this.listTemplateSets(ownerId,true).find((value) => value.id === id)!; this.appendSyncChange(ownerId,"template_set",id,"upsert",set.revision,now); return set; }
+  listTemplateSetMembers(setId: string): readonly TemplateSetMemberRecord[] { return (this.#database.prepare("SELECT * FROM template_set_members WHERE set_id=? ORDER BY position,template_id").all(setId) as unknown as readonly Record<string,string|number>[]).map((row) => ({setId:String(row.set_id),templateId:String(row.template_id),position:Number(row.position)})); }
+  instantiateTemplateIdempotently(input: { readonly ownerId:string; readonly templateId:string; readonly destinationProjectId:string; readonly idempotencyKey:string; readonly requestHash:string; readonly now:string }): TemplateInstantiationResult { return this.#instantiateTemplates({ ...input, sourceKind:"template", sourceId:input.templateId }); }
+  instantiateTemplateSetIdempotently(input: { readonly ownerId:string; readonly setId:string; readonly destinationProjectId:string; readonly idempotencyKey:string; readonly requestHash:string; readonly now:string }): TemplateInstantiationResult { return this.#instantiateTemplates({ ...input, sourceKind:"set", sourceId:input.setId }); }
 
   putActiveSession(record: ActiveSessionRecord): void {
     this.#database
@@ -3618,6 +3753,46 @@ export class SuiteDatabase {
       Record<string, string | number | null> | undefined;
     return row === undefined ? undefined : this.#projectFromRow(row);
   }
+  #templateFromRow(row: Record<string,string|number|null>): TaskTemplateRecord {
+    const id = String(row.id);
+    const tags = this.#database.prepare("SELECT tag_id FROM task_template_tags WHERE template_id=? ORDER BY tag_id").all(id) as unknown as readonly {tag_id:string}[];
+    return { id,ownerId:String(row.owner_id),title:String(row.title),notes:String(row.notes),estimateMinutes:row.estimate_minutes === null ? null : Number(row.estimate_minutes),suggestedProjectId:row.suggested_project_id === null ? null : String(row.suggested_project_id),tagIds:tags.map((tag) => tag.tag_id),revision:Number(row.revision),createdAt:String(row.created_at),updatedAt:String(row.updated_at),archivedAt:row.archived_at === null ? null : String(row.archived_at) };
+  }
+  #instantiateTemplates(input: { readonly ownerId:string; readonly sourceKind:"template"|"set"; readonly sourceId:string; readonly destinationProjectId:string; readonly idempotencyKey:string; readonly requestHash:string; readonly now:string }): TemplateInstantiationResult {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const prior = this.#database.prepare("SELECT * FROM template_instantiations WHERE owner_id=? AND source_kind=? AND source_id=? AND idempotency_key=?").get(input.ownerId,input.sourceKind,input.sourceId,input.idempotencyKey) as unknown as Record<string,string|number>|undefined;
+      if (prior !== undefined) {
+        this.#database.exec("COMMIT;");
+        if (String(prior.request_hash) !== input.requestHash) return {kind:"conflict"};
+        const instantiationId = String(prior.id); const taskIds = JSON.parse(String(prior.result_task_ids_json)) as string[];
+        return {kind:"replayed",instantiationId,tasks:this.#instantiationTrees(input.ownerId,instantiationId,taskIds)};
+      }
+      if (this.#database.prepare("SELECT 1 FROM projects WHERE owner_id=? AND id=? AND archived_at IS NULL").get(input.ownerId,input.destinationProjectId) === undefined) { this.#database.exec("COMMIT;"); return {kind:"project-not-found"}; }
+      const source = input.sourceKind === "template" ? this.getTaskTemplate(input.ownerId,input.sourceId) : undefined;
+      const set = input.sourceKind === "set" ? (this.listTemplateSets(input.ownerId).find((candidate) => candidate.id === input.sourceId)) : undefined;
+      if (source === undefined && set === undefined) { this.#database.exec("COMMIT;"); return {kind:"not-found"}; }
+      const members = source === undefined ? this.listTemplateSetMembers(input.sourceId) : [];
+      const templates = source === undefined ? members.map((member) => this.getTaskTemplate(input.ownerId,member.templateId)) : [source];
+      if (templates.length === 0 || templates.some((template) => template === undefined)) { this.#database.exec("COMMIT;"); return {kind:"not-found"}; }
+      const resolvedTemplates = templates as TaskTemplateRecord[];
+      const sourceRevision = source?.revision ?? set!.revision; const instantiationId = randomUUID();
+      const snapshot = resolvedTemplates.map((template) => ({...template, blueprints:this.listTemplateSubtaskBlueprints(template.id)}));
+      this.#database.prepare("INSERT INTO template_instantiations (id,owner_id,source_kind,source_id,source_revision,destination_project_id,idempotency_key,request_hash,snapshot_json,result_task_ids_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").run(instantiationId,input.ownerId,input.sourceKind,input.sourceId,sourceRevision,input.destinationProjectId,input.idempotencyKey,input.requestHash,JSON.stringify(snapshot),"[]",input.now);
+      const taskIds: string[] = []; const insertTask = this.#database.prepare("INSERT INTO tasks (id,owner_id,title,notes,status,revision,created_at,updated_at,estimate_minutes,project_id) VALUES (?,?,?,?,?,?,?,?,?,?)");
+      const insertField = this.#database.prepare("INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,1)"); const insertTag = this.#database.prepare("INSERT INTO task_tags (task_id,tag_id) VALUES (?,?)"); const insertSubtask = this.#database.prepare("INSERT INTO subtasks (id,owner_id,task_id,title,completed,position,revision,created_at,updated_at) VALUES (?,?,?,?,0,?,?,?,?)"); const insertProvenance = this.#database.prepare("INSERT INTO task_template_provenance (task_id,template_id,template_revision,instantiation_id,instantiated_at) VALUES (?,?,?,?,?)");
+      for (const template of resolvedTemplates) {
+        const taskId = randomUUID(); taskIds.push(taskId); insertTask.run(taskId,input.ownerId,template.title,template.notes,"open",1,input.now,input.now,template.estimateMinutes,input.destinationProjectId);
+        for (const field of ["title","notes","status","estimateMinutes","projectId","tagIds"]) insertField.run(taskId,field);
+        for (const tagId of template.tagIds) insertTag.run(taskId,tagId);
+        for (const blueprint of this.listTemplateSubtaskBlueprints(template.id)) { const subtaskId=randomUUID(); insertSubtask.run(subtaskId,input.ownerId,taskId,blueprint.title,blueprint.position,1,input.now,input.now); this.#appendSyncChangeInTransaction(input.ownerId,"subtask",subtaskId,"upsert",1,input.now); }
+        insertProvenance.run(taskId,template.id,template.revision,instantiationId,input.now); this.#appendSyncChangeInTransaction(input.ownerId,"task",taskId,"upsert",1,input.now);
+      }
+      this.#database.prepare("UPDATE template_instantiations SET result_task_ids_json=? WHERE id=?").run(JSON.stringify(taskIds),instantiationId);
+      this.#database.exec("COMMIT;"); return {kind:"created",instantiationId,tasks:this.#instantiationTrees(input.ownerId,instantiationId,taskIds)};
+    } catch(error) { this.#database.exec("ROLLBACK;"); throw error; }
+  }
+  #instantiationTrees(ownerId:string, instantiationId:string, taskIds:readonly string[]): readonly {readonly task:TaskRecord; readonly subtasks:readonly SubtaskRecord[]; readonly provenance:TaskTemplateProvenanceRecord}[] { return taskIds.map((taskId) => { const task=this.getTask(ownerId,taskId)!; const row=this.#database.prepare("SELECT * FROM task_template_provenance WHERE task_id=?").get(taskId) as unknown as Record<string,string|number>; return {task,subtasks:this.listSubtasks(ownerId,taskId),provenance:{taskId,templateId:String(row.template_id),templateRevision:Number(row.template_revision),instantiationId,instantiatedAt:String(row.instantiated_at)}}; }); }
   #projectFromRow(row: Record<string, string | number | null>): ProjectRecord {
     return {
       id: String(row.id),
