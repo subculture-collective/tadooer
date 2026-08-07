@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 7,
-        expectedMigrationCount: 7,
+        appliedMigrationCount: 8,
+        expectedMigrationCount: 8,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(7);
-      expect(reopenedState.expectedMigrationCount).toBe(7);
+      expect(reopenedState.appliedMigrationCount).toBe(8);
+      expect(reopenedState.expectedMigrationCount).toBe(8);
     });
   });
 
@@ -105,6 +105,217 @@ describe("SuiteDatabase", () => {
         "2026-08-05T00:01:00.000Z",
       );
       database.close();
+    });
+  });
+
+  it("persists scoped automation tokens, confirmations, outcomes, and safe audit metadata", async () => {
+    await withTemporaryDirectory((directory) => {
+      const path = join(directory, "suite.sqlite");
+      const database = SuiteDatabase.open(path);
+      database.createOwner({
+        id: "owner-automation",
+        username: "automation-owner",
+        displayName: "Automation Owner",
+        passwordHash: "not-a-real-hash",
+        createdAt: "2026-08-06T00:00:00.000Z",
+      });
+      database.createAutomationToken({
+        id: "automation-token-active",
+        ownerId: "owner-automation",
+        label: "Quick add",
+        secretHash: "secret-digest-active",
+        scopes: ["tasks.write", "tasks.read"],
+        createdAt: "2026-08-06T00:00:00.000Z",
+        lastUsedAt: null,
+        expiresAt: "2026-08-07T00:00:00.000Z",
+        revokedAt: null,
+      });
+      database.createAutomationToken({
+        id: "automation-token-expired",
+        ownerId: "owner-automation",
+        label: "Expired",
+        secretHash: "secret-digest-expired",
+        scopes: ["tasks.read"],
+        createdAt: "2026-08-06T00:00:00.000Z",
+        lastUsedAt: null,
+        expiresAt: "2026-08-06T00:00:00.000Z",
+        revokedAt: null,
+      });
+      expect(database.listAutomationTokens("owner-automation")).toEqual([
+        expect.objectContaining({
+          id: "automation-token-active",
+          scopes: ["tasks.read", "tasks.write"],
+          lastUsedAt: null,
+        }),
+        expect.objectContaining({ id: "automation-token-expired" }),
+      ]);
+      expect(
+        database.authenticateAutomationToken(
+          "automation-token-active",
+          "secret-digest-active",
+          "2026-08-06T00:01:00.000Z",
+        ),
+      ).toMatchObject({
+        id: "automation-token-active",
+        lastUsedAt: "2026-08-06T00:01:00.000Z",
+      });
+      expect(
+        database.authenticateAutomationToken(
+          "automation-token-expired",
+          "secret-digest-expired",
+          "2026-08-06T00:01:00.000Z",
+        ),
+      ).toBeUndefined();
+      expect(
+        database.authenticateAutomationToken(
+          "automation-token-active",
+          "wrong-secret-digest",
+          "2026-08-06T00:01:00.000Z",
+        ),
+      ).toBeUndefined();
+
+      database.createAutomationPreview({
+        id: "preview-current",
+        ownerId: "owner-automation",
+        tokenId: "automation-token-active",
+        operation: "task.create",
+        inputHash: "request-hash",
+        input: { title: "Private task content" },
+        summary: "Create one task",
+        affectedIds: ["task-1"],
+        baseRevisions: { "task-1": 3 },
+        expiresAt: "2026-08-06T00:05:00.000Z",
+        consumedAt: null,
+        createdAt: "2026-08-06T00:01:00.000Z",
+      });
+      database.createAutomationPreview({
+        id: "preview-expired",
+        ownerId: "owner-automation",
+        tokenId: "automation-token-active",
+        operation: "task.create",
+        inputHash: "expired-request-hash",
+        input: {},
+        summary: "Expired preview",
+        affectedIds: [],
+        baseRevisions: {},
+        expiresAt: "2026-08-06T00:01:00.000Z",
+        consumedAt: null,
+        createdAt: "2026-08-06T00:00:00.000Z",
+      });
+      expect(
+        database.consumeAutomationPreview(
+          "preview-current",
+          "2026-08-06T00:02:00.000Z",
+        ),
+      ).toBe(true);
+      expect(
+        database.consumeAutomationPreview(
+          "preview-current",
+          "2026-08-06T00:02:01.000Z",
+        ),
+      ).toBe(false);
+      expect(
+        database.consumeAutomationPreview(
+          "preview-expired",
+          "2026-08-06T00:02:00.000Z",
+        ),
+      ).toBe(false);
+      expect(database.getAutomationPreview("preview-current")).toMatchObject({
+        input: { title: "Private task content" },
+        consumedAt: "2026-08-06T00:02:00.000Z",
+      });
+
+      database.putAutomationOutcome({
+        ownerId: "owner-automation",
+        tokenId: "automation-token-active",
+        operation: "task.create",
+        idempotencyKey: "automation-operation-001",
+        requestHash: "request-hash",
+        previewId: "preview-current",
+        response: { taskId: "task-1", replayed: false },
+        createdAt: "2026-08-06T00:02:00.000Z",
+      });
+      database.appendAutomationAudit({
+        id: "audit-1",
+        ownerId: "owner-automation",
+        tokenId: "automation-token-active",
+        operation: "task.create",
+        phase: "execute",
+        outcome: "succeeded",
+        errorCode: null,
+        previewId: "preview-current",
+        affectedIds: ["task-1"],
+        requestHash: "request-hash",
+        createdAt: "2026-08-06T00:02:00.000Z",
+      });
+      database.close();
+
+      const reopened = SuiteDatabase.open(path);
+      expect(
+        reopened.getAutomationOutcome(
+          "owner-automation",
+          "automation-token-active",
+          "task.create",
+          "automation-operation-001",
+        ),
+      ).toEqual({
+        ownerId: "owner-automation",
+        tokenId: "automation-token-active",
+        operation: "task.create",
+        idempotencyKey: "automation-operation-001",
+        requestHash: "request-hash",
+        previewId: "preview-current",
+        response: { taskId: "task-1", replayed: false },
+        createdAt: "2026-08-06T00:02:00.000Z",
+      });
+      const audit = reopened.listAutomationAudit("owner-automation");
+      expect(audit).toEqual([
+        {
+          id: "audit-1",
+          ownerId: "owner-automation",
+          tokenId: "automation-token-active",
+          operation: "task.create",
+          phase: "execute",
+          outcome: "succeeded",
+          errorCode: null,
+          previewId: "preview-current",
+          affectedIds: ["task-1"],
+          requestHash: "request-hash",
+          createdAt: "2026-08-06T00:02:00.000Z",
+        },
+      ]);
+      expect(JSON.stringify(audit)).not.toContain("Private task content");
+      expect(JSON.stringify(audit)).not.toContain("secret-digest-active");
+      expect(reopened.listAutomationAudit("owner-other")).toEqual([]);
+      expect(
+        reopened.revokeAutomationToken(
+          "owner-other",
+          "automation-token-active",
+          "2026-08-06T00:03:00.000Z",
+        ),
+      ).toBe(false);
+      expect(
+        reopened.revokeAutomationToken(
+          "owner-automation",
+          "automation-token-active",
+          "2026-08-06T00:03:00.000Z",
+        ),
+      ).toBe(true);
+      expect(
+        reopened.authenticateAutomationToken(
+          "automation-token-active",
+          "secret-digest-active",
+          "2026-08-06T00:03:01.000Z",
+        ),
+      ).toBeUndefined();
+      expect(
+        reopened.revokeAutomationToken(
+          "owner-automation",
+          "automation-token-active",
+          "2026-08-06T00:03:01.000Z",
+        ),
+      ).toBe(false);
+      reopened.close();
     });
   });
 
