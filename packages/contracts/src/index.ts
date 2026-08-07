@@ -1475,7 +1475,106 @@ export const importTaskCandidateSchema = z.object({
   }),
 });
 
+export const calendarImportSourceSchema = z.enum(["ics", "google_ics"]);
+export const calendarImportIssueSchema = z.object({
+  code: z.enum([
+    "malformed_component",
+    "missing_uid",
+    "duplicate_uid",
+    "recurrence_preserved",
+    "attendees_preserved",
+    "alarms_preserved",
+    "unknown_properties_preserved",
+  ]),
+  detail: z.string().min(1).max(2048),
+});
+export const calendarImportCandidateSchema = z.object({
+  externalId: z.string().min(1).max(1024),
+  uid: z.string().min(1).max(1024),
+  summary: z.string().max(1024),
+  rawIcs: z
+    .string()
+    .min(1)
+    .max(4 * 1024 * 1024),
+  recurrence: z.boolean(),
+  attendeeCount: z.number().int().nonnegative(),
+  alarmCount: z.number().int().nonnegative(),
+  unknownProperties: z.array(z.string()).max(100),
+  issues: z.array(calendarImportIssueSchema),
+});
+export const calendarImportReportSchema = z.object({
+  source: calendarImportSourceSchema,
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  candidates: z.array(calendarImportCandidateSchema).max(10_000),
+  skipped: z.array(calendarImportIssueSchema).max(10_000),
+  totals: z.object({
+    components: z.number().int().nonnegative(),
+    ready: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    recurring: z.number().int().nonnegative(),
+    attendees: z.number().int().nonnegative(),
+    alarms: z.number().int().nonnegative(),
+    unknownProperties: z.number().int().nonnegative(),
+  }),
+});
+export const calendarImportPreviewRequestSchema = z.object({
+  source: calendarImportSourceSchema,
+  calendarId: entityIdSchema,
+  rawIcs: z
+    .string()
+    .min(1)
+    .max(4 * 1024 * 1024),
+});
+export const calendarImportItemSchema = z.object({
+  externalId: z.string(),
+  uid: z.string(),
+  href: z.string(),
+  state: z.enum(["pending", "applied", "reconciliation_required", "skipped"]),
+  appliedAt: z.iso.datetime().nullable(),
+});
+export const calendarImportJobSchema = z.object({
+  id: entityIdSchema,
+  calendarId: entityIdSchema,
+  source: calendarImportSourceSchema,
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  state: z.enum(["previewed", "applied", "partial"]),
+  report: calendarImportReportSchema,
+  items: z.array(calendarImportItemSchema),
+  createdAt: z.iso.datetime(),
+  appliedAt: z.iso.datetime().nullable(),
+});
+export const calendarImportMutationResponseSchema = z.object({
+  job: calendarImportJobSchema,
+  replayed: z.boolean(),
+});
+export const calendarFeedCreateRequestSchema = z.object({
+  calendarId: entityIdSchema,
+  label: z.string().trim().min(1).max(100),
+});
+export const calendarFeedCapabilitySchema = z.object({
+  id: entityIdSchema,
+  calendarId: entityIdSchema,
+  label: z.string(),
+  createdAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+});
+export const calendarFeedCreateResponseSchema = z.object({
+  capability: calendarFeedCapabilitySchema,
+  url: z.string().min(1),
+});
+export const calendarFeedListResponseSchema = z.object({
+  capabilities: z.array(calendarFeedCapabilitySchema),
+});
+
 export type ApiError = z.infer<typeof apiErrorSchema>;
+export type CalendarImportReport = z.infer<typeof calendarImportReportSchema>;
+export type CalendarImportJob = z.infer<typeof calendarImportJobSchema>;
+export type CalendarImportMutationResponse = z.infer<
+  typeof calendarImportMutationResponseSchema
+>;
+export type CalendarFeedCapability = z.infer<
+  typeof calendarFeedCapabilitySchema
+>;
 export type SetupStatusResponse = z.infer<typeof setupStatusResponseSchema>;
 export type OwnerSetupRequest = z.infer<typeof ownerSetupRequestSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;

@@ -108,6 +108,12 @@ describe("App", () => {
     expect(markup).toContain("Estimate minutes");
     expect(markup).toContain("Projects and tags");
     expect(markup).toContain("Sync now");
+    expect(markup).toContain("Migration &amp; read-only publication");
+    expect(markup).toContain("Google Calendar ICS/Takeout");
+    expect(markup).toContain("Create revocable read-only feed");
+    expect(markup).toContain(
+      "/api/calendars/4519c805-e478-486b-a918-616fc6d9ea98/export.ics",
+    );
   });
 
   it("renders a bounded offline task workspace without calendar or focus controls", () => {

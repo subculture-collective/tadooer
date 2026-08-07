@@ -13,6 +13,27 @@
   text-rendering: optimizeLegibility;
 }
 
+.migration-library {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.migration-library textarea,
+.migration-library select {
+  width: 100%;
+}
+
+.import-preview,
+.capability-url {
+  display: block;
+  margin: 1rem 0;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+  background: #f4f1e8;
+  border: 1px solid var(--line);
+}
+
 * {
   box-sizing: border-box;
 }

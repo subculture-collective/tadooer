@@ -70,6 +70,7 @@ import {
   type TemplateView,
 } from "./template-library.tsx";
 import { ChoicePoolLibrary } from "./choice-pool-library.tsx";
+import { CalendarMigration } from "./calendar-migration.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -2026,6 +2027,10 @@ export const App = ({ initialState }: AppProps) => {
                 ))}
               </ul>
             )}
+            <CalendarMigration
+              calendars={state.baikal.calendars}
+              csrfToken={state.session.csrfToken}
+            />
             <p className="boundary-note">
               Calendar reads and Suite-created time blocks are conditional and
               bounded. Recurrence editing, offline writes, Google, and broad

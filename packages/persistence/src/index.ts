@@ -402,6 +402,35 @@ export interface PlanningPlaceholderResolutionResult {
   readonly subtasks?: readonly SubtaskRecord[];
   readonly history?: readonly ChoicePoolHistoryRecord[];
 }
+export interface CalendarImportItemRecord {
+  readonly externalId: string;
+  readonly uid: string;
+  readonly rawIcs: string;
+  readonly href: string;
+  readonly state: "pending" | "applied" | "reconciliation_required" | "skipped";
+  readonly appliedAt: string | null;
+}
+export interface CalendarImportJobRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly calendarId: string;
+  readonly source: "ics" | "google_ics";
+  readonly inputHash: string;
+  readonly report: unknown;
+  readonly state: "previewed" | "applied" | "partial";
+  readonly createdAt: string;
+  readonly appliedAt: string | null;
+  readonly items: readonly CalendarImportItemRecord[];
+}
+export interface CalendarFeedCapabilityRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly calendarId: string;
+  readonly label: string;
+  readonly secretHash: string;
+  readonly createdAt: string;
+  readonly revokedAt: string | null;
+}
 export interface SyncChangeRecord {
   readonly ownerId: string;
   readonly epoch: string;
@@ -881,6 +910,33 @@ const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    id: "0011_phase_7_calendar_import_publication",
+    sql: `
+      CREATE TABLE calendar_import_jobs (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        calendar_id TEXT NOT NULL REFERENCES calendar_collections(id) ON DELETE RESTRICT,
+        source_kind TEXT NOT NULL CHECK(source_kind IN ('ics','google_ics')),
+        input_hash TEXT NOT NULL, report_json TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('previewed','applied','partial')),
+        created_at TEXT NOT NULL, applied_at TEXT,
+        UNIQUE(owner_id, calendar_id, source_kind, input_hash)
+      ) STRICT;
+      CREATE TABLE calendar_import_items (
+        job_id TEXT NOT NULL REFERENCES calendar_import_jobs(id) ON DELETE CASCADE,
+        external_id TEXT NOT NULL, uid TEXT NOT NULL, raw_ics TEXT NOT NULL, href TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('pending','applied','reconciliation_required','skipped')),
+        applied_at TEXT, PRIMARY KEY(job_id, external_id), UNIQUE(job_id, href)
+      ) STRICT;
+      CREATE TABLE calendar_feed_capabilities (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        calendar_id TEXT NOT NULL REFERENCES calendar_collections(id) ON DELETE CASCADE,
+        label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 100), secret_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL, revoked_at TEXT
+      ) STRICT;
+      CREATE INDEX calendar_feeds_by_owner ON calendar_feed_capabilities(owner_id, created_at, id);
+    `,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -1317,6 +1373,232 @@ export class SuiteDatabase {
           kind: row.kind,
           connectorId: row.connector_id,
         };
+  }
+
+  createCalendarImportPreview(input: {
+    readonly id: string;
+    readonly ownerId: string;
+    readonly calendarId: string;
+    readonly source: "ics" | "google_ics";
+    readonly inputHash: string;
+    readonly report: unknown;
+    readonly candidates: readonly {
+      externalId: string;
+      uid: string;
+      rawIcs: string;
+      href: string;
+    }[];
+    readonly createdAt: string;
+  }):
+    | { readonly job: CalendarImportJobRecord; readonly replayed: boolean }
+    | undefined {
+    if (this.getOwnedCalendar(input.ownerId, input.calendarId) === undefined)
+      return undefined;
+    const prior = this.#database
+      .prepare(
+        `SELECT id FROM calendar_import_jobs WHERE owner_id=? AND calendar_id=? AND source_kind=? AND input_hash=?`,
+      )
+      .get(
+        input.ownerId,
+        input.calendarId,
+        input.source,
+        input.inputHash,
+      ) as unknown as { id: string } | undefined;
+    if (prior !== undefined) {
+      const job = this.getCalendarImportJob(input.ownerId, prior.id);
+      if (job === undefined)
+        throw new Error("Calendar import replay disappeared");
+      return { job, replayed: true };
+    }
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.#database
+        .prepare(
+          `INSERT INTO calendar_import_jobs (id,owner_id,calendar_id,source_kind,input_hash,report_json,state,created_at,applied_at)
+         VALUES (?,?,?,?,?,?,'previewed',?,NULL)`,
+        )
+        .run(
+          input.id,
+          input.ownerId,
+          input.calendarId,
+          input.source,
+          input.inputHash,
+          JSON.stringify(input.report),
+          input.createdAt,
+        );
+      const insert = this.#database.prepare(
+        `INSERT INTO calendar_import_items (job_id,external_id,uid,raw_ics,href,state,applied_at)
+         VALUES (?,?,?,?,?,'pending',NULL)`,
+      );
+      for (const item of input.candidates)
+        insert.run(input.id, item.externalId, item.uid, item.rawIcs, item.href);
+      this.#database.exec("COMMIT;");
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+    const job = this.getCalendarImportJob(input.ownerId, input.id);
+    if (job === undefined)
+      throw new Error("Calendar import preview disappeared");
+    return { job, replayed: false };
+  }
+
+  getCalendarImportJob(
+    ownerId: string,
+    jobId: string,
+  ): CalendarImportJobRecord | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM calendar_import_jobs WHERE owner_id=? AND id=?")
+      .get(ownerId, jobId) as unknown as
+      Record<string, string | null> | undefined;
+    if (row === undefined) return undefined;
+    const items = this.#database
+      .prepare(
+        "SELECT * FROM calendar_import_items WHERE job_id=? ORDER BY external_id",
+      )
+      .all(jobId) as unknown as readonly Record<string, string | null>[];
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      calendarId: String(row.calendar_id),
+      source: String(row.source_kind) as CalendarImportJobRecord["source"],
+      inputHash: String(row.input_hash),
+      report: JSON.parse(String(row.report_json)) as unknown,
+      state: String(row.state) as CalendarImportJobRecord["state"],
+      createdAt: String(row.created_at),
+      appliedAt: row.applied_at === null ? null : String(row.applied_at),
+      items: items.map((item) => ({
+        externalId: String(item.external_id),
+        uid: String(item.uid),
+        rawIcs: String(item.raw_ics),
+        href: String(item.href),
+        state: String(item.state) as CalendarImportItemRecord["state"],
+        appliedAt: item.applied_at === null ? null : String(item.applied_at),
+      })),
+    };
+  }
+
+  markCalendarImportItem(
+    ownerId: string,
+    jobId: string,
+    externalId: string,
+    state: "applied" | "reconciliation_required",
+    now: string,
+  ): void {
+    this.#database
+      .prepare(
+        `UPDATE calendar_import_items SET state=?, applied_at=? WHERE job_id IN
+       (SELECT id FROM calendar_import_jobs WHERE id=? AND owner_id=?) AND external_id=?`,
+      )
+      .run(state, state === "applied" ? now : null, jobId, ownerId, externalId);
+  }
+
+  finishCalendarImport(
+    ownerId: string,
+    jobId: string,
+    now: string,
+  ): CalendarImportJobRecord | undefined {
+    const job = this.getCalendarImportJob(ownerId, jobId);
+    if (job === undefined) return undefined;
+    const partial = job.items.some(({ state }) => state !== "applied");
+    this.#database
+      .prepare(
+        "UPDATE calendar_import_jobs SET state=?, applied_at=? WHERE owner_id=? AND id=?",
+      )
+      .run(partial ? "partial" : "applied", now, ownerId, jobId);
+    return this.getCalendarImportJob(ownerId, jobId);
+  }
+
+  listPublishedCalendarRaw(
+    ownerId: string,
+    calendarId: string,
+  ): readonly string[] {
+    if (this.getOwnedCalendar(ownerId, calendarId) === undefined) return [];
+    const projected = this.#database
+      .prepare(
+        "SELECT raw_ics FROM calendar_event_projections WHERE owner_id=? AND calendar_id=? ORDER BY href",
+      )
+      .all(ownerId, calendarId) as unknown as readonly { raw_ics: string }[];
+    const imported = this.#database
+      .prepare(
+        `SELECT i.raw_ics FROM calendar_import_items i JOIN calendar_import_jobs j ON j.id=i.job_id
+       WHERE j.owner_id=? AND j.calendar_id=? AND i.state='applied' ORDER BY i.href`,
+      )
+      .all(ownerId, calendarId) as unknown as readonly { raw_ics: string }[];
+    const values = new Map<string, string>();
+    for (const row of [...projected, ...imported])
+      values.set(
+        createHash("sha256").update(row.raw_ics).digest("hex"),
+        row.raw_ics,
+      );
+    return [...values.values()];
+  }
+
+  createCalendarFeedCapability(record: CalendarFeedCapabilityRecord): void {
+    if (this.getOwnedCalendar(record.ownerId, record.calendarId) === undefined)
+      throw new Error("Calendar not found");
+    this.#database
+      .prepare(
+        `INSERT INTO calendar_feed_capabilities (id,owner_id,calendar_id,label,secret_hash,created_at,revoked_at) VALUES (?,?,?,?,?,?,?)`,
+      )
+      .run(
+        record.id,
+        record.ownerId,
+        record.calendarId,
+        record.label,
+        record.secretHash,
+        record.createdAt,
+        record.revokedAt,
+      );
+  }
+
+  listCalendarFeedCapabilities(
+    ownerId: string,
+  ): readonly CalendarFeedCapabilityRecord[] {
+    return (
+      this.#database
+        .prepare(
+          "SELECT * FROM calendar_feed_capabilities WHERE owner_id=? ORDER BY created_at,id",
+        )
+        .all(ownerId) as unknown as readonly Record<string, string | null>[]
+    ).map((row) => this.#calendarFeedFromRow(row));
+  }
+
+  getCalendarFeedCapability(
+    id: string,
+  ): CalendarFeedCapabilityRecord | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM calendar_feed_capabilities WHERE id=?")
+      .get(id) as unknown as Record<string, string | null> | undefined;
+    return row === undefined ? undefined : this.#calendarFeedFromRow(row);
+  }
+
+  revokeCalendarFeedCapability(
+    ownerId: string,
+    id: string,
+    now: string,
+  ): boolean {
+    return (
+      this.#database
+        .prepare(
+          "UPDATE calendar_feed_capabilities SET revoked_at=? WHERE owner_id=? AND id=? AND revoked_at IS NULL",
+        )
+        .run(now, ownerId, id).changes === 1
+    );
+  }
+
+  #calendarFeedFromRow(
+    row: Record<string, string | null>,
+  ): CalendarFeedCapabilityRecord {
+    return {
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      calendarId: String(row.calendar_id),
+      label: String(row.label),
+      secretHash: String(row.secret_hash),
+      createdAt: String(row.created_at),
+      revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
+    };
   }
 
   replaceCalendarEventWindow(

@@ -303,6 +303,27 @@ export class BaikalConnectorService {
       : { ok: true, value: event };
   }
 
+  async putImportedEvent(input: {
+    readonly ownerId: string;
+    readonly calendarId: string;
+    readonly href: string;
+    readonly rawIcs: string;
+  }): Promise<CalendarOperationResult<void>> {
+    const access = this.#calendarAccess(input.ownerId, input.calendarId);
+    if (!access.ok) return access;
+    return this.#withTimeout((signal) =>
+      createCalDavEvent({
+        collectionUrl: access.collectionUrl,
+        username: access.connector.username,
+        password: access.password,
+        href: input.href,
+        rawIcs: input.rawIcs,
+        fetch: this.fetcher,
+        signal,
+      }),
+    );
+  }
+
   async deleteTaskBlock(input: {
     readonly ownerId: string;
     readonly calendarId: string;

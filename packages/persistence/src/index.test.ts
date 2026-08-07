@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 10,
-        expectedMigrationCount: 10,
+        appliedMigrationCount: 11,
+        expectedMigrationCount: 11,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(10);
-      expect(reopenedState.expectedMigrationCount).toBe(10);
+      expect(reopenedState.appliedMigrationCount).toBe(11);
+      expect(reopenedState.expectedMigrationCount).toBe(11);
     });
   });
 
@@ -1213,6 +1213,114 @@ describe("SuiteDatabase", () => {
           now,
         ),
       ).toBeUndefined();
+      database.close();
+    });
+  });
+
+  it("replays calendar import previews and revokes read-only feed capabilities", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      const now = "2026-08-07T12:00:00.000Z";
+      database.createOwner({
+        id: "import-owner",
+        username: "import-owner",
+        displayName: "Import owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      database.putBaikalConnector({
+        id: "connector-1",
+        ownerId: "import-owner",
+        endpoint: "http://baikal.test/",
+        username: "owner",
+        credentialKeyId: "key",
+        credentialNonce: new Uint8Array([1]),
+        credentialCiphertext: new Uint8Array([2]),
+        credentialTag: new Uint8Array([3]),
+        verifiedAt: now,
+        updatedAt: now,
+      });
+      const provider = database.ensureCalendarProvider(
+        "import-owner",
+        "baikal",
+        "connector-1",
+        now,
+      );
+      const calendar = database.putCalendarCollections(
+        provider.id,
+        [
+          {
+            href: "/cal/",
+            displayName: "Calendar",
+            supportsEvents: true,
+            supportsTodos: false,
+          },
+        ],
+        now,
+      )[0];
+      if (calendar === undefined) throw new Error("Calendar fixture missing");
+      const input = {
+        id: "00000000-0000-4000-8000-000000000071",
+        ownerId: "import-owner",
+        calendarId: calendar.id,
+        source: "ics" as const,
+        inputHash: "a".repeat(64),
+        report: { source: "ics" },
+        candidates: [
+          {
+            externalId: "event-1",
+            uid: "uid-1",
+            rawIcs:
+              "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:uid-1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            href: "event-1.ics",
+          },
+        ],
+        createdAt: now,
+      };
+      expect(database.createCalendarImportPreview(input)).toMatchObject({
+        replayed: false,
+        job: { state: "previewed", items: [{ state: "pending" }] },
+      });
+      expect(
+        database.createCalendarImportPreview({
+          ...input,
+          id: "00000000-0000-4000-8000-000000000072",
+        }),
+      ).toMatchObject({ replayed: true, job: { id: input.id } });
+      database.markCalendarImportItem(
+        "import-owner",
+        input.id,
+        "event-1",
+        "applied",
+        now,
+      );
+      expect(
+        database.finishCalendarImport("import-owner", input.id, now),
+      ).toMatchObject({ state: "applied" });
+      database.createCalendarFeedCapability({
+        id: "00000000-0000-4000-8000-000000000073",
+        ownerId: "import-owner",
+        calendarId: calendar.id,
+        label: "Phone",
+        secretHash: "digest",
+        createdAt: now,
+        revokedAt: null,
+      });
+      expect(
+        database.listCalendarFeedCapabilities("import-owner"),
+      ).toHaveLength(1);
+      expect(
+        database.revokeCalendarFeedCapability(
+          "import-owner",
+          "00000000-0000-4000-8000-000000000073",
+          now,
+        ),
+      ).toBe(true);
+      expect(
+        database.getCalendarFeedCapability(
+          "00000000-0000-4000-8000-000000000073",
+        )?.revokedAt,
+      ).toBe(now);
       database.close();
     });
   });

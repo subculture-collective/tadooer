@@ -31,6 +31,11 @@ import {
   createTemplatePoolSlotRequestSchema,
   templatePoolSlotSchema,
   completeChoicePoolItemRequestSchema,
+  calendarImportPreviewRequestSchema,
+  calendarImportMutationResponseSchema,
+  calendarFeedCreateRequestSchema,
+  calendarFeedCreateResponseSchema,
+  calendarFeedListResponseSchema,
   choicePoolHistoryEventSchema,
   taskListResponseSchema,
   taskMutationResponseSchema,
@@ -810,3 +815,41 @@ export const resolvePlanningPlaceholder = (
       ),
     },
   );
+
+export const previewCalendarImport = (
+  input: z.infer<typeof calendarImportPreviewRequestSchema>,
+  csrfToken: string,
+) =>
+  request("/api/imports/preview", calendarImportMutationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(calendarImportPreviewRequestSchema.parse(input)),
+  });
+
+export const applyCalendarImport = (jobId: string, csrfToken: string) =>
+  request(`/api/imports/${jobId}/apply`, calendarImportMutationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+
+export const listCalendarFeeds = () =>
+  request("/api/calendar-feeds", calendarFeedListResponseSchema);
+
+export const createCalendarFeed = (
+  calendarId: string,
+  label: string,
+  csrfToken: string,
+) =>
+  request("/api/calendar-feeds", calendarFeedCreateResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(
+      calendarFeedCreateRequestSchema.parse({ calendarId, label }),
+    ),
+  });
+
+export const revokeCalendarFeed = (id: string, csrfToken: string) =>
+  requestEmpty(`/api/calendar-feeds/${id}`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
+  });

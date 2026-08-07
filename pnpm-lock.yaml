@@ -76,6 +76,9 @@ importers:
       '@suite/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@suite/import-export':
+        specifier: workspace:*
+        version: link:../../packages/import-export
       '@suite/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
