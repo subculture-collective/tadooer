@@ -2350,9 +2350,13 @@ export const startSuiteServer = async (
               title: patch.data.title ?? current.title,
               notes: patch.data.notes ?? current.notes,
               estimateMinutes:
-                patch.data.estimateMinutes ?? current.estimateMinutes,
+                "estimateMinutes" in patch.data
+                  ? (patch.data.estimateMinutes ?? null)
+                  : current.estimateMinutes,
               suggestedProjectId:
-                patch.data.suggestedProjectId ?? current.suggestedProjectId,
+                "suggestedProjectId" in patch.data
+                  ? (patch.data.suggestedProjectId ?? null)
+                  : current.suggestedProjectId,
               tagIds: patch.data.tagIds ?? current.tagIds,
               blueprints:
                 patch.data.subtasks === undefined
@@ -3542,15 +3546,19 @@ export const startSuiteServer = async (
               })),
               ...snapshot.templates.map((template) => ({
                 entityKind: "template" as const,
-                value: templateResponse(template),
-              })),
-              ...snapshot.templateBlueprints.map((blueprint) => ({
-                entityKind: "template_blueprint" as const,
-                value: templateBlueprintResponse(blueprint),
+                value: {
+                  template: templateResponse(template),
+                  blueprints: database
+                    .listTemplateSubtaskBlueprints(template.id)
+                    .map(templateBlueprintResponse),
+                },
               })),
               ...snapshot.templateSets.map((set) => ({
                 entityKind: "template_set" as const,
-                value: templateSetResponse(set),
+                value: {
+                  set: templateSetResponse(set),
+                  members: [...database.listTemplateSetMembers(set.id)],
+                },
               })),
             ];
             const offset = Number(url.searchParams.get("offset") ?? "0");
@@ -3779,14 +3787,6 @@ export const startSuiteServer = async (
                       true,
                     )
                   : undefined;
-              const blueprint =
-                change.entityType === "template_blueprint"
-                  ? database
-                      .fullSyncSnapshot(session.owner.id)
-                      .templateBlueprints.find(
-                        ({ id }) => id === change.entityId,
-                      )
-                  : undefined;
               const templateSet =
                 change.entityType === "template_set"
                   ? database
@@ -3801,7 +3801,6 @@ export const startSuiteServer = async (
                   | "tag"
                   | "subtask"
                   | "template"
-                  | "template_blueprint"
                   | "template_set"
                   | "active_session",
                 entityId: change.entityId,
@@ -3849,26 +3848,33 @@ export const startSuiteServer = async (
                           : template !== undefined
                             ? {
                                 entityKind: "template" as const,
-                                value: templateResponse(template),
+                                value: {
+                                  template: templateResponse(template),
+                                  blueprints: database
+                                    .listTemplateSubtaskBlueprints(template.id)
+                                    .map(templateBlueprintResponse),
+                                },
                               }
-                            : blueprint !== undefined
+                            : templateSet !== undefined
                               ? {
-                                  entityKind: "template_blueprint" as const,
-                                  value: templateBlueprintResponse(blueprint),
-                                }
-                              : templateSet !== undefined
-                                ? {
-                                    entityKind: "template_set" as const,
-                                    value: templateSetResponse(templateSet),
-                                  }
-                                : active?.id === change.entityId
-                                  ? {
-                                      entityKind: "active_session" as const,
-                                      value: activeResponse(
-                                        activeFromRecord(active, database),
+                                  entityKind: "template_set" as const,
+                                  value: {
+                                    set: templateSetResponse(templateSet),
+                                    members: [
+                                      ...database.listTemplateSetMembers(
+                                        templateSet.id,
                                       ),
-                                    }
-                                  : null,
+                                    ],
+                                  },
+                                }
+                              : active?.id === change.entityId
+                                ? {
+                                    entityKind: "active_session" as const,
+                                    value: activeResponse(
+                                      activeFromRecord(active, database),
+                                    ),
+                                  }
+                                : null,
               };
             }),
             nextCursor: cursorFor({

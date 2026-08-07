@@ -3058,13 +3058,21 @@ export class SuiteDatabase {
   ): TaskTemplateRecord | undefined {
     const task = this.getTask(ownerId, taskId);
     if (task === undefined) return undefined;
+    const suggestedProject =
+      task.projectId === undefined || task.projectId === null
+        ? undefined
+        : this.#project(ownerId, task.projectId);
+    const activeTagIds = (task.tagIds ?? []).filter(
+      (tagId) => this.#tag(ownerId, tagId)?.archivedAt === null,
+    );
     return this.createTaskTemplate({
       ...template,
       title: task.title,
       notes: task.notes,
       estimateMinutes: task.estimateMinutes,
-      suggestedProjectId: task.projectId ?? null,
-      tagIds: task.tagIds ?? [],
+      suggestedProjectId:
+        suggestedProject?.archivedAt === null ? suggestedProject.id : null,
+      tagIds: activeTagIds,
     });
   }
   updateTaskTemplate(input: {

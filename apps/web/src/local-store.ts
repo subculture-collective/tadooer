@@ -27,7 +27,6 @@ export type CachedEntityKind =
   | "tag"
   | "subtask"
   | "template"
-  | "template_blueprint"
   | "template_set"
   | "active_session";
 
@@ -465,6 +464,24 @@ export class LocalStore {
           value,
           revision: value.task.revision,
           changeSequence: value.changeSequence,
+        } satisfies CachedEntity);
+      } else if (snapshot.entityKind === "template") {
+        const value = snapshot.value;
+        entities.put({
+          entityKind: "template",
+          id: value.template.id,
+          value,
+          revision: value.template.revision,
+          changeSequence: 0,
+        } satisfies CachedEntity);
+      } else if (snapshot.entityKind === "template_set") {
+        const value = snapshot.value;
+        entities.put({
+          entityKind: "template_set",
+          id: value.set.id,
+          value,
+          revision: value.set.revision,
+          changeSequence: 0,
         } satisfies CachedEntity);
       } else {
         const value = snapshot.value;

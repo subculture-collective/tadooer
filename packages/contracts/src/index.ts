@@ -672,17 +672,33 @@ export const activeSessionCommandResponseSchema = z.object({
   changeSequence: revisionSchema,
 });
 
+export const syncTaskTemplateSnapshotSchema = z
+  .object({
+    template: taskTemplateSchema,
+    blueprints: z.array(templateSubtaskBlueprintSchema).max(100),
+  })
+  .strict();
+
+export const syncTemplateSetSnapshotSchema = z
+  .object({
+    set: templateSetSchema,
+    members: z.array(templateSetMemberSchema).max(100),
+  })
+  .strict();
+
 export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   z.object({ entityKind: z.literal("task"), value: syncTaskSnapshotSchema }),
   z.object({ entityKind: z.literal("project"), value: projectSchema }),
   z.object({ entityKind: z.literal("tag"), value: tagSchema }),
   z.object({ entityKind: z.literal("subtask"), value: subtaskSchema }),
-  z.object({ entityKind: z.literal("template"), value: taskTemplateSchema }),
   z.object({
-    entityKind: z.literal("template_blueprint"),
-    value: templateSubtaskBlueprintSchema,
+    entityKind: z.literal("template"),
+    value: syncTaskTemplateSnapshotSchema,
   }),
-  z.object({ entityKind: z.literal("template_set"), value: templateSetSchema }),
+  z.object({
+    entityKind: z.literal("template_set"),
+    value: syncTemplateSetSnapshotSchema,
+  }),
   z.object({
     entityKind: z.literal("active_session"),
     value: activeSessionSchema,
@@ -697,7 +713,6 @@ export const syncChangeSchema = z.object({
     "tag",
     "subtask",
     "template",
-    "template_blueprint",
     "template_set",
     "active_session",
   ]),
