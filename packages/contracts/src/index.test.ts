@@ -487,7 +487,7 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(14);
+    expect(automationCatalog).toHaveLength(15);
     for (const entry of automationCatalog) {
       expect(entry.apiPath).toMatch(/^\/api\/automation\/v1\//);
       expect(entry.mcpName.startsWith("suite.")).toBe(true);
@@ -497,7 +497,8 @@ describe("Suite contracts", () => {
           : false,
       ).toBe(false);
       expect(entry.scopes.length).toBeGreaterThan(0);
-      if (entry.kind === "tool") expect(entry.confirmationRequired).toBe(true);
+      if (entry.kind === "tool" && entry.id !== "automation.confirm")
+        expect(entry.confirmationRequired).toBe(true);
       else expect(entry.confirmationRequired).toBe(false);
     }
   });

@@ -808,6 +808,10 @@ export const automationConfirmRequestSchema = z
   .object({ idempotencyKey: idempotencyKeySchema })
   .strict();
 
+export const automationConfirmToolInputSchema = z
+  .object({ previewId: entityIdSchema, idempotencyKey: idempotencyKeySchema })
+  .strict();
+
 export const automationExecutionResultSchema = z.union([
   taskMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
@@ -923,6 +927,16 @@ export const automationCatalog = [
     inputSchema: automationPreviewCommandSchema,
     outputSchema: automationPreviewResponseSchema,
   })),
+  {
+    id: "automation.confirm",
+    kind: "tool",
+    scopes: ["tasks:write", "schedule:write", "focus:write"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/previews/{previewId}/confirm",
+    mcpName: "suite.confirm",
+    inputSchema: automationConfirmToolInputSchema,
+    outputSchema: automationConfirmationResponseSchema,
+  },
 ] as const satisfies readonly AutomationCatalogEntry[];
 
 export const importTaskCandidateSchema = z.object({
