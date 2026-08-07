@@ -32,3 +32,4 @@ export interface AuthorizationContext {
 }
 
 export * from "./active-session.ts";
+export * from "./choice-pool.ts";
