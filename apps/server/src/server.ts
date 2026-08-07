@@ -771,8 +771,7 @@ export const startSuiteServer = async (
               ? Buffer.alloc(32)
               : Buffer.from(capability.secretHash, "base64url");
           if (
-            capability === undefined ||
-            capability.revokedAt !== null ||
+            capability?.revokedAt !== null ||
             expected.length !== supplied.length ||
             !timingSafeEqual(expected, supplied)
           ) {
@@ -880,9 +879,13 @@ export const startSuiteServer = async (
             job: {
               ...result.job,
               report: calendarImportReportSchema.parse(result.job.report),
-              items: result.job.items.map(
-                ({ rawIcs: _rawIcs, ...item }) => item,
-              ),
+              items: result.job.items.map((item) => ({
+                externalId: item.externalId,
+                uid: item.uid,
+                href: item.href,
+                state: item.state,
+                appliedAt: item.appliedAt,
+              })),
             },
             replayed: result.replayed,
           });
@@ -914,7 +917,13 @@ export const startSuiteServer = async (
                 job: {
                   ...job,
                   report: calendarImportReportSchema.parse(job.report),
-                  items: job.items.map(({ rawIcs: _rawIcs, ...item }) => item),
+                  items: job.items.map((item) => ({
+                    externalId: item.externalId,
+                    uid: item.uid,
+                    href: item.href,
+                    state: item.state,
+                    appliedAt: item.appliedAt,
+                  })),
                 },
                 replayed: job.state !== "previewed",
               });
@@ -981,9 +990,13 @@ export const startSuiteServer = async (
               job: {
                 ...completed,
                 report: calendarImportReportSchema.parse(completed.report),
-                items: completed.items.map(
-                  ({ rawIcs: _rawIcs, ...item }) => item,
-                ),
+                items: completed.items.map((item) => ({
+                  externalId: item.externalId,
+                  uid: item.uid,
+                  href: item.href,
+                  state: item.state,
+                  appliedAt: item.appliedAt,
+                })),
               },
               replayed,
             });
@@ -1037,10 +1050,13 @@ export const startSuiteServer = async (
             sendJson(response, 200, {
               capabilities: database
                 .listCalendarFeedCapabilities(session.owner.id)
-                .map(
-                  ({ secretHash: _secretHash, ownerId: _ownerId, ...record }) =>
-                    record,
-                ),
+                .map((record) => ({
+                  id: record.id,
+                  calendarId: record.calendarId,
+                  label: record.label,
+                  createdAt: record.createdAt,
+                  revokedAt: record.revokedAt,
+                })),
             });
             return;
           }
@@ -1092,11 +1108,13 @@ export const startSuiteServer = async (
               revokedAt: null,
             };
             database.createCalendarFeedCapability(record);
-            const {
-              secretHash: _secretHash,
-              ownerId: _ownerId,
-              ...capability
-            } = record;
+            const capability = {
+              id: record.id,
+              calendarId: record.calendarId,
+              label: record.label,
+              createdAt: record.createdAt,
+              revokedAt: record.revokedAt,
+            };
             sendJson(response, 201, {
               capability,
               url: `/feeds/${id}/${secret}.ics`,

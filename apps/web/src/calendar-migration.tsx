@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
 import type {
   CalendarCollection,
   CalendarFeedCapability,
@@ -19,6 +19,10 @@ export const CalendarMigration = ({
   readonly calendars: readonly CalendarCollection[];
   readonly csrfToken: string;
 }) => {
+  const value = (data: FormData, name: string): string => {
+    const item = data.get(name);
+    return typeof item === "string" ? item : "";
+  };
   const [preview, setPreview] = useState<CalendarImportJob | null>(null);
   const [feeds, setFeeds] = useState<readonly CalendarFeedCapability[]>([]);
   const [issuedUrl, setIssuedUrl] = useState<string | null>(null);
@@ -26,26 +30,26 @@ export const CalendarMigration = ({
   useEffect(() => {
     void listCalendarFeeds().then(({ capabilities }) => setFeeds(capabilities));
   }, []);
-  const previewImport = async (event: FormEvent<HTMLFormElement>) => {
+  const previewImport = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);
     const data = new FormData(event.currentTarget);
     const result = await previewCalendarImport(
       {
-        source: String(data.get("source")) as "ics" | "google_ics",
-        calendarId: String(data.get("calendarId")),
-        rawIcs: String(data.get("rawIcs")),
+        source: value(data, "source") as "ics" | "google_ics",
+        calendarId: value(data, "calendarId"),
+        rawIcs: value(data, "rawIcs"),
       },
       csrfToken,
     );
     setPreview(result.job);
   };
-  const issueFeed = async (event: FormEvent<HTMLFormElement>) => {
+  const issueFeed = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const result = await createCalendarFeed(
-      String(data.get("calendarId")),
-      String(data.get("label")),
+      value(data, "calendarId"),
+      value(data, "label"),
       csrfToken,
     );
     setFeeds([...feeds, result.capability]);

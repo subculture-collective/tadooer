@@ -18,6 +18,7 @@ describe("Phase 7 calendar migration and publication", () => {
       await writeFile(join(directory, "web", "index.html"), "<h1>Suite</h1>");
       const resources = new Map<string, string>();
       const fetcher: typeof fetch = async (input, init) => {
+        await Promise.resolve();
         const url =
           input instanceof URL
             ? input
@@ -50,7 +51,10 @@ describe("Phase 7 calendar migration and publication", () => {
         if (method === "PUT") {
           if (resources.has(url.pathname))
             return new Response("", { status: 412 });
-          resources.set(url.pathname, String(init?.body ?? ""));
+          resources.set(
+            url.pathname,
+            typeof init?.body === "string" ? init.body : "",
+          );
           return new Response("", { status: 201 });
         }
         return new Response("", { status: 404 });
