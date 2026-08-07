@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "channel": "candidate",
+  "version": "0.9.0-phase9+44da815",
+  "createdAt": "2026-08-07T23:51:24Z",
+  "sourceCommit": "44da815",
+  "image": "127.0.0.1:5000/subculture-collective/productivity-suite@sha256:7e2973c503578bd146880749f48f5cfe3b275acd56c47c6833c028b82a8a3d90",
+  "publicOrigin": "https://tadooer.subcult.tv",
+  "status": "phase9-candidate"
+}
