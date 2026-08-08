@@ -9,6 +9,7 @@ export interface ServerConfig {
   readonly baikalEndpoint: string;
   readonly credentialKeyPath: string;
   readonly googleOAuthConfigPath?: string;
+  readonly ntfyPublisherConfigPath?: string;
   readonly secureCookies: boolean;
   readonly publicOrigin?: string;
   readonly trustedProxyCidrs?: readonly string[];
@@ -117,6 +118,14 @@ export const loadConfig = (
       ? {}
       : {
           googleOAuthConfigPath: resolve(environment.GOOGLE_OAUTH_CONFIG_PATH),
+        }),
+    ...(environment.NTFY_PUBLISHER_CONFIG_PATH === undefined ||
+    environment.NTFY_PUBLISHER_CONFIG_PATH === ""
+      ? {}
+      : {
+          ntfyPublisherConfigPath: resolve(
+            environment.NTFY_PUBLISHER_CONFIG_PATH,
+          ),
         }),
     secureCookies: parseBoolean(
       "SUITE_SECURE_COOKIES",

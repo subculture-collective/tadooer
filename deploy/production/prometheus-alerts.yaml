@@ -9,7 +9,7 @@ groups:
         annotations:
           summary: Tadooer is unavailable
       - alert: TadooerMigrationMismatch
-        expr: suite_database_migrations{job="tadooer"} != 13
+        expr: suite_database_migrations{job="tadooer"} != 14
         for: 5m
         labels:
           severity: critical

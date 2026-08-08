@@ -24,6 +24,7 @@
     "test:phase8": "vitest run apps/desktop/src/policy.test.mjs deploy/release-channel.test.mjs apps/server/src/phase8.test.ts",
     "test:phase9": "vitest run apps/server/src/config.test.ts apps/server/src/phase9.test.ts",
     "test:phase10": "vitest run packages/contracts/src/index.test.ts packages/domain/src/day-planning.test.ts packages/persistence/src/index.test.ts apps/server/src/phase3.test.ts apps/web/src/app.test.tsx apps/web/src/google-planning.test.tsx",
+    "test:phase11": "vitest run packages/contracts/src/index.test.ts packages/domain/src/notifications.test.ts packages/persistence/src/index.test.ts apps/server/src/notifications.test.ts apps/server/src/phase11.test.ts apps/web/src/notification-settings.test.tsx apps/web/src/phase2-api.test.ts",
     "verify:phase1": "./deploy/verify-phase1-compose.sh",
     "verify:phase2": "./deploy/verify-phase2-compose.sh",
     "verify:phase3:foundation": "./deploy/verify-phase3-foundation.sh",
@@ -34,6 +35,7 @@
     "verify:phase8": "./deploy/verify-phase8.sh",
     "verify:phase9": "./deploy/verify-phase9.sh",
     "verify:phase10": "./deploy/verify-phase10.sh",
+    "verify:phase11": "./deploy/verify-phase11.sh",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

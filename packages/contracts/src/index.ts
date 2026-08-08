@@ -354,6 +354,50 @@ export const dayPlanResponseSchema = z.object({
   freshness: calendarProjectionFreshnessSchema,
 });
 
+export const notificationPreferencesSchema = z
+  .object({
+    enabled: z.boolean(),
+    leadReminderEnabled: z.boolean(),
+    atStartReminderEnabled: z.boolean(),
+    detailedContentEnabled: z.boolean(),
+  })
+  .strict();
+
+export const notificationDeliveryStateSchema = z.enum([
+  "pending",
+  "delivered",
+  "suppressed",
+  "cancelled",
+  "failed",
+]);
+
+export const notificationStatusResponseSchema = z
+  .object({
+    configured: z.boolean(),
+    enabled: z.boolean(),
+    state: z.enum(["ready", "degraded", "unavailable"]),
+    pendingCount: z.number().int().nonnegative(),
+    failedCount: z.number().int().nonnegative(),
+    lastDelivery: z
+      .object({
+        state: notificationDeliveryStateSchema,
+        kind: z.enum(["lead", "at_start", "test"]),
+        occurredAt: z.iso.datetime(),
+        errorCode: apiErrorCodeSchema.nullable(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+export const notificationTestResponseSchema = z
+  .object({
+    accepted: z.boolean(),
+    state: z.enum(["delivered", "failed", "unavailable"]),
+    errorCode: apiErrorCodeSchema.nullable(),
+  })
+  .strict();
+
 export const createTaskTimeBlockRequestSchema = z.object({
   calendarId: entityIdSchema,
   startsAt: z.iso.datetime(),
@@ -1718,6 +1762,15 @@ export type GoogleConnectorStatusResponse = z.infer<
 export type GoogleSyncResponse = z.infer<typeof googleSyncResponseSchema>;
 export type PlanningPreferences = z.infer<typeof planningPreferencesSchema>;
 export type DayPlanResponse = z.infer<typeof dayPlanResponseSchema>;
+export type NotificationPreferences = z.infer<
+  typeof notificationPreferencesSchema
+>;
+export type NotificationStatusResponse = z.infer<
+  typeof notificationStatusResponseSchema
+>;
+export type NotificationTestResponse = z.infer<
+  typeof notificationTestResponseSchema
+>;
 export type CreateTaskTimeBlockRequest = z.infer<
   typeof createTaskTimeBlockRequestSchema
 >;

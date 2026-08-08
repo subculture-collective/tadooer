@@ -17,6 +17,8 @@ import type {
   GoogleConnectorStatusResponse,
   PlanningPreferences,
   DayPlanResponse,
+  NotificationPreferences,
+  NotificationStatusResponse,
 } from "@suite/contracts";
 import {
   ApiRequestError,
@@ -37,6 +39,10 @@ import {
   getPlanningPreferences,
   updatePlanningPreferences,
   getDayPlan,
+  getNotificationPreferences,
+  getNotificationStatus,
+  updateNotificationPreferences,
+  sendTestNotification,
   getActiveSession,
   getSetupStatus,
   getTasks,
@@ -82,6 +88,7 @@ import {
 import { ChoicePoolLibrary } from "./choice-pool-library.tsx";
 import { CalendarMigration } from "./calendar-migration.tsx";
 import { GooglePlanning } from "./google-planning.tsx";
+import { NotificationSettings } from "./notification-settings.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -101,6 +108,8 @@ export type AppState =
       readonly google?: GoogleConnectorStatusResponse;
       readonly planningPreferences?: PlanningPreferences;
       readonly dayPlan?: DayPlanResponse;
+      readonly notificationPreferences?: NotificationPreferences;
+      readonly notificationStatus?: NotificationStatusResponse;
       readonly client?: LocalClientIdentity;
       readonly activeSession?: ActiveSession | null;
       readonly syncStatus?: "online" | "offline" | "syncing";
@@ -303,6 +312,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         google,
         planningPreferences,
         dayPlan,
+        notificationPreferences,
+        notificationStatus,
         taskList,
         recoveryList,
         projectList,
@@ -315,6 +326,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         getGoogleStatus(),
         getPlanningPreferences(),
         getDayPlan(),
+        getNotificationPreferences(),
+        getNotificationStatus(),
         getTasks(),
         getRecoveryTasks(),
         getProjects(),
@@ -375,6 +388,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         google,
         planningPreferences,
         dayPlan,
+        notificationPreferences,
+        notificationStatus,
         tasks: visibleTasks,
         recovery: local?.recovery ?? recoveryList.tasks,
         planner,
@@ -624,6 +639,53 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       setState((current) =>
         current.kind === "authenticated"
           ? { ...current, planningPreferences: saved, dayPlan }
+          : current,
+      );
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveNotificationPreferences = async (
+    preferences: NotificationPreferences,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const saved = await updateNotificationPreferences(
+        preferences,
+        state.session.csrfToken,
+      );
+      const status = await getNotificationStatus();
+      setState((current) =>
+        current.kind === "authenticated"
+          ? {
+              ...current,
+              notificationPreferences: saved,
+              notificationStatus: status,
+            }
+          : current,
+      );
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const testNotification = async (): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await sendTestNotification(state.session.csrfToken);
+      const status = await getNotificationStatus();
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, notificationStatus: status }
           : current,
       );
     } catch (error: unknown) {
@@ -1847,6 +1909,18 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                   onSynchronize={syncGoogleCalendar}
                   onDisconnect={removeGoogleCalendar}
                   onSavePreferences={savePlanningPreferences}
+                />
+              )}
+            {route === "settings" &&
+              state.notificationPreferences !== undefined &&
+              state.notificationStatus !== undefined && (
+                <NotificationSettings
+                  preferences={state.notificationPreferences}
+                  status={state.notificationStatus}
+                  busy={busy}
+                  online={state.syncStatus === "online"}
+                  onSave={saveNotificationPreferences}
+                  onTest={testNotification}
                 />
               )}
             {route === "today" && state.dayPlan !== undefined && (

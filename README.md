@@ -126,6 +126,9 @@ pnpm verify:phase5
 pnpm verify:phase6
 pnpm verify:phase7
 pnpm verify:phase8
+pnpm verify:phase9
+pnpm verify:phase10
+pnpm verify:phase11
 ```
 
 `pnpm verify` is the canonical local code gate. The Compose verification is a
@@ -172,6 +175,13 @@ non-graphical smoke mode, and qualifies a versioned production Compose image
 through readiness, metrics, restart, backup/restore, and candidate promotion.
 Production rollout and rollback procedures are in
 [`docs/operations/release-and-rollback.md`](docs/operations/release-and-rollback.md).
+
+`pnpm verify:phase11` qualifies the durable occurrence/kind notification ledger,
+calm-day suppression, explicit transient retry, ambiguous-response fail-closed
+behavior, redacted owner health APIs, Settings controls, scheduler restart
+replay, and the disposable recovery image. Live ntfy acceptance uses a dedicated
+write-only publisher on NUC's private `management` network as documented in
+[`docs/operations/tadooer-production.md`](docs/operations/tadooer-production.md).
 
 Build the desktop bundle with `pnpm package:desktop`. Its default authority is
 `http://127.0.0.1:18080`; set `SUITE_SERVER_URL` to an HTTPS origin for a remote

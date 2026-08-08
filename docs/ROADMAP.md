@@ -481,9 +481,19 @@ filters keep Google and Baïkal events visibly distinct.
 
 ## Phase 11: Durable ntfy reminders
 
-Planned next: authenticated private-network ntfy publication, owner preferences,
-durable occurrence/kind delivery ledger, calm-day suppression, bounded retries,
-redacted delivery health, and Settings controls.
+Phase 11 is complete in source and disposable deployment qualification. Suite
+publishes through a mode-0600, ACL-limited ntfy credential on the private
+management network; the browser receives only owner preferences and redacted
+delivery health. The occurrence/kind ledger claims work durably, cancels
+obsolete reminders, survives restart, retries only explicit transient HTTP
+failures with bounded backoff, and refuses to replay an ambiguous response.
+
+Lead and at-start reminders follow calendar freshness, working hours, breaks,
+busy intervals, task completion, and active-focus suppression. Detailed content
+is limited to task title, localized planned time, and a Suite deep link. Notes,
+event titles, provider/account data, connector secrets, and automation tokens
+are excluded. Live authenticated ntfy delivery remains production acceptance
+evidence before the phase is operationally complete.
 
 ## Phase 12: Seven-day soak and stable release
 

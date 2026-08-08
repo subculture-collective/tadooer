@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 13,
-        expectedMigrationCount: 13,
+        appliedMigrationCount: 14,
+        expectedMigrationCount: 14,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(13);
-      expect(reopenedState.expectedMigrationCount).toBe(13);
+      expect(reopenedState.appliedMigrationCount).toBe(14);
+      expect(reopenedState.expectedMigrationCount).toBe(14);
     });
   });
 
@@ -1508,6 +1508,116 @@ describe("SuiteDatabase", () => {
         .get() as unknown as { readonly count: number };
       expect(connectorRows.count).toBe(0);
       raw.close();
+    });
+  });
+
+  it("keeps notification occurrences durable, unique, cancellable, and content-free", async () => {
+    await withTemporaryDirectory((directory) => {
+      const path = join(directory, "suite.sqlite");
+      let database = SuiteDatabase.open(path);
+      const now = "2026-08-10T15:40:00.000Z";
+      database.createOwner({
+        id: "notification-owner",
+        username: "notification-owner",
+        displayName: "Notification owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      database.createTaskIdempotently(
+        "notification-owner",
+        "notification-task-create",
+        "notification-task-hash",
+        {
+          id: "notification-task",
+          title: "Private title sentinel",
+          notes: "secret notes sentinel",
+          status: "open",
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+      );
+      database.patchTask(
+        "notification-owner",
+        "notification-task",
+        1,
+        {
+          plannedStart: "2026-08-10T16:00:00.000Z",
+          estimateMinutes: 30,
+        },
+        now,
+      );
+      expect(
+        database.getNotificationPreferences("notification-owner"),
+      ).toMatchObject({ enabled: false, leadReminderEnabled: true });
+      const preferences = database.putNotificationPreferences(
+        "notification-owner",
+        {
+          enabled: true,
+          leadReminderEnabled: true,
+          atStartReminderEnabled: true,
+          detailedContentEnabled: true,
+        },
+        now,
+      );
+      const reconcile = (): void =>
+        database.reconcileNotificationDeliveries({
+          ownerId: "notification-owner",
+          tasks: database.listTasks("notification-owner"),
+          preferences,
+          now,
+        });
+      reconcile();
+      reconcile();
+      const due = database.listDueNotificationDeliveries(
+        "2026-08-10T15:45:00.000Z",
+      );
+      expect(due).toHaveLength(1);
+      expect(due[0]).toMatchObject({ kind: "lead", attemptCount: 0 });
+      const claimed = database.claimNotificationDelivery(
+        due[0]?.id ?? "",
+        "2026-08-10T15:45:00.000Z",
+      );
+      expect(claimed).toMatchObject({ state: "sending", attemptCount: 1 });
+      database.finishNotificationDelivery(
+        due[0]?.id ?? "",
+        "delivered",
+        null,
+        "2026-08-10T15:45:01.000Z",
+      );
+      const current = database.getTask(
+        "notification-owner",
+        "notification-task",
+      );
+      database.patchTask(
+        "notification-owner",
+        "notification-task",
+        current?.revision ?? 0,
+        { plannedStart: "2026-08-10T17:00:00.000Z" },
+        "2026-08-10T15:46:00.000Z",
+      );
+      database.reconcileNotificationDeliveries({
+        ownerId: "notification-owner",
+        tasks: database.listTasks("notification-owner"),
+        preferences,
+        now: "2026-08-10T15:46:00.000Z",
+      });
+      expect(
+        database.getNotificationDeliveryStatus("notification-owner"),
+      ).toMatchObject({ pendingCount: 2, failedCount: 0 });
+      const raw = new DatabaseSync(path, { readOnly: true });
+      const serialized = JSON.stringify(
+        raw.prepare("SELECT * FROM notification_deliveries").all(),
+      );
+      expect(serialized).not.toContain("Private title sentinel");
+      expect(serialized).not.toContain("secret notes sentinel");
+      raw.close();
+      database.close();
+      database = SuiteDatabase.open(path);
+      expect(
+        database.getNotificationDeliveryStatus("notification-owner"),
+      ).toMatchObject({ pendingCount: 2, failedCount: 0 });
+      database.close();
     });
   });
 });

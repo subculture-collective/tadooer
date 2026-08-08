@@ -679,6 +679,22 @@ summary:focus-visible {
   background: #f9f7f0;
 }
 
+.notification-preferences {
+  display: grid;
+  gap: 0.65rem;
+  margin: 1rem 0;
+}
+
+.notification-preferences label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.notification-preferences button {
+  width: fit-content;
+}
+
 .task-filter-bar {
   display: grid;
   grid-template-columns: minmax(12rem, 2fr) repeat(3, minmax(8rem, 1fr));

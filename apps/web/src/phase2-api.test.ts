@@ -6,7 +6,10 @@ import {
   getActiveSession,
   getSyncSnapshot,
   instantiateTemplate,
+  getNotificationStatus,
+  sendTestNotification,
   syncRound,
+  updateNotificationPreferences,
 } from "./api.ts";
 import { SyncCursorResetRequired } from "./sync-engine.ts";
 
@@ -26,6 +29,67 @@ const response = (body: unknown, status = 200): Response =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Phase 2 API transport", () => {
+  it("uses authenticated notification preference, status, and test routes", async () => {
+    const calls: { path: string; method: string; csrf: string | null }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string, init: RequestInit = {}) => {
+        calls.push({
+          path,
+          method: init.method ?? "GET",
+          csrf: new Headers(init.headers).get("x-csrf-token"),
+        });
+        if (path.endsWith("/preferences"))
+          return Promise.resolve(
+            response({
+              enabled: true,
+              leadReminderEnabled: true,
+              atStartReminderEnabled: true,
+              detailedContentEnabled: true,
+            }),
+          );
+        if (path.endsWith("/status"))
+          return Promise.resolve(
+            response({
+              configured: true,
+              enabled: true,
+              state: "ready",
+              pendingCount: 0,
+              failedCount: 0,
+              lastDelivery: null,
+            }),
+          );
+        return Promise.resolve(
+          response({ accepted: true, state: "delivered", errorCode: null }),
+        );
+      }),
+    );
+    await updateNotificationPreferences(
+      {
+        enabled: true,
+        leadReminderEnabled: true,
+        atStartReminderEnabled: true,
+        detailedContentEnabled: true,
+      },
+      "csrf-token",
+    );
+    await getNotificationStatus();
+    await sendTestNotification("csrf-token");
+    expect(calls).toEqual([
+      {
+        path: "/api/notifications/preferences",
+        method: "PUT",
+        csrf: "csrf-token",
+      },
+      { path: "/api/notifications/status", method: "GET", csrf: null },
+      {
+        path: "/api/notifications/test",
+        method: "POST",
+        csrf: "csrf-token",
+      },
+    ]);
+  });
+
   it("instantiates a template with an explicit destination and retry key", async () => {
     const fetcher = vi.fn((path: string, init: RequestInit) => {
       expect(path).toBe(

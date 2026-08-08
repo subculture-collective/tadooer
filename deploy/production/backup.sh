@@ -38,6 +38,9 @@ docker compose --env-file "$compose_env_file" -f "$compose_file" exec -T suite s
   if [ -f /data/google-oauth.json ]; then
     cp /data/google-oauth.json "$destination/google-oauth.json"
   fi
+  if [ -f /data/ntfy-publisher.json ]; then
+    cp /data/ntfy-publisher.json "$destination/ntfy-publisher.json"
+  fi
   chmod 600 "$destination"/*
 ' sh "/data/${backup_relative}"
 

@@ -83,6 +83,7 @@ import {
   calendarImportReportSchema,
   calendarFeedCreateRequestSchema,
   planningPreferencesSchema,
+  notificationPreferencesSchema,
 } from "@suite/contracts";
 import { parseIcsImport, serializeCalendarFeed } from "@suite/import-export";
 import {
@@ -107,6 +108,7 @@ import {
   validateChoicePoolSelection,
   buildCalmDay,
   zonedDayWindow,
+  evaluateReminder,
 } from "@suite/domain";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { ServerConfig } from "./config.ts";
@@ -123,6 +125,7 @@ import {
   type ConnectorFailure,
 } from "./connector.ts";
 import { GoogleConnectorService } from "./google-connector.ts";
+import { loadNtfyPublisherConfig, NtfyPublisher } from "./notifications.ts";
 
 const mimeTypes: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
@@ -704,6 +707,7 @@ const activeResponse = (session: ActiveSession): ContractActiveSession => ({
 
 export interface RunningSuiteServer {
   readonly baseUrl: string;
+  runNotifications(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -711,6 +715,9 @@ export interface SuiteServerOptions {
   readonly connectorFetch?: typeof fetch;
   readonly googleFetch?: typeof fetch;
   readonly sessionClock?: SessionClock;
+  readonly notificationFetch?: typeof fetch;
+  readonly notificationIntervalMs?: number;
+  readonly disableNotificationTimer?: boolean;
 }
 
 export const startSuiteServer = async (
@@ -736,6 +743,130 @@ export const startSuiteServer = async (
   );
   const startedAt = Date.now();
   const requestCounts = new Map<number, number>();
+  const notificationConfig = loadNtfyPublisherConfig(
+    config.ntfyPublisherConfigPath,
+  );
+  const notificationPublisher =
+    notificationConfig === undefined
+      ? undefined
+      : new NtfyPublisher(notificationConfig, options.notificationFetch);
+  database.failUncertainNotificationDeliveries(new Date().toISOString());
+
+  const runNotifications = async (): Promise<void> => {
+    const ownerId = database.getActiveOwnerId();
+    if (ownerId === undefined) return;
+    const now = sessionClock.now().toISOString();
+    const preferences = database.getNotificationPreferences(ownerId);
+    const tasks = database.listTasks(ownerId);
+    database.reconcileNotificationDeliveries({
+      ownerId,
+      tasks,
+      preferences,
+      now,
+    });
+    if (!preferences.enabled || notificationPublisher === undefined) return;
+    const planning = database.getPlanningPreferences(ownerId);
+    const window = zonedDayWindow(now, planning.timeZone);
+    const events = database.listCalendarEvents(ownerId, window.from, window.to);
+    const googleStatus = google.status(ownerId);
+    const baikalStatus = await connector.status(ownerId);
+    const freshness: boolean[] = [];
+    if (baikalStatus.ok && baikalStatus.status.connected) freshness.push(true);
+    if (googleStatus.connected)
+      freshness.push(
+        googleStatus.state === "connected" &&
+          googleStatus.freshness.every(({ state }) => state === "fresh"),
+      );
+    const calendarFresh =
+      freshness.length > 0 && freshness.every((state) => state);
+    const active = database.getActiveSession(ownerId);
+    const activeFocusTaskId =
+      active?.state === "running" && active.phase === "focus"
+        ? active.taskId
+        : null;
+    for (const due of database.listDueNotificationDeliveries(now)) {
+      if (due.taskId === null || due.kind === "test") continue;
+      const claimed = database.claimNotificationDelivery(due.id, now);
+      if (claimed === undefined) continue;
+      const task = database.getTask(ownerId, due.taskId);
+      if (
+        task?.deletedAt !== null ||
+        task.plannedStart !== due.occurrenceStart
+      ) {
+        database.finishNotificationDelivery(
+          due.id,
+          "cancelled",
+          "OBSOLETE",
+          now,
+        );
+        continue;
+      }
+      const taskBlock = database.getTaskCalendarBlock(ownerId, task.id);
+      const decision = evaluateReminder({
+        now,
+        taskId: task.id,
+        taskStatus: task.status,
+        occurrenceStart: due.occurrenceStart,
+        kind: due.kind,
+        preferences: planning,
+        calendarFresh,
+        busy: events
+          .filter(
+            (event) =>
+              taskBlock?.calendarId !== event.calendarId ||
+              taskBlock.eventHref !== event.href,
+          )
+          .map(({ startsAt, endsAt }) => ({ startsAt, endsAt })),
+        activeFocusTaskId,
+      });
+      if (decision.action === "defer") {
+        database.deferNotificationDelivery(
+          due.id,
+          decision.nextEligibleAt,
+          decision.reason.toUpperCase(),
+          now,
+        );
+        continue;
+      }
+      if (decision.action === "suppress") {
+        database.finishNotificationDelivery(
+          due.id,
+          "suppressed",
+          decision.reason.toUpperCase(),
+          now,
+        );
+        continue;
+      }
+      const localTime = new Intl.DateTimeFormat("en-US", {
+        timeZone: planning.timeZone,
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(due.occurrenceStart));
+      const result = await notificationPublisher.publish({
+        message: preferences.detailedContentEnabled
+          ? `${task.title} · ${localTime}`
+          : `Planned task reminder · ${localTime}`,
+        click: `${config.publicOrigin ?? "http://localhost"}/tasks?task=${encodeURIComponent(task.id)}`,
+      });
+      if (result.kind === "delivered")
+        database.finishNotificationDelivery(due.id, "delivered", null, now);
+      else if (result.kind === "retry" && claimed.attemptCount < 5) {
+        const backoffMinutes = [1, 5, 15, 30][claimed.attemptCount - 1] ?? 30;
+        database.deferNotificationDelivery(
+          due.id,
+          new Date(Date.parse(now) + backoffMinutes * 60_000).toISOString(),
+          result.errorCode,
+          now,
+        );
+      } else
+        database.finishNotificationDelivery(
+          due.id,
+          "failed",
+          result.kind === "retry" ? "NTFY_RETRY_EXHAUSTED" : result.errorCode,
+          now,
+        );
+    }
+  };
 
   const authenticateAutomation = (
     request: IncomingMessage,
@@ -4202,6 +4333,195 @@ export const startSuiteServer = async (
           return;
         }
 
+        if (
+          method === "GET" &&
+          url.pathname === "/api/notifications/preferences"
+        ) {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          sendJson(
+            response,
+            200,
+            database.getNotificationPreferences(session.owner.id),
+          );
+          return;
+        }
+
+        if (
+          method === "PUT" &&
+          url.pathname === "/api/notifications/preferences"
+        ) {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          const parsed = notificationPreferencesSchema.safeParse(
+            await readJson(request),
+          );
+          if (!parsed.success) {
+            sendError(
+              response,
+              400,
+              "INVALID_NOTIFICATION_PREFERENCES",
+              "Notification preferences are invalid",
+            );
+            return;
+          }
+          const stored = database.putNotificationPreferences(
+            session.owner.id,
+            parsed.data,
+            new Date().toISOString(),
+          );
+          await triggerNotifications();
+          sendJson(response, 200, stored);
+          return;
+        }
+
+        if (method === "GET" && url.pathname === "/api/notifications/status") {
+          const session = auth.authenticate(request, false);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          const preferences = database.getNotificationPreferences(
+            session.owner.id,
+          );
+          const status = database.getNotificationDeliveryStatus(
+            session.owner.id,
+          );
+          const last = status.lastDelivery;
+          sendJson(response, 200, {
+            configured: notificationPublisher !== undefined,
+            enabled: preferences.enabled,
+            state:
+              notificationPublisher === undefined
+                ? "unavailable"
+                : status.failedCount > 0
+                  ? "degraded"
+                  : "ready",
+            pendingCount: status.pendingCount,
+            failedCount: status.failedCount,
+            lastDelivery:
+              last === null
+                ? null
+                : {
+                    state:
+                      last.state === "sending" || last.state === "retry"
+                        ? "pending"
+                        : last.state,
+                    kind: last.kind,
+                    occurredAt: last.updatedAt,
+                    errorCode: last.errorCode,
+                  },
+          });
+          return;
+        }
+
+        if (method === "POST" && url.pathname === "/api/notifications/test") {
+          if (!sameOrigin(request)) {
+            sendError(
+              response,
+              403,
+              "ORIGIN_REQUIRED",
+              "Same-origin request required",
+            );
+            return;
+          }
+          const session = auth.authenticate(request, true);
+          if (session === undefined) {
+            sendError(
+              response,
+              401,
+              "AUTH_REQUIRED",
+              "Authentication required",
+            );
+            return;
+          }
+          if (
+            !auth.csrfMatches(
+              session,
+              request.headers["x-csrf-token"] as string | undefined,
+            )
+          ) {
+            sendError(
+              response,
+              403,
+              "CSRF_INVALID",
+              "Valid CSRF token required",
+            );
+            return;
+          }
+          if (notificationPublisher === undefined) {
+            sendJson(response, 503, {
+              accepted: false,
+              state: "unavailable",
+              errorCode: "NTFY_NOT_CONFIGURED",
+            });
+            return;
+          }
+          const now = new Date().toISOString();
+          const result = await notificationPublisher.publish({
+            message: "Tadooer test reminder",
+            click: `${config.publicOrigin ?? "http://localhost"}/settings`,
+          });
+          const delivered = result.kind === "delivered";
+          const errorCode = delivered ? null : result.errorCode;
+          database.recordNotificationTest(
+            session.owner.id,
+            delivered,
+            errorCode,
+            now,
+          );
+          sendJson(response, delivered ? 200 : 502, {
+            accepted: delivered,
+            state: delivered ? "delivered" : "failed",
+            errorCode,
+          });
+          return;
+        }
+
         if (method === "GET" && url.pathname === "/api/planner") {
           const session = auth.authenticate(request, false);
           if (session === undefined) {
@@ -6511,6 +6831,26 @@ export const startSuiteServer = async (
     },
   );
 
+  let notificationRunning = false;
+  const triggerNotifications = async (): Promise<void> => {
+    if (notificationRunning) return;
+    notificationRunning = true;
+    try {
+      await runNotifications();
+    } catch {
+      console.error("notifications.tick_failed");
+    } finally {
+      notificationRunning = false;
+    }
+  };
+  const notificationTimer = options.disableNotificationTimer
+    ? undefined
+    : setInterval(
+        () => void triggerNotifications(),
+        options.notificationIntervalMs ?? 60_000,
+      );
+  notificationTimer?.unref();
+
   await new Promise<void>((resolveListen, reject) => {
     server.once("error", reject);
     server.listen(config.port, config.host, () => {
@@ -6525,9 +6865,13 @@ export const startSuiteServer = async (
       ? "127.0.0.1"
       : address.address;
 
+  if (!options.disableNotificationTimer) void triggerNotifications();
+
   return {
     baseUrl: `http://${host}:${String(address.port)}`,
+    runNotifications: triggerNotifications,
     close: async () => {
+      if (notificationTimer !== undefined) clearInterval(notificationTimer);
       await new Promise<void>((resolveClose, reject) => {
         server.close((error) => {
           if (error === undefined) resolveClose();

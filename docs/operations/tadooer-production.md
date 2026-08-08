@@ -11,6 +11,7 @@ the parallel soak.
 - NUC listener: `10.0.0.56:18080`
 - Trusted proxy: Almaz `10.0.0.200/32`
 - Compose networks: existing `productivity` and `monitoring`
+- Notification network: existing private `management`
 - Suite data: `/srv/apps/productivity/data/tadooer`, owned by UID/GID 1000 and
   mode 0700
 - Compose file: `/srv/apps/productivity/tadooer-compose.yaml`
@@ -33,6 +34,12 @@ Do not copy the local Suite database or credential key. Let the production
 container create both, create the owner through the public UI, and connect the
 existing Baïkal and Google accounts explicitly.
 
+Install `/srv/apps/productivity/data/tadooer/ntfy-publisher.json` as UID/GID
+1000, mode 0600. It contains only `{baseUrl, topic, token}`. Use `http://ntfy`
+on the private `management` network and a dedicated non-admin ntfy user with
+write-only access to the selected topic. Never use the public anonymous route,
+an admin token, or a browser-visible credential.
+
 ## Promotion and deployment
 
 1. Run the complete repository and Phase 9 disposable gates.
@@ -51,10 +58,11 @@ existing Baïkal and Google accounts explicitly.
 Run `deploy/production/backup.sh` before the NUC Restic job and include only the
 generated `/srv/apps/productivity/data/tadooer/backups` directory in Restic.
 The script makes an online SQLite backup, copies the paired credential key and
-optional OAuth configuration, creates `SHA256SUMS`, and writes content-free
-node-exporter textfile metrics. Backup directories and secrets stay mode
+optional OAuth and ntfy publisher configurations, creates `SHA256SUMS`, and
+writes content-free node-exporter textfile metrics. Backup directories and secrets stay mode
 0700/0600. Prometheus scrapes Suite over the private `monitoring` network and
-loads the supplied alert rules.
+loads the supplied alert rules. The secret-bearing coherent set is retained only
+inside the encrypted Restic workflow.
 
 An acceptance restore always uses an isolated Compose project, isolated ports,
 a copied Baïkal backup, and no route to the production Baïkal service.

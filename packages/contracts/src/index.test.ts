@@ -11,6 +11,8 @@ import {
   idempotencyKeySchema,
   ianaTimeZoneSchema,
   importTaskCandidateSchema,
+  notificationPreferencesSchema,
+  notificationStatusResponseSchema,
   plannerWindowSchema,
   activeSessionCommandSchema,
   activeSessionSchema,
@@ -43,6 +45,43 @@ const fixture = (name: string): unknown =>
   ) as unknown;
 
 describe("Suite contracts", () => {
+  it("keeps notification preferences and delivery health strict and content-free", () => {
+    expect(
+      notificationPreferencesSchema.parse({
+        enabled: true,
+        leadReminderEnabled: true,
+        atStartReminderEnabled: true,
+        detailedContentEnabled: true,
+      }),
+    ).toBeDefined();
+    const status = {
+      configured: true,
+      enabled: true,
+      state: "ready",
+      pendingCount: 1,
+      failedCount: 0,
+      lastDelivery: {
+        state: "delivered",
+        kind: "lead",
+        occurredAt: "2026-08-10T15:45:00.000Z",
+        errorCode: null,
+      },
+    } as const;
+    expect(notificationStatusResponseSchema.parse(status)).toEqual(status);
+    expect(
+      notificationStatusResponseSchema.safeParse({
+        ...status,
+        token: "publisher-secret",
+      }).success,
+    ).toBe(false);
+    expect(
+      notificationStatusResponseSchema.safeParse({
+        ...status,
+        lastDelivery: { ...status.lastDelivery, message: "Private task" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts supported IANA time zones and rejects invented zones", () => {
     expect(ianaTimeZoneSchema.parse("America/Chicago")).toBe("America/Chicago");
     expect(ianaTimeZoneSchema.parse("UTC")).toBe("UTC");

@@ -41,6 +41,9 @@ import {
   googleSyncResponseSchema,
   planningPreferencesSchema,
   dayPlanResponseSchema,
+  notificationPreferencesSchema,
+  notificationStatusResponseSchema,
+  notificationTestResponseSchema,
   choicePoolHistoryEventSchema,
   taskListResponseSchema,
   taskMutationResponseSchema,
@@ -78,6 +81,9 @@ import {
   type GoogleSyncResponse,
   type PlanningPreferences,
   type DayPlanResponse,
+  type NotificationPreferences,
+  type NotificationStatusResponse,
+  type NotificationTestResponse,
 } from "@suite/contracts";
 import { z } from "zod";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -248,6 +254,31 @@ export const getDayPlan = (
   at = new Date().toISOString(),
 ): Promise<DayPlanResponse> =>
   request(`/api/day-plan?at=${encodeURIComponent(at)}`, dayPlanResponseSchema);
+
+export const getNotificationPreferences =
+  (): Promise<NotificationPreferences> =>
+    request("/api/notifications/preferences", notificationPreferencesSchema);
+
+export const updateNotificationPreferences = (
+  input: NotificationPreferences,
+  csrfToken: string,
+): Promise<NotificationPreferences> =>
+  request("/api/notifications/preferences", notificationPreferencesSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(notificationPreferencesSchema.parse(input)),
+  });
+
+export const getNotificationStatus = (): Promise<NotificationStatusResponse> =>
+  request("/api/notifications/status", notificationStatusResponseSchema);
+
+export const sendTestNotification = (
+  csrfToken: string,
+): Promise<NotificationTestResponse> =>
+  request("/api/notifications/test", notificationTestResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
 
 export const getTasks = (): Promise<TaskListResponse> =>
   request("/api/tasks", taskListResponseSchema);
