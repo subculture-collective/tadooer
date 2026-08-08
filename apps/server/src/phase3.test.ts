@@ -319,7 +319,17 @@ describe("Phase 3 Google federation foundation", () => {
         expect(
           plannerResponseSchema.parse(await initialPlanner.json()),
         ).toMatchObject({
-          events: [{ summary: "Initial appointment", recurrence: "none" }],
+          events: [
+            {
+              summary: "Initial appointment",
+              recurrence: "none",
+              source: {
+                providerKind: "google",
+                providerDisplayLabel: "Google Calendar",
+                calendarName: "Primary",
+              },
+            },
+          ],
           freshness: { state: "fresh" },
         });
 
@@ -401,10 +411,28 @@ describe("Phase 3 Google federation foundation", () => {
             workdayEnd: "18:00",
             breakStart: "12:00",
             breakEnd: "12:30",
-            timeZone: "UTC",
+            timeZone: "America/Chicago",
           },
         );
-        planningPreferencesSchema.parse(await preferencesResponse.json());
+        expect(
+          planningPreferencesSchema.parse(await preferencesResponse.json()),
+        ).toMatchObject({ timeZone: "America/Chicago" });
+        const invalidTimeZone = await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          "/api/planning/preferences",
+          "PUT",
+          {
+            workingDays: [5],
+            workdayStart: "08:00",
+            workdayEnd: "18:00",
+            breakStart: null,
+            breakEnd: null,
+            timeZone: "Central-ish/Nowhere",
+          },
+        );
+        expect(invalidTimeZone.status).toBe(400);
         const dayPlan = dayPlanResponseSchema.parse(
           await (
             await fetch(

@@ -13,6 +13,7 @@ export interface CalmPreferences {
   readonly workdayEnd: string;
   readonly breakStart: string | null;
   readonly breakEnd: string | null;
+  readonly timeZone: string;
 }
 export interface CalmDayResult {
   readonly state:
@@ -31,8 +32,99 @@ export interface CalmDayResult {
   };
 }
 
-const minuteOfDay = (date: Date): number =>
-  date.getUTCHours() * 60 + date.getUTCMinutes();
+type ZonedParts = Readonly<
+  Record<"year" | "month" | "day" | "hour" | "minute" | "weekday", number>
+>;
+
+const zonedParts = (date: Date, timeZone: string): ZonedParts => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    weekday: "short",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const weekdays: Readonly<Record<string, number>> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  return {
+    year: Number(value("year")),
+    month: Number(value("month")),
+    day: Number(value("day")),
+    hour: Number(value("hour")),
+    minute: Number(value("minute")),
+    weekday: weekdays[value("weekday")] ?? -1,
+  };
+};
+
+const instantForZonedLocal = (
+  local: Readonly<Record<"year" | "month" | "day" | "hour" | "minute", number>>,
+  timeZone: string,
+): Date => {
+  const target = Date.UTC(
+    local.year,
+    local.month - 1,
+    local.day,
+    local.hour,
+    local.minute,
+  );
+  let candidate = target;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const actual = zonedParts(new Date(candidate), timeZone);
+    const represented = Date.UTC(
+      actual.year,
+      actual.month - 1,
+      actual.day,
+      actual.hour,
+      actual.minute,
+    );
+    candidate += target - represented;
+  }
+  return new Date(candidate);
+};
+
+export const zonedDayWindow = (
+  at: string,
+  timeZone: string,
+): { readonly from: string; readonly to: string } => {
+  const current = zonedParts(new Date(at), timeZone);
+  const nextDate = new Date(
+    Date.UTC(current.year, current.month - 1, current.day + 1),
+  );
+  return {
+    from: instantForZonedLocal(
+      {
+        year: current.year,
+        month: current.month,
+        day: current.day,
+        hour: 0,
+        minute: 0,
+      },
+      timeZone,
+    ).toISOString(),
+    to: instantForZonedLocal(
+      {
+        year: nextDate.getUTCFullYear(),
+        month: nextDate.getUTCMonth() + 1,
+        day: nextDate.getUTCDate(),
+        hour: 0,
+        minute: 0,
+      },
+      timeZone,
+    ).toISOString(),
+  };
+};
 const minute = (value: string): number =>
   Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
 
@@ -45,8 +137,9 @@ export const buildCalmDay = (input: {
 }): CalmDayResult => {
   const now = new Date(input.at);
   const nowTime = now.getTime();
-  const currentMinute = minuteOfDay(now);
-  const workingDay = input.preferences.workingDays.includes(now.getUTCDay());
+  const local = zonedParts(now, input.preferences.timeZone);
+  const currentMinute = local.hour * 60 + local.minute;
+  const workingDay = input.preferences.workingDays.includes(local.weekday);
   const ordered = input.tasks
     .filter(({ status }) => status === "open")
     .toSorted((left, right) => {

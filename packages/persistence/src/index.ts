@@ -138,6 +138,9 @@ export interface CalendarEventProjectionRecord {
   readonly mutable: boolean;
   readonly revision: number;
   readonly projectedAt: string;
+  readonly providerKind?: CalendarProviderRecord["kind"];
+  readonly providerDisplayLabel?: string;
+  readonly calendarName?: string;
 }
 
 export interface TaskCalendarBlockRecord {
@@ -462,7 +465,7 @@ export interface PlanningPreferencesRecord {
   readonly workdayEnd: string;
   readonly breakStart: string | null;
   readonly breakEnd: string | null;
-  readonly timeZone: "UTC";
+  readonly timeZone: string;
 }
 export interface SyncChangeRecord {
   readonly ownerId: string;
@@ -999,6 +1002,22 @@ const migrations: readonly Migration[] = [
         working_days_json TEXT NOT NULL, workday_start TEXT NOT NULL, workday_end TEXT NOT NULL,
         break_start TEXT, break_end TEXT, time_zone TEXT NOT NULL CHECK(time_zone='UTC'), updated_at TEXT NOT NULL
       ) STRICT;
+    `,
+  },
+  {
+    id: "0013_phase_10_iana_time_zones",
+    sql: `
+      CREATE TABLE owner_planning_preferences_v2 (
+        owner_id TEXT PRIMARY KEY REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        working_days_json TEXT NOT NULL, workday_start TEXT NOT NULL, workday_end TEXT NOT NULL,
+        break_start TEXT, break_end TEXT, time_zone TEXT NOT NULL, updated_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO owner_planning_preferences_v2
+        (owner_id,working_days_json,workday_start,workday_end,break_start,break_end,time_zone,updated_at)
+        SELECT owner_id,working_days_json,workday_start,workday_end,break_start,break_end,time_zone,updated_at
+        FROM owner_planning_preferences;
+      DROP TABLE owner_planning_preferences;
+      ALTER TABLE owner_planning_preferences_v2 RENAME TO owner_planning_preferences;
     `,
   },
 ];
@@ -1987,7 +2006,7 @@ export class SuiteDatabase {
           workdayEnd: "17:00",
           breakStart: "12:00",
           breakEnd: "12:30",
-          timeZone: "UTC",
+          timeZone: "America/Chicago",
         }
       : {
           workingDays: JSON.parse(String(row.working_days_json)) as number[],
@@ -1995,7 +2014,7 @@ export class SuiteDatabase {
           workdayEnd: String(row.workday_end),
           breakStart: row.break_start === null ? null : String(row.break_start),
           breakEnd: row.break_end === null ? null : String(row.break_end),
-          timeZone: "UTC",
+          timeZone: String(row.time_zone),
         };
   }
 
@@ -2026,7 +2045,10 @@ export class SuiteDatabase {
     calendarId: string,
     from: string,
     to: string,
-    events: readonly Omit<CalendarEventProjectionRecord, "ownerId">[],
+    events: readonly Omit<
+      CalendarEventProjectionRecord,
+      "ownerId" | "providerKind" | "providerDisplayLabel" | "calendarName"
+    >[],
   ): void {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -2052,9 +2074,12 @@ export class SuiteDatabase {
   ): readonly CalendarEventProjectionRecord[] {
     const rows = this.#database
       .prepare(
-        `SELECT * FROM calendar_event_projections
-         WHERE owner_id = ? AND starts_at < ? AND ends_at > ?
-         ORDER BY starts_at, calendar_id, href`,
+        `SELECT e.*,p.kind AS provider_kind,c.display_name AS calendar_name
+         FROM calendar_event_projections e
+         JOIN calendar_providers p ON p.id=e.provider_id
+         JOIN calendar_collections c ON c.id=e.calendar_id
+         WHERE e.owner_id = ? AND e.starts_at < ? AND e.ends_at > ?
+         ORDER BY e.starts_at, e.calendar_id, e.href`,
       )
       .all(ownerId, to, from) as unknown as readonly Record<
       string,
@@ -2501,6 +2526,16 @@ export class SuiteDatabase {
       mutable: Number(row.mutable) === 1,
       revision: Number(row.revision),
       projectedAt: String(row.projected_at),
+      providerKind: String(
+        row.provider_kind ?? "caldav",
+      ) as CalendarProviderRecord["kind"],
+      providerDisplayLabel:
+        String(row.provider_kind ?? "caldav") === "google"
+          ? "Google Calendar"
+          : String(row.provider_kind ?? "caldav") === "baikal"
+            ? "Baïkal"
+            : "CalDAV",
+      calendarName: String(row.calendar_name ?? "Calendar"),
     };
   }
 

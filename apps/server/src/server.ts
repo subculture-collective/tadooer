@@ -95,6 +95,7 @@ import {
   type TemplateInstantiationResult,
   type PlanningPlaceholderResolutionResult,
   type PlanningPlaceholderResolutionRecord,
+  type CalendarEventProjectionRecord,
 } from "@suite/persistence";
 import {
   createActiveSession,
@@ -105,6 +106,7 @@ import {
   suggestChoicePool,
   validateChoicePoolSelection,
   buildCalmDay,
+  zonedDayWindow,
 } from "@suite/domain";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { ServerConfig } from "./config.ts";
@@ -217,6 +219,30 @@ const taskResponse = (task: TaskRecord): Task => ({
   estimateMinutes: task.estimateMinutes,
   projectId: task.projectId ?? null,
   tagIds: [...(task.tagIds ?? [])],
+});
+
+const calendarEventResponse = (
+  event: CalendarEventProjectionRecord,
+): PlannerResponse["events"][number] => ({
+  identity: {
+    providerId: event.providerId,
+    calendarId: event.calendarId,
+    eventId: event.href,
+  },
+  href: event.href,
+  uid: event.uid,
+  etag: event.etag,
+  summary: event.summary,
+  startsAt: event.startsAt,
+  endsAt: event.endsAt,
+  allDay: event.allDay,
+  recurrence: event.recurrence ?? "none",
+  projectedAt: event.projectedAt,
+  source: {
+    providerKind: event.providerKind ?? "caldav",
+    providerDisplayLabel: event.providerDisplayLabel ?? "CalDAV",
+    calendarName: event.calendarName ?? "Calendar",
+  },
 });
 
 const templateResponse = (template: {
@@ -801,16 +827,15 @@ export const startSuiteServer = async (
           } catch {
             requestHost = undefined;
           }
-          if (
-            requestHost === undefined ||
-            requestHost.username !== "" ||
-            requestHost.password !== "" ||
-            requestHost.pathname !== "/" ||
-            requestHost.search !== "" ||
-            requestHost.hash !== "" ||
-            requestHost.hostname.toLowerCase() !==
-              expected.hostname.toLowerCase()
-          ) {
+          const requestHostMatches =
+            requestHost?.username === "" &&
+            requestHost.password === "" &&
+            requestHost.pathname === "/" &&
+            requestHost.search === "" &&
+            requestHost.hash === "" &&
+            requestHost.hostname.toLowerCase() ===
+              expected.hostname.toLowerCase();
+          if (!requestHostMatches) {
             sendError(
               response,
               421,
@@ -2014,22 +2039,7 @@ export const startSuiteServer = async (
             body = {
               window: window.data,
               tasks: database.listTasks(token.ownerId).map(taskResponse),
-              events: events.map((event) => ({
-                identity: {
-                  providerId: event.providerId,
-                  calendarId: event.calendarId,
-                  eventId: event.href,
-                },
-                href: event.href,
-                uid: event.uid,
-                etag: event.etag,
-                summary: event.summary,
-                startsAt: event.startsAt,
-                endsAt: event.endsAt,
-                allDay: false,
-                recurrence: "none" as const,
-                projectedAt: event.projectedAt,
-              })),
+              events: events.map(calendarEventResponse),
               freshness: {
                 state:
                   events.length === 0
@@ -4302,22 +4312,7 @@ export const startSuiteServer = async (
                 return leftTime - rightTime || left.id.localeCompare(right.id);
               })
               .map(taskResponse),
-            events: events.map((event) => ({
-              identity: {
-                providerId: event.providerId,
-                calendarId: event.calendarId,
-                eventId: event.href,
-              },
-              href: event.href,
-              uid: event.uid,
-              etag: event.etag,
-              summary: event.summary,
-              startsAt: event.startsAt,
-              endsAt: event.endsAt,
-              allDay: event.allDay,
-              recurrence: event.recurrence ?? "none",
-              projectedAt: event.projectedAt,
-            })),
+            events: events.map(calendarEventResponse),
             freshness: fresh
               ? {
                   state: "fresh",
@@ -4359,15 +4354,16 @@ export const startSuiteServer = async (
             );
             return;
           }
-          const dayStart = new Date(at);
-          dayStart.setUTCHours(0, 0, 0, 0);
-          const dayEnd = new Date(dayStart);
-          dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+          const preferences = database.getPlanningPreferences(session.owner.id);
+          const dayWindow = zonedDayWindow(
+            at.toISOString(),
+            preferences.timeZone,
+          );
           const tasks = database.listTasks(session.owner.id).map(taskResponse);
           const events = database.listCalendarEvents(
             session.owner.id,
-            dayStart.toISOString(),
-            dayEnd.toISOString(),
+            dayWindow.from,
+            dayWindow.to,
           );
           const googleStatus = google.status(session.owner.id);
           const baikalStatus = await connector.status(session.owner.id);
@@ -4381,7 +4377,6 @@ export const startSuiteServer = async (
             );
           const calendarFresh =
             providerFreshness.length > 0 && providerFreshness.every(Boolean);
-          const preferences = database.getPlanningPreferences(session.owner.id);
           const calm = buildCalmDay({
             at: at.toISOString(),
             tasks: tasks.map((task) => ({

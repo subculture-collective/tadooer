@@ -48,8 +48,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 12,
-        expectedMigrationCount: 12,
+        appliedMigrationCount: 13,
+        expectedMigrationCount: 13,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +68,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(12);
-      expect(reopenedState.expectedMigrationCount).toBe(12);
+      expect(reopenedState.appliedMigrationCount).toBe(13);
+      expect(reopenedState.expectedMigrationCount).toBe(13);
     });
   });
 
@@ -1435,7 +1435,14 @@ describe("SuiteDatabase", () => {
           "2026-08-08T00:00:00.000Z",
         ),
       ).toMatchObject([
-        { href: "event-1", recurrence: "instance", mutable: false },
+        {
+          href: "event-1",
+          recurrence: "instance",
+          mutable: false,
+          providerKind: "google",
+          providerDisplayLabel: "Google Calendar",
+          calendarName: "Primary",
+        },
       ]);
       expect(database.listGoogleCalendarSync("google-owner")).toMatchObject([
         { syncToken: "sync-1", state: "fresh" },
@@ -1472,7 +1479,7 @@ describe("SuiteDatabase", () => {
       ).toEqual([]);
       expect(database.getPlanningPreferences("google-owner")).toMatchObject({
         workingDays: [1, 2, 3, 4, 5],
-        timeZone: "UTC",
+        timeZone: "America/Chicago",
       });
       expect(
         database.putPlanningPreferences(

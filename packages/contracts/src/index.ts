@@ -53,6 +53,25 @@ export const entityIdSchema = z.uuid();
 export const quotedRevisionEtagSchema = z.string().regex(/^"[1-9][0-9]*"$/);
 export const strongDavEtagSchema = z.string().regex(/^"[^"\r\n]+"$/);
 
+export const ianaTimeZoneSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .refine(
+    (value) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: value }).format(
+          new Date(0),
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Time zone must be a supported IANA identifier" },
+  );
+
 export const setupStatusResponseSchema = z.object({
   setupRequired: z.boolean(),
 });
@@ -228,6 +247,11 @@ export const calendarEventProjectionSchema = z
     allDay: z.boolean(),
     recurrence: z.enum(["none", "instance"]),
     projectedAt: z.iso.datetime(),
+    source: z.object({
+      providerKind: calendarProviderKindSchema,
+      providerDisplayLabel: z.string().trim().min(1).max(100),
+      calendarName: z.string().trim().min(1).max(240),
+    }),
   })
   .refine(({ startsAt, endsAt }) => Date.parse(endsAt) > Date.parse(startsAt), {
     message: "Event end must be after event start",
@@ -290,7 +314,7 @@ export const planningPreferencesSchema = z
       .string()
       .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
       .nullable(),
-    timeZone: z.literal("UTC"),
+    timeZone: ianaTimeZoneSchema,
   })
   .refine(({ workdayStart, workdayEnd }) => workdayStart < workdayEnd, {
     message: "Workday end must follow start",

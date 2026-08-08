@@ -81,6 +81,11 @@ describe("App", () => {
                 allDay: false,
                 recurrence: "none",
                 projectedAt: "2026-08-06T00:01:00.000Z",
+                source: {
+                  providerKind: "baikal",
+                  providerDisplayLabel: "Baïkal",
+                  calendarName: "Work",
+                },
               },
             ],
             freshness: {
@@ -93,27 +98,14 @@ describe("App", () => {
       />,
     );
     expect(markup).toContain("Planner connected");
-    expect(markup).toContain("Events · Todos");
-    expect(markup).toContain(
-      "Recurrence editing, offline writes, Google, and broad calendar mutation remain later-phase capabilities",
-    );
+    expect(markup).toContain('aria-current="page">Today');
     expect(markup).toContain("Capture a task");
     expect(markup).toContain("Capture the first task");
-    expect(markup).toContain("Revision 1");
     expect(markup).toContain("Existing appointment");
-    expect(markup).toContain("Move calendar block");
-    expect(markup).toContain("Recently deleted tasks (0)");
-    expect(markup).toContain("Local-first focus · Phase 2");
+    expect(markup).toContain("Baïkal · Work");
+    expect(markup).toContain("Single-owner daily driver · Phase 10");
     expect(markup).toContain("Focus session");
     expect(markup).toContain("Estimate minutes");
-    expect(markup).toContain("Projects and tags");
-    expect(markup).toContain("Sync now");
-    expect(markup).toContain("Migration &amp; read-only publication");
-    expect(markup).toContain("Google Calendar ICS/Takeout");
-    expect(markup).toContain("Create revocable read-only feed");
-    expect(markup).toContain(
-      "/api/calendars/4519c805-e478-486b-a918-616fc6d9ea98/export.ics",
-    );
   });
 
   it("renders a bounded offline task workspace without calendar or focus controls", () => {
@@ -145,7 +137,78 @@ describe("App", () => {
     expect(markup).toContain("Visible sync conflicts: 1");
     expect(markup).toContain("Sync now");
     expect(markup).toContain("Export redacted sync diagnostics");
-    expect(markup).not.toContain("Place in calendar");
-    expect(markup).not.toContain("Start focus");
+    expect(markup).toContain("Place in calendar (offline)");
+    expect(markup).toContain("Start focus (offline)");
+    expect(markup).toContain('disabled=""');
+  });
+
+  it("renders each authenticated deep link as a distinct workspace view", () => {
+    const state = {
+      kind: "authenticated" as const,
+      session: {
+        owner: {
+          id: "d1054acd-c04d-4bd8-a814-254b007154ba",
+          username: "owner",
+          displayName: "Owner",
+        },
+        csrfToken: "A".repeat(43),
+        expiresAt: "2026-08-08T12:00:00.000Z",
+      },
+      baikal: {
+        connected: true,
+        providerId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+        endpoint: "http://baikal/dav.php/",
+        username: "alice",
+        verifiedAt: "2026-08-05T00:00:00.000Z",
+        calendars: [
+          {
+            id: "4519c805-e478-486b-a918-616fc6d9ea98",
+            providerId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+            href: "/dav.php/calendars/alice/work/",
+            displayName: "Work",
+            supportsEvents: true,
+            supportsTodos: true,
+          },
+        ],
+      },
+      tasks: [
+        {
+          id: "afcab502-2199-43fd-b9d3-c8b556c6f25b",
+          title: "Route-backed task",
+          notes: "",
+          status: "open" as const,
+          revision: 1,
+          createdAt: "2026-08-07T12:00:00.000Z",
+          updatedAt: "2026-08-07T12:00:00.000Z",
+          completedAt: null,
+          deletedAt: null,
+          plannedStart: null,
+          estimateMinutes: 30,
+        },
+      ],
+      recovery: [],
+      planner: null,
+    };
+    const tasks = renderToStaticMarkup(
+      <App initialState={state} initialPath="/tasks" />,
+    );
+    const reuse = renderToStaticMarkup(
+      <App initialState={state} initialPath="/reuse" />,
+    );
+    const connections = renderToStaticMarkup(
+      <App initialState={state} initialPath="/connections" />,
+    );
+    const settings = renderToStaticMarkup(
+      <App initialState={state} initialPath="/settings" />,
+    );
+    expect(tasks).toContain("Route-backed task");
+    expect(tasks).toContain("Filter tasks");
+    expect(tasks).not.toContain("Template Library");
+    expect(reuse).toContain("Template Library");
+    expect(reuse).toContain("Choice Pools");
+    expect(connections).toContain("Discovered calendars");
+    expect(connections).toContain("Migration &amp; read-only publication");
+    expect(settings).toContain("Client and service health");
+    expect(settings).toContain("Export redacted sync diagnostics");
   });
 });

@@ -16,6 +16,7 @@ export interface GooglePlanningProps {
   readonly onSavePreferences: (
     preferences: PlanningPreferences,
   ) => Promise<void>;
+  readonly mode?: "all" | "connection" | "preferences";
 }
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -29,6 +30,7 @@ export const GooglePlanning = ({
   onSynchronize,
   onDisconnect,
   onSavePreferences,
+  mode = "all",
 }: GooglePlanningProps) => {
   const [days, setDays] = useState<readonly number[]>(preferences.workingDays);
   const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export const GooglePlanning = ({
       workdayEnd: value("workdayEnd"),
       breakStart: breakStart === "" ? null : breakStart,
       breakEnd: breakEnd === "" ? null : breakEnd,
-      timeZone: "UTC",
+      timeZone: value("timeZone"),
     });
   };
 
@@ -58,8 +60,16 @@ export const GooglePlanning = ({
     >
       <div className="section-heading">
         <div>
-          <p className="step">Federated calendar context</p>
-          <h3 id="google-planning-title">Google Calendar and calm day</h3>
+          <p className="step">
+            {mode === "preferences"
+              ? "Civil-time planning"
+              : "Federated calendar context"}
+          </p>
+          <h3 id="google-planning-title">
+            {mode === "preferences"
+              ? "Working hours and time zone"
+              : "Google Calendar"}
+          </h3>
         </div>
         <span
           className={`freshness freshness--${status.connected ? status.state : "unavailable"}`}
@@ -67,160 +77,187 @@ export const GooglePlanning = ({
           {status.state.replaceAll("_", " ")}
         </span>
       </div>
-      {!status.configured ? (
-        <p className="muted">
-          Google OAuth credentials are not installed yet. Baïkal and local tasks
-          continue to work normally.
-        </p>
-      ) : !status.connected ? (
-        <div>
+      {mode !== "preferences" &&
+        (!status.configured ? (
           <p className="muted">
-            Connect read-only calendar access in your system browser. The Suite
-            stores the refresh grant encrypted on the server.
+            Google OAuth credentials are not installed yet. Baïkal and local
+            tasks continue to work normally.
           </p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void onAuthorize()
-                .then(setAuthorizationUrl)
-                .catch(() => undefined)
-            }
-          >
-            {status.state === "reconnect_required"
-              ? "Reconnect Google Calendar"
-              : "Connect Google Calendar"}
-          </button>
-          {authorizationUrl !== null && (
-            <p>
-              <a
-                className="button-link"
-                href={authorizationUrl}
-                target="_blank"
-                rel="noreferrer noopener"
-              >
-                Continue authorization in your system browser
-              </a>
+        ) : !status.connected ? (
+          <div>
+            <p className="muted">
+              Connect read-only calendar access in your system browser. The
+              Suite stores the refresh grant encrypted on the server.
             </p>
-          )}
-        </div>
-      ) : (
-        <div>
-          <p className="success">
-            Google Calendar is connected
-            {status.accountLabel === null ? "." : ` as ${status.accountLabel}.`}
-          </p>
-          <ul className="compact-list">
-            {status.calendars.map((calendar) => {
-              const freshness = status.freshness.find(
-                (item) => item.calendarId === calendar.id,
-              );
-              return (
-                <li key={calendar.id}>
-                  <strong>{calendar.displayName}</strong>{" "}
-                  <span>
-                    {freshness?.message ?? "Awaiting first projection"}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="task-actions">
             <button
               type="button"
-              className="text-button"
               disabled={busy}
-              onClick={() => void onSynchronize()}
+              onClick={() =>
+                void onAuthorize()
+                  .then(setAuthorizationUrl)
+                  .catch(() => undefined)
+              }
             >
-              Sync Google now
+              {status.state === "reconnect_required"
+                ? "Reconnect Google Calendar"
+                : "Connect Google Calendar"}
             </button>
-            <button
-              type="button"
-              className="danger-button"
-              disabled={busy}
-              onClick={() => void onDisconnect()}
-            >
-              Disconnect Google
-            </button>
+            {authorizationUrl !== null && (
+              <p>
+                <a
+                  className="button-link"
+                  href={authorizationUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Continue authorization in your system browser
+                </a>
+              </p>
+            )}
           </div>
+        ) : (
+          <div>
+            <p className="success">
+              Google Calendar is connected
+              {status.accountLabel === null
+                ? "."
+                : ` as ${status.accountLabel}.`}
+            </p>
+            <ul className="compact-list">
+              {status.calendars.map((calendar) => {
+                const freshness = status.freshness.find(
+                  (item) => item.calendarId === calendar.id,
+                );
+                return (
+                  <li key={calendar.id}>
+                    <strong>{calendar.displayName}</strong>{" "}
+                    <span>
+                      {freshness?.message ?? "Awaiting first projection"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="task-actions">
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy}
+                onClick={() => void onSynchronize()}
+              >
+                Sync Google now
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={busy}
+                onClick={() => void onDisconnect()}
+              >
+                Disconnect Google
+              </button>
+            </div>
+          </div>
+        ))}
+
+      {mode === "all" && (
+        <div className="day-plan-summary" role="status">
+          <strong>Today: {dayPlan.state.replaceAll("_", " ")}</strong>
+          {dayPlan.nextTask === null ? (
+            <span>No scheduled task is ready next.</span>
+          ) : (
+            <span>Next: {dayPlan.nextTask.title}</span>
+          )}
+          <span>
+            Reminder: {dayPlan.reminder.suppressed ? "quiet" : "ready"} (
+            {dayPlan.reminder.reason.replaceAll("_", " ")})
+          </span>
         </div>
       )}
 
-      <div className="day-plan-summary" role="status">
-        <strong>Today: {dayPlan.state.replaceAll("_", " ")}</strong>
-        {dayPlan.nextTask === null ? (
-          <span>No scheduled task is ready next.</span>
-        ) : (
-          <span>Next: {dayPlan.nextTask.title}</span>
-        )}
-        <span>
-          Reminder: {dayPlan.reminder.suppressed ? "quiet" : "ready"} (
-          {dayPlan.reminder.reason.replaceAll("_", " ")})
-        </span>
-      </div>
-
-      <details>
-        <summary>Working hours and quiet break</summary>
-        <form className="planning-preferences" onSubmit={submitPreferences}>
-          <fieldset>
-            <legend>Working days</legend>
-            {dayNames.map((name, day) => (
-              <label key={name}>
-                <input
-                  type="checkbox"
-                  checked={days.includes(day)}
-                  onChange={(event) =>
-                    setDays((current) =>
-                      event.currentTarget.checked
-                        ? [...current, day].toSorted()
-                        : current.filter((candidate) => candidate !== day),
-                    )
-                  }
-                />
-                {name}
-              </label>
-            ))}
-          </fieldset>
-          <label>
-            Work starts
-            <input
-              name="workdayStart"
-              type="time"
-              defaultValue={preferences.workdayStart}
-              required
-            />
-          </label>
-          <label>
-            Work ends
-            <input
-              name="workdayEnd"
-              type="time"
-              defaultValue={preferences.workdayEnd}
-              required
-            />
-          </label>
-          <label>
-            Quiet break starts
-            <input
-              name="breakStart"
-              type="time"
-              defaultValue={preferences.breakStart ?? ""}
-            />
-          </label>
-          <label>
-            Quiet break ends
-            <input
-              name="breakEnd"
-              type="time"
-              defaultValue={preferences.breakEnd ?? ""}
-            />
-          </label>
-          <p className="hint">Phase 3 planning uses UTC consistently.</p>
-          <button disabled={busy || days.length === 0}>
-            Save planning hours
-          </button>
-        </form>
-      </details>
+      {mode !== "connection" && (
+        <details open={mode === "preferences"}>
+          <summary>Working hours and quiet break</summary>
+          <form className="planning-preferences" onSubmit={submitPreferences}>
+            <fieldset>
+              <legend>Working days</legend>
+              {dayNames.map((name, day) => (
+                <label key={name}>
+                  <input
+                    type="checkbox"
+                    checked={days.includes(day)}
+                    onChange={(event) =>
+                      setDays((current) =>
+                        event.currentTarget.checked
+                          ? [...current, day].toSorted()
+                          : current.filter((candidate) => candidate !== day),
+                      )
+                    }
+                  />
+                  {name}
+                </label>
+              ))}
+            </fieldset>
+            <label>
+              Work starts
+              <input
+                name="workdayStart"
+                type="time"
+                defaultValue={preferences.workdayStart}
+                required
+              />
+            </label>
+            <label>
+              Work ends
+              <input
+                name="workdayEnd"
+                type="time"
+                defaultValue={preferences.workdayEnd}
+                required
+              />
+            </label>
+            <label>
+              Quiet break starts
+              <input
+                name="breakStart"
+                type="time"
+                defaultValue={preferences.breakStart ?? ""}
+              />
+            </label>
+            <label>
+              Quiet break ends
+              <input
+                name="breakEnd"
+                type="time"
+                defaultValue={preferences.breakEnd ?? ""}
+              />
+            </label>
+            <label>
+              Time zone
+              <input
+                name="timeZone"
+                defaultValue={preferences.timeZone}
+                list="suite-time-zones"
+                required
+                autoComplete="off"
+              />
+            </label>
+            <datalist id="suite-time-zones">
+              <option value="America/Chicago" />
+              <option value="America/New_York" />
+              <option value="America/Denver" />
+              <option value="America/Los_Angeles" />
+              <option value="UTC" />
+            </datalist>
+            <p className="hint">
+              Use an IANA time zone such as America/Chicago. Day boundaries and
+              daylight-saving transitions follow this setting.
+            </p>
+            <button disabled={busy || days.length === 0}>
+              Save planning hours
+            </button>
+          </form>
+        </details>
+      )}
     </section>
   );
 };

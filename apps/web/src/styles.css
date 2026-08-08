@@ -631,6 +631,116 @@ button:disabled {
   margin: 0;
 }
 
+.workspace-nav {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  gap: 0.35rem;
+  margin: 1rem -0.25rem 1.5rem;
+  padding: 0.5rem 0.25rem;
+  overflow-x: auto;
+  background: rgb(255 255 255 / 92%);
+  backdrop-filter: blur(0.5rem);
+}
+
+.workspace-nav a {
+  padding: 0.55rem 0.7rem;
+  border-radius: 999px;
+  color: #385348;
+  font-size: 0.82rem;
+  font-weight: 750;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.workspace-nav a[aria-current="page"] {
+  color: #fff;
+  background: #294f40;
+}
+
+.workspace-nav a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid rgb(155 76 47 / 42%);
+  outline-offset: 2px;
+}
+
+.today-status,
+.settings-health,
+.task-filter-bar,
+.calendar-filters,
+.offline-controls {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid rgb(16 37 30 / 12%);
+  background: #f9f7f0;
+}
+
+.task-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(12rem, 2fr) repeat(3, minmax(8rem, 1fr));
+  gap: 0.75rem;
+}
+
+.task-filter-bar label,
+.calendar-filters label {
+  display: grid;
+  gap: 0.35rem;
+  color: #526c62;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.calendar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.calendar-filters legend {
+  padding: 0 0.25rem;
+  font-weight: 800;
+}
+
+.calendar-filters label {
+  display: flex;
+  align-items: center;
+}
+
+.source-badge {
+  width: fit-content;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  color: #294f40 !important;
+  background: #dfe9e1;
+  font-weight: 750;
+}
+
+.settings-health {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.settings-health div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-health dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.offline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .week-plan {
   margin: 2rem 0;
   padding: 1rem;
@@ -772,6 +882,14 @@ button:disabled {
 
   .planning-preferences {
     grid-template-columns: 1fr;
+  }
+
+  .task-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-nav {
+    top: env(safe-area-inset-top, 0);
   }
 }
 

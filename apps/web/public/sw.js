@@ -1,6 +1,6 @@
 /* global self, caches */
 
-const cacheName = "suite-shell-v1";
+const cacheName = "suite-shell-v2";
 const shell = ["/", "/manifest.webmanifest", "/suite-icon.svg"];
 
 self.addEventListener("install", (event) => {

@@ -448,6 +448,51 @@ authorization audit has not occurred. These are satisfied roadmap decisions
 under the phase's conditional scope, not claims that unsupported clients or
 database adapters were shipped.
 
+## Phase 9: Production landing and recovery
+
+Phase 9 is operationally deployed as a digest-pinned candidate at
+`https://tadooer.subcult.tv`. NUC owns the Suite container and persistent data;
+Almaz owns the Cloudflare/Caddy edge. The public host/origin boundary, Almaz-only
+forwarded-address trust, Secure cookies, HSTS, private Prometheus scrape,
+content-free alerts, coherent SQLite/key backup, encrypted Restic inclusion,
+isolated restore, immutable rollback, and forward recovery have passed. A clean
+production database was used and Super Productivity remains available.
+
+Interactive owner creation plus explicit Baïkal and Google authorization remain
+acceptance evidence before this phase is marked complete. The production Google
+client must use exactly
+`https://tadooer.subcult.tv/api/connectors/google/callback`.
+
+## Phase 10: Calm daily workspace
+
+Phase 10 is complete in source and disposable deployment qualification. The PWA
+now has route-backed Today, Tasks, Reuse, Connections, and Settings views;
+Today and Tasks preserve the IndexedDB task path while online-only calendar and
+focus controls are visibly unavailable offline. Task search and organization
+filters, keyboard-visible focus, responsive navigation, and PWA `/today` launch
+are covered by web tests.
+
+Planning preferences now accept supported IANA time zones, default new owners to
+`America/Chicago`, preserve preexisting `UTC` rows through migration 0013, and
+derive civil-day boundaries and calm-state decisions across 23-hour and 25-hour
+DST days. Planner events retain provider/calendar/event identity while adding
+provider kind, provider label, and calendar name. Source badges and calendar
+filters keep Google and Baïkal events visibly distinct.
+
+## Phase 11: Durable ntfy reminders
+
+Planned next: authenticated private-network ntfy publication, owner preferences,
+durable occurrence/kind delivery ledger, calm-day suppression, bounded retries,
+redacted delivery health, and Settings controls.
+
+## Phase 12: Seven-day soak and stable release
+
+Planned after Phase 11: seven consecutive production days with two browser
+profiles, both calendar providers, focus/break and notification evidence, daily
+backups, isolated restore, candidate rollback/forward recovery, and a signed-off
+`1.0.0` stable manifest. Super Productivity remains in parallel until the final
+cutover recommendation; it is never stopped automatically.
+
 ## Explicit non-roadmap commitments
 
 The following do not enter a phase without a new decision and evidence:

@@ -9,6 +9,7 @@ import {
   createTaskRequestSchema,
   createTaskTimeBlockRequestSchema,
   idempotencyKeySchema,
+  ianaTimeZoneSchema,
   importTaskCandidateSchema,
   plannerWindowSchema,
   activeSessionCommandSchema,
@@ -42,6 +43,13 @@ const fixture = (name: string): unknown =>
   ) as unknown;
 
 describe("Suite contracts", () => {
+  it("accepts supported IANA time zones and rejects invented zones", () => {
+    expect(ianaTimeZoneSchema.parse("America/Chicago")).toBe("America/Chicago");
+    expect(ianaTimeZoneSchema.parse("UTC")).toBe("UTC");
+    expect(ianaTimeZoneSchema.safeParse("Central-ish/Nowhere").success).toBe(
+      false,
+    );
+  });
   it("accepts stable task and calendar-event identities", () => {
     expect(
       taskSchema.parse({
