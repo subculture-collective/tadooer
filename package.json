@@ -25,6 +25,7 @@
     "test:phase9": "vitest run apps/server/src/config.test.ts apps/server/src/phase9.test.ts",
     "test:phase10": "vitest run packages/contracts/src/index.test.ts packages/domain/src/day-planning.test.ts packages/persistence/src/index.test.ts apps/server/src/phase3.test.ts apps/web/src/app.test.tsx apps/web/src/google-planning.test.tsx",
     "test:phase11": "vitest run packages/contracts/src/index.test.ts packages/domain/src/notifications.test.ts packages/persistence/src/index.test.ts apps/server/src/notifications.test.ts apps/server/src/phase11.test.ts apps/web/src/notification-settings.test.tsx apps/web/src/phase2-api.test.ts",
+    "test:phase12": "vitest run deploy/phase12-soak.test.mjs deploy/release-channel.test.mjs",
     "verify:phase1": "./deploy/verify-phase1-compose.sh",
     "verify:phase2": "./deploy/verify-phase2-compose.sh",
     "verify:phase3:foundation": "./deploy/verify-phase3-foundation.sh",

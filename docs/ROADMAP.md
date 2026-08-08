@@ -497,11 +497,18 @@ evidence before the phase is operationally complete.
 
 ## Phase 12: Seven-day soak and stable release
 
-Planned after Phase 11: seven consecutive production days with two browser
-profiles, both calendar providers, focus/break and notification evidence, daily
-backups, isolated restore, candidate rollback/forward recovery, and a signed-off
-`1.0.0` stable manifest. Super Productivity remains in parallel until the final
-cutover recommendation; it is never stopped automatically.
+The fail-closed soak ledger and `1.0.0` qualification gate are implemented.
+They require seven full 24-hour windows of health and backup evidence plus two
+browser profiles, both calendar providers, focus/break and notification
+delivery, restart recovery, isolated restore, immutable rollback/forward
+recovery, authentication and non-duplication checks, and confirmation that
+Super Productivity stayed available. P0/P1 or any failed required observation
+blocks qualification.
+
+The production soak has not started because the clean production Suite still
+requires owner creation and explicit Baïkal/Google connection. No stable
+manifest or cutover recommendation is emitted before that setup and seven
+elapsed days. Super Productivity is not changed automatically.
 
 ## Explicit non-roadmap commitments
 
