@@ -87,7 +87,7 @@ export const SettingsPage = ({
         )}
       <button
         type="button"
-        className="text-button"
+        className="btn-ghost"
         disabled={busy}
         onClick={() => void onSyncNow()}
       >
@@ -115,7 +115,7 @@ export const SettingsPage = ({
         </p>
         <button
           type="button"
-          className="text-button"
+          className="btn-ghost"
           onClick={() => void onExportDiagnostics()}
         >
           Export redacted sync diagnostics

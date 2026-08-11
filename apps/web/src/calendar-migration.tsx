@@ -216,7 +216,7 @@ export const CalendarMigration = ({
         </button>
       </form>
       {importError !== null && (
-        <p className="form-error" role="alert">
+        <p className="message message-error" role="alert">
           {importError}
         </p>
       )}
@@ -302,7 +302,7 @@ export const CalendarMigration = ({
         </output>
       )}
       {message !== null && (
-        <p className="success" role="status">
+        <p className="message message-success" role="status">
           {message}
         </p>
       )}

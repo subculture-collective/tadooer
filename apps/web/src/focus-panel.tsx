@@ -166,7 +166,7 @@ export const FocusPanel = ({
             {session.phase === "focus" ? "Start break" : "End break"}
           </button>
           <button
-            className="text-button"
+            className="btn-ghost"
             type="button"
             disabled={controlsDisabled}
             onClick={() => command("complete")}

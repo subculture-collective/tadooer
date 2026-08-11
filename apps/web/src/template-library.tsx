@@ -216,7 +216,7 @@ export const TemplateLibrary = ({
               placeholder="Search templates"
             />
           </label>
-          <button type="submit" className="text-button" disabled={busy}>
+          <button type="submit" className="btn-ghost" disabled={busy}>
             Search
           </button>
         </form>
@@ -378,7 +378,7 @@ export const TemplateLibrary = ({
                   </button>
                   <button
                     type="button"
-                    className="danger-button"
+                    className="btn-danger"
                     disabled={busy}
                     onClick={() => void onArchive(template)}
                   >

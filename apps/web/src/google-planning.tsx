@@ -117,7 +117,7 @@ export const GooglePlanning = ({
           </div>
         ) : (
           <div>
-            <p className="success">
+            <p className="message message-success">
               Google Calendar is connected
               {status.accountLabel === null
                 ? "."
@@ -141,7 +141,7 @@ export const GooglePlanning = ({
             <div className="task-actions">
               <button
                 type="button"
-                className="text-button"
+                className="btn-ghost"
                 disabled={busy}
                 onClick={() => void onSynchronize()}
               >
@@ -149,7 +149,7 @@ export const GooglePlanning = ({
               </button>
               <button
                 type="button"
-                className="danger-button"
+                className="btn-danger"
                 disabled={busy}
                 onClick={() => void onDisconnect()}
               >

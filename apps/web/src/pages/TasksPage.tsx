@@ -289,7 +289,7 @@ export const TasksPage = ({
                 {task.plannedStart != null && (
                   <button
                     type="button"
-                    className="text-button"
+                    className="btn-ghost"
                     disabled={busy}
                     onClick={() => void onRemoveTimeBlock(task)}
                   >
@@ -376,7 +376,7 @@ export const TasksPage = ({
                       </button>
                       <button
                         type="button"
-                        className="danger-button"
+                        className="btn-danger"
                         disabled={busy}
                         onClick={() =>
                           void onChangeSubtask(subtask, "delete")
@@ -425,7 +425,7 @@ export const TasksPage = ({
                     : "Complete"}
                 </button>
                 <button
-                  className="danger-button"
+                  className="btn-danger"
                   type="button"
                   disabled={busy}
                   onClick={() => void onRemoveTask(task)}

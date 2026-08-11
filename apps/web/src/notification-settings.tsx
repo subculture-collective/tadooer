@@ -47,7 +47,7 @@ export const NotificationSettings = ({
         and a Suite task link. Notes and calendar-event details are excluded.
       </p>
       {!status.configured && (
-        <p className="form-error">
+        <p className="message message-error">
           The private ntfy publisher is not configured on this server.
         </p>
       )}
@@ -89,7 +89,7 @@ export const NotificationSettings = ({
         </button>
         <button
           type="button"
-          className="text-button"
+          className="btn-ghost"
           disabled={busy || !online || !status.configured}
           onClick={() => void onTest()}
         >
