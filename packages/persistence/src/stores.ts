@@ -609,6 +609,7 @@ export interface TemplateStore {
     ownerId: string,
     sourceKind: "template" | "set",
     sourceId: string,
+    destinationProjectId: string,
     idempotencyKey: string,
     requestHash: string,
     now: string,

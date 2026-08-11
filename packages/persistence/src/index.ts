@@ -2,6 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { SqliteCalendarProjectionStore } from "./calendar-projection-store.js";
+import { SqliteCredentialStore } from "./credential-store.js";
+import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 
 interface Migration {
   readonly id: string;
@@ -1091,9 +1094,15 @@ const escapeSqliteString = (value: string): string =>
 
 export class SuiteDatabase {
   readonly #database: DatabaseSync;
+  readonly credentials: SqliteCredentialStore;
+  readonly calendarProjections: SqliteCalendarProjectionStore;
+  readonly planningPreferences: SqlitePlanningPreferencesStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.credentials = new SqliteCredentialStore(this.#database);
+    this.calendarProjections = new SqliteCalendarProjectionStore(this.#database);
+    this.planningPreferences = new SqlitePlanningPreferencesStore(this.#database);
   }
 
   static open(path: string): SuiteDatabase {
@@ -1335,56 +1344,11 @@ export class SuiteDatabase {
   putBaikalConnector(
     connector: BaikalConnectorRecord & { readonly updatedAt: string },
   ): void {
-    this.#database
-      .prepare(
-        `INSERT INTO baikal_connectors (
-          id, owner_id, endpoint, username, credential_key_id,
-          credential_nonce, credential_ciphertext, credential_tag,
-          verified_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(owner_id) DO UPDATE SET
-          endpoint = excluded.endpoint,
-          username = excluded.username,
-          credential_key_id = excluded.credential_key_id,
-          credential_nonce = excluded.credential_nonce,
-          credential_ciphertext = excluded.credential_ciphertext,
-          credential_tag = excluded.credential_tag,
-          verified_at = excluded.verified_at,
-          updated_at = excluded.updated_at`,
-      )
-      .run(
-        connector.id,
-        connector.ownerId,
-        connector.endpoint,
-        connector.username,
-        connector.credentialKeyId,
-        connector.credentialNonce,
-        connector.credentialCiphertext,
-        connector.credentialTag,
-        connector.verifiedAt,
-        connector.updatedAt,
-        connector.updatedAt,
-      );
+    this.credentials.upsertBaikalConnector(connector);
   }
 
   getBaikalConnector(ownerId: string): BaikalConnectorRecord | undefined {
-    const row = this.#database
-      .prepare("SELECT * FROM baikal_connectors WHERE owner_id = ?")
-      .get(ownerId) as unknown as
-      Record<string, string | Uint8Array> | undefined;
-    return row === undefined
-      ? undefined
-      : {
-          id: String(row.id),
-          ownerId: String(row.owner_id),
-          endpoint: String(row.endpoint),
-          username: String(row.username),
-          credentialKeyId: String(row.credential_key_id),
-          credentialNonce: row.credential_nonce as Uint8Array,
-          credentialCiphertext: row.credential_ciphertext as Uint8Array,
-          credentialTag: row.credential_tag as Uint8Array,
-          verifiedAt: String(row.verified_at),
-        };
+    return this.credentials.getBaikalConnector(ownerId);
   }
 
   ensureCalendarProvider(
@@ -1393,56 +1357,7 @@ export class SuiteDatabase {
     connectorId: string,
     now: string,
   ): CalendarProviderRecord {
-    const existing = this.#database
-      .prepare(
-        `SELECT id, owner_id, kind, connector_id, created_at, updated_at
-         FROM calendar_providers
-         WHERE owner_id = ? AND kind = ? AND connector_id = ?`,
-      )
-      .get(ownerId, kind, connectorId) as unknown as
-      | {
-          readonly id: string;
-          readonly owner_id: string;
-          readonly kind: CalendarProviderRecord["kind"];
-          readonly connector_id: string;
-          readonly created_at: string;
-          readonly updated_at: string;
-        }
-      | undefined;
-    if (existing !== undefined) {
-      return {
-        id: existing.id,
-        ownerId: existing.owner_id,
-        kind: existing.kind,
-        connectorId: existing.connector_id,
-        createdAt: existing.created_at,
-        updatedAt: existing.updated_at,
-      };
-    }
-
-    const provider: CalendarProviderRecord = {
-      id: randomUUID(),
-      ownerId,
-      kind,
-      connectorId,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.#database
-      .prepare(
-        `INSERT INTO calendar_providers
-          (id, owner_id, kind, connector_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        provider.id,
-        provider.ownerId,
-        provider.kind,
-        provider.connectorId,
-        provider.createdAt,
-        provider.updatedAt,
-      );
-    return provider;
+    return this.calendarProjections.ensureCalendarProvider(ownerId, kind, connectorId, now);
   }
 
   putCalendarCollections(
@@ -1450,109 +1365,22 @@ export class SuiteDatabase {
     collections: readonly Omit<CalendarCollectionRecord, "id" | "providerId">[],
     discoveredAt: string,
   ): readonly CalendarCollectionRecord[] {
-    return collections.map((collection) => {
-      const existing = this.#database
-        .prepare(
-          "SELECT id FROM calendar_collections WHERE provider_id = ? AND href = ?",
-        )
-        .get(providerId, collection.href) as unknown as
-        { readonly id: string } | undefined;
-      const record: CalendarCollectionRecord = {
-        id: existing?.id ?? randomUUID(),
-        providerId,
-        ...collection,
-      };
-      this.#database
-        .prepare(
-          `INSERT INTO calendar_collections
-            (id, provider_id, href, display_name, supports_events,
-             supports_todos, last_discovered_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(provider_id, href) DO UPDATE SET
-             display_name = excluded.display_name,
-             supports_events = excluded.supports_events,
-             supports_todos = excluded.supports_todos,
-             last_discovered_at = excluded.last_discovered_at`,
-        )
-        .run(
-          record.id,
-          record.providerId,
-          record.href,
-          record.displayName,
-          record.supportsEvents ? 1 : 0,
-          record.supportsTodos ? 1 : 0,
-          discoveredAt,
-        );
-      return record;
-    });
+    return this.calendarProjections.putCalendarCollections(providerId, collections, discoveredAt);
   }
 
   getOwnedCalendar(
     ownerId: string,
     calendarId: string,
   ): OwnedCalendarRecord | undefined {
-    const row = this.#database
-      .prepare(
-        `SELECT c.id, c.provider_id, c.href, c.display_name,
-                c.supports_events, c.supports_todos,
-                p.owner_id, p.kind, p.connector_id
-         FROM calendar_collections c
-         JOIN calendar_providers p ON p.id = c.provider_id
-         WHERE p.owner_id = ? AND c.id = ?`,
-      )
-      .get(ownerId, calendarId) as unknown as
-      | {
-          readonly id: string;
-          readonly provider_id: string;
-          readonly href: string;
-          readonly display_name: string;
-          readonly supports_events: number;
-          readonly supports_todos: number;
-          readonly owner_id: string;
-          readonly kind: CalendarProviderRecord["kind"];
-          readonly connector_id: string;
-        }
-      | undefined;
-    return row === undefined
-      ? undefined
-      : {
-          id: row.id,
-          providerId: row.provider_id,
-          href: row.href,
-          displayName: row.display_name,
-          supportsEvents: row.supports_events === 1,
-          supportsTodos: row.supports_todos === 1,
-          ownerId: row.owner_id,
-          kind: row.kind,
-          connectorId: row.connector_id,
-        };
+    return this.calendarProjections.getOwnedCalendar(ownerId, calendarId);
   }
 
   listOwnedCalendars(
     ownerId: string,
     kind?: CalendarProviderRecord["kind"],
   ): readonly OwnedCalendarRecord[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT c.id,c.provider_id,c.href,c.display_name,c.supports_events,c.supports_todos,p.owner_id,p.kind,p.connector_id
-       FROM calendar_collections c JOIN calendar_providers p ON p.id=c.provider_id
-       WHERE p.owner_id=? AND (? IS NULL OR p.kind=?) ORDER BY p.kind,c.display_name COLLATE NOCASE,c.id`,
-      )
-      .all(ownerId, kind ?? null, kind ?? null) as unknown as readonly Record<
-      string,
-      string | number
-    >[];
-    return rows.map((row) => ({
-      id: String(row.id),
-      providerId: String(row.provider_id),
-      href: String(row.href),
-      displayName: String(row.display_name),
-      supportsEvents: Number(row.supports_events) === 1,
-      supportsTodos: Number(row.supports_todos) === 1,
-      ownerId: String(row.owner_id),
-      kind: String(row.kind) as CalendarProviderRecord["kind"],
-      connectorId: String(row.connector_id),
-    }));
+    const all = this.calendarProjections.listOwnedCalendars(ownerId);
+    return kind === undefined ? all : all.filter((c: any) => c.kind === kind);
   }
 
   pruneGoogleCalendars(
@@ -1560,30 +1388,7 @@ export class SuiteDatabase {
     providerId: string,
     activeExternalCalendarIds: readonly string[],
   ): void {
-    const active = new Set(activeExternalCalendarIds);
-    const rows = this.#database
-      .prepare(
-        `SELECT c.id,c.href FROM calendar_collections c
-         JOIN calendar_providers p ON p.id=c.provider_id
-         WHERE p.owner_id=? AND p.kind='google' AND p.id=?`,
-      )
-      .all(ownerId, providerId) as unknown as readonly {
-      readonly id: string;
-      readonly href: string;
-    }[];
-    this.#database.exec("BEGIN IMMEDIATE;");
-    try {
-      const remove = this.#database.prepare(
-        "DELETE FROM calendar_collections WHERE id=? AND provider_id=?",
-      );
-      for (const row of rows) {
-        if (!active.has(row.href)) remove.run(row.id, providerId);
-      }
-      this.#database.exec("COMMIT;");
-    } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
-      throw error;
-    }
+    this.calendarProjections.pruneGoogleCalendars(ownerId, providerId, activeExternalCalendarIds);
   }
 
   createCalendarImportPreview(input: {
@@ -1725,24 +1530,7 @@ export class SuiteDatabase {
     calendarId: string,
   ): readonly string[] {
     if (this.getOwnedCalendar(ownerId, calendarId) === undefined) return [];
-    const projected = this.#database
-      .prepare(
-        "SELECT raw_ics FROM calendar_event_projections WHERE owner_id=? AND calendar_id=? ORDER BY href",
-      )
-      .all(ownerId, calendarId) as unknown as readonly { raw_ics: string }[];
-    const imported = this.#database
-      .prepare(
-        `SELECT i.raw_ics FROM calendar_import_items i JOIN calendar_import_jobs j ON j.id=i.job_id
-       WHERE j.owner_id=? AND j.calendar_id=? AND i.state='applied' ORDER BY i.href`,
-      )
-      .all(ownerId, calendarId) as unknown as readonly { raw_ics: string }[];
-    const values = new Map<string, string>();
-    for (const row of [...projected, ...imported])
-      values.set(
-        createHash("sha256").update(row.raw_ics).digest("hex"),
-        row.raw_ics,
-      );
-    return [...values.values()];
+    return this.calendarProjections.listPublishedCalendarRaw(ownerId, calendarId);
   }
 
   createCalendarFeedCapability(record: CalendarFeedCapabilityRecord): void {
@@ -1818,89 +1606,19 @@ export class SuiteDatabase {
     readonly expiresAt: string;
     readonly createdAt: string;
   }): void {
-    this.#database
-      .prepare(
-        "DELETE FROM google_oauth_states WHERE owner_id=? OR expires_at<=?",
-      )
-      .run(record.ownerId, record.createdAt);
-    this.#database
-      .prepare(
-        "INSERT INTO google_oauth_states (state_hash,owner_id,expires_at,consumed_at,created_at) VALUES (?,?,?,NULL,?)",
-      )
-      .run(
-        record.stateHash,
-        record.ownerId,
-        record.expiresAt,
-        record.createdAt,
-      );
+    this.credentials.createGoogleOAuthState(record);
   }
 
   consumeGoogleOAuthState(stateHash: string, now: string): string | undefined {
-    const row = this.#database
-      .prepare(
-        "SELECT owner_id FROM google_oauth_states WHERE state_hash=? AND consumed_at IS NULL AND expires_at>?",
-      )
-      .get(stateHash, now) as unknown as
-      { readonly owner_id: string } | undefined;
-    if (row === undefined) return undefined;
-    const consumed = this.#database
-      .prepare(
-        "UPDATE google_oauth_states SET consumed_at=? WHERE state_hash=? AND consumed_at IS NULL AND expires_at>?",
-      )
-      .run(now, stateHash, now);
-    return consumed.changes === 1 ? row.owner_id : undefined;
+    return this.credentials.consumeGoogleOAuthState(stateHash, now);
   }
 
   putGoogleConnector(record: GoogleConnectorRecord): void {
-    this.#database
-      .prepare(
-        `INSERT INTO google_connectors (id,owner_id,credential_key_id,credential_nonce,credential_ciphertext,credential_tag,granted_scopes_json,account_label,state,created_at,updated_at,revoked_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET id=excluded.id,credential_key_id=excluded.credential_key_id,
-       credential_nonce=excluded.credential_nonce,credential_ciphertext=excluded.credential_ciphertext,credential_tag=excluded.credential_tag,
-       granted_scopes_json=excluded.granted_scopes_json,account_label=excluded.account_label,state=excluded.state,updated_at=excluded.updated_at,revoked_at=NULL`,
-      )
-      .run(
-        record.id,
-        record.ownerId,
-        record.credentialKeyId,
-        record.credentialNonce,
-        record.credentialCiphertext,
-        record.credentialTag,
-        JSON.stringify([...record.grantedScopes].sort()),
-        record.accountLabel,
-        record.state,
-        record.createdAt,
-        record.updatedAt,
-        record.revokedAt,
-      );
+    this.credentials.upsertGoogleConnector(record);
   }
 
   getGoogleConnector(ownerId: string): GoogleConnectorRecord | undefined {
-    const row = this.#database
-      .prepare(
-        "SELECT * FROM google_connectors WHERE owner_id=? AND revoked_at IS NULL",
-      )
-      .get(ownerId) as unknown as
-      Record<string, string | Uint8Array | null> | undefined;
-    return row === undefined
-      ? undefined
-      : {
-          id: String(row.id),
-          ownerId: String(row.owner_id),
-          credentialKeyId: String(row.credential_key_id),
-          credentialNonce: row.credential_nonce as Uint8Array,
-          credentialCiphertext: row.credential_ciphertext as Uint8Array,
-          credentialTag: row.credential_tag as Uint8Array,
-          grantedScopes: JSON.parse(
-            String(row.granted_scopes_json),
-          ) as string[],
-          accountLabel:
-            row.account_label === null ? null : String(row.account_label),
-          state: String(row.state) as GoogleConnectorRecord["state"],
-          createdAt: String(row.created_at),
-          updatedAt: String(row.updated_at),
-          revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
-        };
+    return this.credentials.getGoogleConnector(ownerId);
   }
 
   markGoogleConnectorState(
@@ -1908,53 +1626,15 @@ export class SuiteDatabase {
     state: GoogleConnectorRecord["state"],
     now: string,
   ): void {
-    this.#database
-      .prepare(
-        "UPDATE google_connectors SET state=?,updated_at=? WHERE owner_id=? AND revoked_at IS NULL",
-      )
-      .run(state, now, ownerId);
+    this.credentials.markGoogleConnectorState(ownerId, state, now);
   }
 
   putGoogleCalendarSync(record: GoogleCalendarSyncRecord): void {
-    this.#database
-      .prepare(
-        `INSERT INTO google_calendar_sync (calendar_id,owner_id,external_calendar_id,sync_token,state,last_successful_sync_at,last_attempt_at,error_code)
-       VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(calendar_id) DO UPDATE SET external_calendar_id=excluded.external_calendar_id,sync_token=excluded.sync_token,
-       state=excluded.state,last_successful_sync_at=excluded.last_successful_sync_at,last_attempt_at=excluded.last_attempt_at,error_code=excluded.error_code`,
-      )
-      .run(
-        record.calendarId,
-        record.ownerId,
-        record.externalCalendarId,
-        record.syncToken,
-        record.state,
-        record.lastSuccessfulSyncAt,
-        record.lastAttemptAt,
-        record.errorCode,
-      );
+    this.credentials.upsertGoogleCalendarSync(record);
   }
 
   listGoogleCalendarSync(ownerId: string): readonly GoogleCalendarSyncRecord[] {
-    return (
-      this.#database
-        .prepare(
-          "SELECT * FROM google_calendar_sync WHERE owner_id=? ORDER BY calendar_id",
-        )
-        .all(ownerId) as unknown as readonly Record<string, string | null>[]
-    ).map((row) => ({
-      calendarId: String(row.calendar_id),
-      ownerId: String(row.owner_id),
-      externalCalendarId: String(row.external_calendar_id),
-      syncToken: row.sync_token === null ? null : String(row.sync_token),
-      state: String(row.state) as GoogleCalendarSyncRecord["state"],
-      lastSuccessfulSyncAt:
-        row.last_successful_sync_at === null
-          ? null
-          : String(row.last_successful_sync_at),
-      lastAttemptAt:
-        row.last_attempt_at === null ? null : String(row.last_attempt_at),
-      errorCode: row.error_code === null ? null : String(row.error_code),
-    }));
+    return this.credentials.listGoogleCalendarSync(ownerId);
   }
 
   applyGoogleEventSync(input: {
@@ -2037,15 +1717,11 @@ export class SuiteDatabase {
     errorCode: string,
     now: string,
   ): void {
-    this.#database
-      .prepare(
-        "UPDATE google_calendar_sync SET state=?,last_attempt_at=?,error_code=? WHERE owner_id=? AND calendar_id=?",
-      )
-      .run(state, now, errorCode, ownerId, calendarId);
+    this.calendarProjections.markGoogleCalendarSyncFailure(ownerId, calendarId, state, errorCode, now);
   }
 
   disconnectGoogle(ownerId: string): boolean {
-    const connector = this.getGoogleConnector(ownerId);
+    const connector = this.credentials.getGoogleConnector(ownerId);
     if (connector === undefined) return false;
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -2066,48 +1742,15 @@ export class SuiteDatabase {
   }
 
   getPlanningPreferences(ownerId: string): PlanningPreferencesRecord {
-    const row = this.#database
-      .prepare("SELECT * FROM owner_planning_preferences WHERE owner_id=?")
-      .get(ownerId) as unknown as Record<string, string | null> | undefined;
-    return row === undefined
-      ? {
-          workingDays: [1, 2, 3, 4, 5],
-          workdayStart: "09:00",
-          workdayEnd: "17:00",
-          breakStart: "12:00",
-          breakEnd: "12:30",
-          timeZone: "America/Chicago",
-        }
-      : {
-          workingDays: JSON.parse(String(row.working_days_json)) as number[],
-          workdayStart: String(row.workday_start),
-          workdayEnd: String(row.workday_end),
-          breakStart: row.break_start === null ? null : String(row.break_start),
-          breakEnd: row.break_end === null ? null : String(row.break_end),
-          timeZone: String(row.time_zone),
-        };
+    return this.planningPreferences.getPlanningPreferences(ownerId);
   }
 
   putPlanningPreferences(
     ownerId: string,
     preferences: PlanningPreferencesRecord,
-    now: string,
+    _now: string,
   ): PlanningPreferencesRecord {
-    this.#database
-      .prepare(
-        `INSERT INTO owner_planning_preferences (owner_id,working_days_json,workday_start,workday_end,break_start,break_end,time_zone,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET working_days_json=excluded.working_days_json,workday_start=excluded.workday_start,workday_end=excluded.workday_end,break_start=excluded.break_start,break_end=excluded.break_end,time_zone=excluded.time_zone,updated_at=excluded.updated_at`,
-      )
-      .run(
-        ownerId,
-        JSON.stringify(preferences.workingDays),
-        preferences.workdayStart,
-        preferences.workdayEnd,
-        preferences.breakStart,
-        preferences.breakEnd,
-        preferences.timeZone,
-        now,
-      );
-    return this.getPlanningPreferences(ownerId);
+    return this.planningPreferences.upsertPlanningPreferences(ownerId, preferences);
   }
 
   getNotificationPreferences(ownerId: string): NotificationPreferencesRecord {
@@ -2379,21 +2022,7 @@ export class SuiteDatabase {
       "ownerId" | "providerKind" | "providerDisplayLabel" | "calendarName"
     >[],
   ): void {
-    this.#database.exec("BEGIN IMMEDIATE;");
-    try {
-      this.#database
-        .prepare(
-          `DELETE FROM calendar_event_projections
-           WHERE owner_id = ? AND calendar_id = ?
-             AND starts_at < ? AND ends_at > ?`,
-        )
-        .run(ownerId, calendarId, to, from);
-      for (const event of events) this.#putCalendarEvent(ownerId, event);
-      this.#database.exec("COMMIT;");
-    } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
-      throw error;
-    }
+    this.calendarProjections.replaceCalendarEventWindow(ownerId, calendarId, from, to, events);
   }
 
   listCalendarEvents(
@@ -2401,33 +2030,14 @@ export class SuiteDatabase {
     from: string,
     to: string,
   ): readonly CalendarEventProjectionRecord[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT e.*,p.kind AS provider_kind,c.display_name AS calendar_name
-         FROM calendar_event_projections e
-         JOIN calendar_providers p ON p.id=e.provider_id
-         JOIN calendar_collections c ON c.id=e.calendar_id
-         WHERE e.owner_id = ? AND e.starts_at < ? AND e.ends_at > ?
-         ORDER BY e.starts_at, e.calendar_id, e.href`,
-      )
-      .all(ownerId, to, from) as unknown as readonly Record<
-      string,
-      string | number
-    >[];
-    return rows.map((row) => this.#calendarEventFromRow(row));
+    return this.calendarProjections.listProjectedEvents(ownerId, from, to);
   }
 
   getTaskCalendarBlock(
     ownerId: string,
     taskId: string,
   ): TaskCalendarBlockRecord | undefined {
-    const row = this.#database
-      .prepare(
-        "SELECT * FROM task_calendar_blocks WHERE owner_id = ? AND task_id = ?",
-      )
-      .get(ownerId, taskId) as unknown as
-      Record<string, string | number> | undefined;
-    return row === undefined ? undefined : this.#calendarBlockFromRow(row);
+    return this.calendarProjections.getTaskCalendarBlock(ownerId, taskId);
   }
 
   releaseTaskCalendarBlock(input: {
@@ -2506,12 +2116,7 @@ export class SuiteDatabase {
     state: "conflict" | "needs_reconciliation",
     now: string,
   ): void {
-    this.#database
-      .prepare(
-        `UPDATE task_calendar_blocks SET state = ?, revision = revision + 1,
-           updated_at = ? WHERE owner_id = ? AND task_id = ?`,
-      )
-      .run(state, now, ownerId, taskId);
+    this.calendarProjections.markTaskCalendarBlockState(ownerId, taskId, state, now);
   }
 
   reserveCalendarWrite(input: {
@@ -2727,40 +2332,14 @@ export class SuiteDatabase {
     idempotencyKey: string,
     now: string,
   ): void {
-    this.#database.exec("BEGIN IMMEDIATE;");
-    try {
-      const operation = this.#getCalendarWriteOperation(
-        ownerId,
-        idempotencyKey,
-      );
-      if (operation !== undefined) {
-        this.#database
-          .prepare(
-            `UPDATE calendar_write_operations
-             SET state = 'needs_reconciliation', updated_at = ?
-             WHERE owner_id = ? AND idempotency_key = ?`,
-          )
-          .run(now, ownerId, idempotencyKey);
-        this.#database
-          .prepare(
-            `UPDATE task_calendar_blocks
-             SET state = 'conflict', revision = revision + 1, updated_at = ?
-             WHERE owner_id = ? AND task_id = ?`,
-          )
-          .run(now, ownerId, operation.taskId);
-      }
-      this.#database.exec("COMMIT;");
-    } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
-      throw error;
-    }
+    this.calendarProjections.markCalendarWriteConflict(ownerId, idempotencyKey, now);
   }
 
   getCalendarWriteOperation(
     ownerId: string,
     idempotencyKey: string,
   ): CalendarWriteOperationRecord | undefined {
-    return this.#getCalendarWriteOperation(ownerId, idempotencyKey);
+    return this.calendarProjections.getCalendarWrite(ownerId, idempotencyKey);
   }
 
   #putCalendarEvent(
@@ -2832,41 +2411,6 @@ export class SuiteDatabase {
         };
   }
 
-  #calendarEventFromRow(
-    row: Record<string, string | number>,
-  ): CalendarEventProjectionRecord {
-    return {
-      id: String(row.id),
-      ownerId: String(row.owner_id),
-      providerId: String(row.provider_id),
-      calendarId: String(row.calendar_id),
-      href: String(row.href),
-      uid: String(row.uid),
-      etag: String(row.etag),
-      rawIcs: String(row.raw_ics),
-      summary: String(row.summary),
-      startsAt: String(row.starts_at),
-      endsAt: String(row.ends_at),
-      allDay: Number(row.all_day) === 1,
-      recurrence: String(row.recurrence ?? "none") as "none" | "instance",
-      freshness: String(
-        row.freshness,
-      ) as CalendarEventProjectionRecord["freshness"],
-      mutable: Number(row.mutable) === 1,
-      revision: Number(row.revision),
-      projectedAt: String(row.projected_at),
-      providerKind: String(
-        row.provider_kind ?? "caldav",
-      ) as CalendarProviderRecord["kind"],
-      providerDisplayLabel:
-        String(row.provider_kind ?? "caldav") === "google"
-          ? "Google Calendar"
-          : String(row.provider_kind ?? "caldav") === "baikal"
-            ? "Baïkal"
-            : "CalDAV",
-      calendarName: String(row.calendar_name ?? "Calendar"),
-    };
-  }
 
   #notificationDeliveryFromRow(
     row: Record<string, string | number | null>,
@@ -2890,24 +2434,6 @@ export class SuiteDatabase {
     };
   }
 
-  #calendarBlockFromRow(
-    row: Record<string, string | number>,
-  ): TaskCalendarBlockRecord {
-    return {
-      id: String(row.id),
-      ownerId: String(row.owner_id),
-      taskId: String(row.task_id),
-      providerId: String(row.provider_id),
-      calendarId: String(row.calendar_id),
-      eventHref: String(row.event_href),
-      eventUid: String(row.event_uid),
-      remoteEtag: String(row.remote_etag),
-      state: String(row.state) as TaskCalendarBlockRecord["state"],
-      revision: Number(row.revision),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    };
-  }
 
   createTaskIdempotently(
     ownerId: string,

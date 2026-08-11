@@ -77,10 +77,10 @@ describe("MCP stdio protocol", () => {
           structuredContent: { previewId: "preview-1" },
         },
       });
-      const request = fetcher.mock.calls.at(0);
-      expect(request?.[0]).toEqual(
-        new URL("https://suite.example.test/api/automation/v1/tasks/preview"),
-      );
+    const request = fetcher.mock.calls.at(0);
+    expect(request?.[0]).toEqual(
+      "https://suite.example.test/api/automation/v1/tasks/preview",
+    );
       expect(request?.[1]?.method).toBe("POST");
       expect(new Headers(request?.[1]?.headers).get("authorization")).toBe(
         `Bearer ${config.token}`,
@@ -128,12 +128,10 @@ describe("MCP stdio protocol", () => {
       ).resolves.toMatchObject({
         result: { contents: [{ uri: "suite://v1/templates" }] },
       });
-      const destination = fetcher.mock.calls.at(0)?.[0];
-      expect(destination).toEqual(
-        new URL(
-          "https://suite.example.test/api/automation/v1/resources/templates?query=&includeArchived=false",
-        ),
-      );
+    const destination = fetcher.mock.calls.at(0)?.[0];
+    expect(destination).toEqual(
+      "https://suite.example.test/api/automation/v1/resources/templates?query=&includeArchived=false",
+    );
     } finally {
       vi.unstubAllGlobals();
     }

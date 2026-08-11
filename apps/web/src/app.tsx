@@ -20,8 +20,8 @@ import type {
   NotificationPreferences,
   NotificationStatusResponse,
 } from "@suite/contracts";
+import { ApiRequestError } from "@suite/contracts";
 import {
-  ApiRequestError,
   commandActiveSession,
   connectBaikal,
   createProject,

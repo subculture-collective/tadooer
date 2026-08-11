@@ -1,93 +1,55 @@
 import {
-  automationConfirmationResponseSchema,
-  automationCatalog,
-  automationPreviewResponseSchema,
+  createAutomationClient,
   type AutomationConfirmationResponse,
+  automationCatalog,
+  automationConfirmationResponseSchema,
+  automationConfirmRequestSchema,
 } from "@suite/contracts";
 import type { QuickAddConfig } from "./config.ts";
 
-export type FetchLike = (
-  input: string,
-  init: RequestInit,
-) => Promise<Pick<Response, "ok" | "status" | "json">>;
-
-const taskPreviewPath = automationCatalog.find(
-  ({ id }) => id === "tasks.create",
-)?.apiPath;
-const confirmPath = automationCatalog.find(
-  ({ id }) => id === "automation.confirm",
-)?.apiPath;
-if (taskPreviewPath === undefined || confirmPath === undefined)
-  throw new Error("Suite automation catalog is missing quick-add operations");
-
-const errorFor = async (
-  response: Pick<Response, "status" | "json">,
-): Promise<Error> => {
-  try {
-    const body = (await response.json()) as {
-      code?: unknown;
-      message?: unknown;
-    };
-    const code =
-      typeof body.code === "string" ? body.code : "AUTOMATION_REQUEST_FAILED";
-    const message =
-      typeof body.message === "string"
-        ? body.message
-        : "Suite automation request failed";
-    return new Error(`${code}: ${message}`);
-  } catch {
-    return new Error(
-      `AUTOMATION_REQUEST_FAILED: Suite returned HTTP ${String(response.status)}`,
-    );
-  }
-};
-
-const requestHeaders = (token: string): Readonly<Record<string, string>> => ({
-  Accept: "application/json",
-  Authorization: `Bearer ${token}`,
-  "Content-Type": "application/json",
-});
-
+/**
+ * Creates a task through the two-phase automation protocol
+ * (preview → confirm) using the shared catalog-typed client.
+ */
 export const submitQuickAdd = async (
   config: Pick<
     QuickAddConfig,
     "baseUrl" | "idempotencyKey" | "title" | "notes"
   >,
   token: string,
-  fetchImpl: FetchLike = fetch,
 ): Promise<AutomationConfirmationResponse> => {
-  const preview = await fetchImpl(`${config.baseUrl}${taskPreviewPath}`, {
-    method: "POST",
-    headers: requestHeaders(token),
-    body: JSON.stringify({
-      operation: "tasks.create",
-      input: { title: config.title, notes: config.notes },
-    }),
-  });
-  if (!preview.ok) throw await errorFor(preview);
-  const previewBody = automationPreviewResponseSchema.safeParse(
-    await preview.json(),
-  );
-  if (!previewBody.success)
-    throw new Error(
-      "AUTOMATION_PROTOCOL_INVALID: Suite preview response is invalid",
-    );
+  const client = createAutomationClient(config.baseUrl);
+  const authHeaders = { Authorization: `Bearer ${token}` };
 
-  const confirmation = await fetchImpl(
-    `${config.baseUrl}${confirmPath.replace("{previewId}", encodeURIComponent(previewBody.data.preview.id))}`,
+  const taskCreateEntry = automationCatalog.find(
+    (e) => e.id === "tasks.create",
+  );
+  if (!taskCreateEntry) throw new Error("tasks.create not found in automation catalog");
+
+  const previewResponse = (await client.request(
+    taskCreateEntry,
     {
-      method: "POST",
-      headers: requestHeaders(token),
-      body: JSON.stringify({ idempotencyKey: config.idempotencyKey }),
+      operation: "tasks.create" as const,
+      input: { title: config.title, notes: config.notes },
+    },
+    { headers: authHeaders },
+  )) as { readonly preview: { readonly id: string } };
+
+  const previewId = previewResponse.preview.id;
+
+  const confirmEntry = {
+    kind: "tool" as const,
+    apiPath: "/api/automation/v1/previews/{previewId}/confirm",
+    inputSchema: automationConfirmRequestSchema,
+    outputSchema: automationConfirmationResponseSchema,
+  };
+
+  return client.request(
+    confirmEntry,
+    { idempotencyKey: config.idempotencyKey },
+    {
+      headers: authHeaders,
+      pathParams: { previewId },
     },
   );
-  if (!confirmation.ok) throw await errorFor(confirmation);
-  const confirmed = automationConfirmationResponseSchema.safeParse(
-    await confirmation.json(),
-  );
-  if (!confirmed.success)
-    throw new Error(
-      "AUTOMATION_PROTOCOL_INVALID: Suite confirmation response is invalid",
-    );
-  return confirmed.data;
 };

@@ -85,19 +85,10 @@ import {
   type NotificationStatusResponse,
   type NotificationTestResponse,
 } from "@suite/contracts";
+import { ApiRequestError } from "@suite/contracts";
 import { z } from "zod";
 import type { LocalClientIdentity } from "./local-store.ts";
 import { SyncCursorResetRequired, type SyncTransport } from "./sync-engine.ts";
-
-export class ApiRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 const request = async <T>(
   path: string,

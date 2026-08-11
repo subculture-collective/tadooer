@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { submitQuickAdd, type FetchLike } from "./client.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { submitQuickAdd } from "./client.ts";
 
 const id = "d1054acd-c04d-4bd8-a814-254b007154ba";
 const task = {
@@ -18,41 +18,46 @@ const task = {
   tagIds: [],
 };
 
-const jsonResponse = (body: unknown, status = 200) => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: () => Promise.resolve(body),
-});
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("quick-add automation HTTP client", () => {
   it("uses only preview then confirmation with one caller-provided key", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
-    const mockFetch: FetchLike = (url, init) => {
-      calls.push({ url, init });
-      if (calls.length === 1)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init: RequestInit = {}) => {
+        calls.push({ url, init });
+        if (calls.length === 1)
+          return Promise.resolve(
+            jsonResponse({
+              preview: {
+                id,
+                operation: "tasks.create",
+                inputHash: "a".repeat(64),
+                summary: "Create one task",
+                affected: [],
+                baseRevisions: [],
+                expiresAt: "2026-08-06T16:10:00.000Z",
+                requiresConfirmation: true,
+              },
+            }),
+          );
         return Promise.resolve(
           jsonResponse({
-            preview: {
-              id,
-              operation: "tasks.create",
-              inputHash: "a".repeat(64),
-              summary: "Create one task",
-              affected: [],
-              baseRevisions: [],
-              expiresAt: "2026-08-06T16:10:00.000Z",
-              requiresConfirmation: true,
-            },
+            previewId: id,
+            operation: "tasks.create",
+            replayed: false,
+            result: { task, replayed: false },
           }),
         );
-      return Promise.resolve(
-        jsonResponse({
-          previewId: id,
-          operation: "tasks.create",
-          replayed: false,
-          result: { task, replayed: false },
-        }),
-      );
-    };
+      }),
+    );
 
     const result = await submitQuickAdd(
       {
@@ -62,7 +67,6 @@ describe("quick-add automation HTTP client", () => {
         notes: task.notes,
       },
       `suite_at_${id}.${"A".repeat(43)}`,
-      mockFetch,
     );
 
     expect(result.replayed).toBe(false);
@@ -83,16 +87,20 @@ describe("quick-add automation HTTP client", () => {
   });
 
   it("returns the bounded Suite error rather than continuing to confirmation", async () => {
-    const mockFetch: FetchLike = () =>
-      Promise.resolve(
-        jsonResponse(
-          {
-            code: "AUTOMATION_SCOPE_DENIED",
-            message: "Task write scope required",
-          },
-          403,
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse(
+            {
+              code: "AUTOMATION_SCOPE_DENIED",
+              message: "Task write scope required",
+            },
+            403,
+          ),
         ),
-      );
+      ),
+    );
     await expect(
       submitQuickAdd(
         {
@@ -102,8 +110,7 @@ describe("quick-add automation HTTP client", () => {
           notes: task.notes,
         },
         `suite_at_${id}.${"A".repeat(43)}`,
-        mockFetch,
       ),
-    ).rejects.toThrow("AUTOMATION_SCOPE_DENIED");
+    ).rejects.toThrow("Task write scope required");
   });
 });

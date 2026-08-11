@@ -1870,3 +1870,5 @@ export type AutomationConfirmRequest = z.infer<
 export type AutomationConfirmationResponse = z.infer<
   typeof automationConfirmationResponseSchema
 >;
+
+export { ApiRequestError, createAutomationClient } from "./http-client.ts";

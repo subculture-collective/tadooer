@@ -1,5 +1,7 @@
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import { createAutomationClient, ApiRequestError } from "@suite/contracts";
+import { z } from "zod";
 import { automationApiUrl, type AdapterConfig } from "./config.ts";
 
 const jsonRpcVersion = "2.0";
@@ -104,6 +106,8 @@ const safeFailure = (
     : { code: failure.code, message: failure.message };
 };
 
+const passthroughSchema = z.unknown();
+
 class AutomationApiClient {
   constructor(private readonly config: AdapterConfig) {}
 
@@ -114,75 +118,105 @@ class AutomationApiClient {
     | { readonly ok: true; readonly body: unknown }
     | { readonly ok: false; readonly failure: ReturnType<typeof safeFailure> }
   > {
-    let response: Response;
-    try {
-      const { path, body } = resolveHttpPath(http.path, arguments_);
-      const destination = automationApiUrl(this.config.baseUrl, path);
-      if (http.method === "GET") {
-        for (const [key, value] of Object.entries(body)) {
-          if (
-            typeof value !== "string" &&
-            typeof value !== "number" &&
-            typeof value !== "boolean"
-          ) {
-            return {
-              ok: false,
-              failure: {
-                code: "INVALID_TOOL_ARGUMENTS",
-                message: "Suite automation arguments are invalid",
-              },
-            };
-          }
-          destination.searchParams.set(key, String(value));
-        }
-      }
-      response = await fetch(
-        destination,
-        http.method === "POST"
-          ? {
-              method: http.method,
-              headers: {
-                Accept: "application/json",
-                Authorization: `Bearer ${this.config.token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(body),
-              redirect: "error",
-            }
-          : {
-              method: http.method,
-              headers: {
-                Accept: "application/json",
-                Authorization: `Bearer ${this.config.token}`,
-              },
-              redirect: "error",
+    const { path, body } = resolveHttpPath(http.path, arguments_);
+    const destination = automationApiUrl(this.config.baseUrl, path);
+
+    const client = createAutomationClient(
+      `${destination.origin}${destination.pathname}`.replace(/\/$/, ""),
+    );
+    const kind = http.method === "GET" ? ("resource" as const) : ("tool" as const);
+    const entry = {
+      kind,
+      apiPath: "",
+      inputSchema: passthroughSchema,
+      outputSchema: passthroughSchema,
+    };
+
+    let effectiveInput: unknown = body;
+
+    if (kind === "resource") {
+      const searchParams: Record<string, string> = {};
+      for (const [key, value] of Object.entries(body)) {
+        if (
+          typeof value !== "string" &&
+          typeof value !== "number" &&
+          typeof value !== "boolean"
+        ) {
+          return {
+            ok: false,
+            failure: {
+              code: "INVALID_TOOL_ARGUMENTS",
+              message: "Suite automation arguments are invalid",
             },
-      );
-    } catch {
+          };
+        }
+        searchParams[key] = String(value);
+      }
+      const query = new URLSearchParams(searchParams).toString();
+      effectiveInput = searchParams;
+      if (query) {
+        const base = `${destination.origin}${destination.pathname}`;
+        return this.callWithQuery(base, query);
+      }
+    }
+
+    try {
+      const result = await client.request(entry, effectiveInput, {
+        headers: { Authorization: `Bearer ${this.config.token}` },
+      });
+      return { ok: true as const, body: result };
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        const failure = safeFailure({
+          code: error.code,
+          message: error.message,
+          requestId: error.requestId,
+        });
+        return { ok: false as const, failure };
+      }
       return {
-        ok: false,
+        ok: false as const,
         failure: {
           code: "AUTOMATION_TRANSPORT_UNAVAILABLE",
           message: "Suite automation transport is unavailable",
         },
       };
     }
+  }
 
-    let body: unknown;
+  private async callWithQuery(
+    base: string,
+    query: string,
+  ): Promise<
+    | { readonly ok: true; readonly body: unknown }
+    | { readonly ok: false; readonly failure: ReturnType<typeof safeFailure> }
+  > {
+    // For GET with query params, fall through to direct fetch since the
+    // shared client uses URLSearchParams construction from the input object
+    // and we've already done that work.
+    const url = `${base}?${query}`;
     try {
-      body = (await response.json()) as unknown;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${this.config.token}`,
+        },
+        redirect: "error" as RequestRedirect,
+      });
+      const body = (await response.json()) as unknown;
+      return response.ok
+        ? { ok: true as const, body }
+        : { ok: false as const, failure: safeFailure(body) };
     } catch {
       return {
-        ok: false,
+        ok: false as const,
         failure: {
-          code: "AUTOMATION_INVALID_RESPONSE",
-          message: "Suite automation returned an invalid response",
+          code: "AUTOMATION_TRANSPORT_UNAVAILABLE",
+          message: "Suite automation transport is unavailable",
         },
       };
     }
-    return response.ok
-      ? { ok: true, body }
-      : { ok: false, failure: safeFailure(body) };
   }
 }
 
