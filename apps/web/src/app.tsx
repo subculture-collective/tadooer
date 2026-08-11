@@ -2,23 +2,23 @@ import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
   ActiveSession,
   BaikalStatusResponse,
+  ChoicePool,
+  ChoicePoolHistoryEvent,
+  ChoicePoolItem,
+  ChoicePoolSuggestionResponse,
+  DayPlanResponse,
+  GoogleConnectorStatusResponse,
+  NotificationPreferences,
+  NotificationStatusResponse,
+  PlanningPlaceholder,
+  PlanningPreferences,
+  PlannerResponse,
   Project,
   SessionResponse,
   Subtask,
   Tag,
   Task,
-  PlannerResponse,
-  ChoicePool,
-  ChoicePoolItem,
-  ChoicePoolHistoryEvent,
-  PlanningPlaceholder,
-  ChoicePoolSuggestionResponse,
   TemplatePoolSlot,
-  GoogleConnectorStatusResponse,
-  PlanningPreferences,
-  DayPlanResponse,
-  NotificationPreferences,
-  NotificationStatusResponse,
 } from "@suite/contracts";
 import { ApiRequestError } from "@suite/contracts";
 import {
@@ -78,17 +78,18 @@ import {
 } from "./api.ts";
 import { LocalStore, type LocalClientIdentity } from "./local-store.ts";
 import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
-import { FocusPanel, type FocusPanelCommand } from "./focus-panel.tsx";
-import {
-  TemplateLibrary,
-  type TemplateBlueprintView,
-  type TemplateSetView,
-  type TemplateView,
+import { Field } from "./field.tsx";
+import type { FocusPanelCommand } from "./focus-panel.tsx";
+import type {
+  TemplateBlueprintView,
+  TemplateSetView,
+  TemplateView,
 } from "./template-library.tsx";
-import { ChoicePoolLibrary } from "./choice-pool-library.tsx";
-import { CalendarMigration } from "./calendar-migration.tsx";
-import { GooglePlanning } from "./google-planning.tsx";
-import { NotificationSettings } from "./notification-settings.tsx";
+import { TodayPage } from "./pages/TodayPage.tsx";
+import { TasksPage } from "./pages/TasksPage.tsx";
+import { ReusePage } from "./pages/ReusePage.tsx";
+import { ConnectionsPage } from "./pages/ConnectionsPage.tsx";
+import { SettingsPage } from "./pages/SettingsPage.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -164,36 +165,6 @@ const localInputToIso = (value: string): string | undefined => {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
 };
 
-const Field = ({
-  label,
-  name,
-  type = "text",
-  autoComplete,
-  minLength,
-  defaultValue,
-  required = true,
-}: {
-  readonly label: string;
-  readonly name: string;
-  readonly type?: "text" | "password";
-  readonly autoComplete: string;
-  readonly minLength?: number;
-  readonly defaultValue?: string;
-  readonly required?: boolean;
-}) => (
-  <label className="field">
-    <span>{label}</span>
-    <input
-      name={name}
-      type={type}
-      autoComplete={autoComplete}
-      minLength={minLength}
-      defaultValue={defaultValue}
-      required={required}
-    />
-  </label>
-);
-
 export const App = ({ initialState, initialPath }: AppProps) => {
   const [state, setState] = useState<AppState>(
     initialState ?? { kind: "loading" },
@@ -241,9 +212,6 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   >("all");
   const [taskProjectFilter, setTaskProjectFilter] = useState("");
   const [taskTagFilter, setTaskTagFilter] = useState("");
-  const [hiddenCalendarIds, setHiddenCalendarIds] = useState<readonly string[]>(
-    [],
-  );
 
   useEffect(() => {
     const onPopState = (): void => setRoute(routeFromPath(location.pathname));
@@ -1879,231 +1847,63 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 </a>
               ))}
             </nav>
-            {route === "connections" &&
-              state.google !== undefined &&
-              state.planningPreferences !== undefined &&
-              state.dayPlan !== undefined && (
-                <GooglePlanning
-                  mode="connection"
-                  status={state.google}
-                  preferences={state.planningPreferences}
-                  dayPlan={state.dayPlan}
-                  busy={busy}
-                  onAuthorize={authorizeGoogle}
-                  onSynchronize={syncGoogleCalendar}
-                  onDisconnect={removeGoogleCalendar}
-                  onSavePreferences={savePlanningPreferences}
-                />
-              )}
-            {route === "settings" &&
-              state.google !== undefined &&
-              state.planningPreferences !== undefined &&
-              state.dayPlan !== undefined && (
-                <GooglePlanning
-                  mode="preferences"
-                  status={state.google}
-                  preferences={state.planningPreferences}
-                  dayPlan={state.dayPlan}
-                  busy={busy}
-                  onAuthorize={authorizeGoogle}
-                  onSynchronize={syncGoogleCalendar}
-                  onDisconnect={removeGoogleCalendar}
-                  onSavePreferences={savePlanningPreferences}
-                />
-              )}
-            {route === "settings" &&
-              state.notificationPreferences !== undefined &&
-              state.notificationStatus !== undefined && (
-                <NotificationSettings
-                  preferences={state.notificationPreferences}
-                  status={state.notificationStatus}
-                  busy={busy}
-                  online={state.syncStatus === "online"}
-                  onSave={saveNotificationPreferences}
-                  onTest={testNotification}
-                />
-              )}
-            {route === "today" && state.dayPlan !== undefined && (
-              <section className="today-status" aria-labelledby="today-title">
-                <p className="step">Calm daily workspace</p>
-                <h3 id="today-title">
-                  {state.dayPlan.state.replaceAll("_", " ")}
-                </h3>
-                <p>
-                  {state.dayPlan.nextTask === null
-                    ? "No scheduled task is ready next."
-                    : `Next: ${state.dayPlan.nextTask.title}`}
-                </p>
-                <p className="hint">
-                  {state.dayPlan.reminder.suppressed
-                    ? `Quiet: ${state.dayPlan.reminder.reason.replaceAll("_", " ")}`
-                    : "Ready for the next planned task."}
-                </p>
-              </section>
-            )}
-            {route === "settings" && (
-              <button
-                type="button"
-                className="text-button"
-                disabled={busy}
-                onClick={() => void syncNow()}
-              >
-                Sync now
-              </button>
-            )}
             {formError !== null && <p className="form-error">{formError}</p>}
             {route === "today" && (
-              <>
-                <FocusPanel
+                <TodayPage
+                  dayPlan={state.dayPlan}
                   tasks={state.tasks}
                   activeSession={state.activeSession ?? null}
                   clientId={state.client?.clientId ?? null}
+                  syncStatus={state.syncStatus}
+                  planner={state.planner}
                   busy={busy}
-                  online={state.syncStatus === "online"}
-                  onCommand={(command) => void handleFocusCommand(command)}
+                  onFocusCommand={(command) => void handleFocusCommand(command)}
+                  onSubmitTask={submitTask}
                 />
-                <section
-                  className="week-plan"
-                  aria-labelledby="week-plan-title"
-                >
-                  <div className="section-heading">
-                    <div>
-                      <p className="step">Real calendar context</p>
-                      <h3 id="week-plan-title">Week plan</h3>
-                    </div>
-                    {state.planner !== null && (
-                      <span
-                        className={`freshness freshness--${state.planner.freshness.state}`}
-                      >
-                        {state.planner.freshness.message}
-                      </span>
-                    )}
-                  </div>
-                  {state.planner === null ||
-                  state.planner.events.length === 0 ? (
-                    <p className="muted">No supported events in this week.</p>
-                  ) : (
-                    <>
-                      <fieldset className="calendar-filters">
-                        <legend>Calendars</legend>
-                        {Array.from(
-                          new Map(
-                            state.planner.events.map((event) => [
-                              event.identity.calendarId,
-                              event.source,
-                            ]),
-                          ),
-                        ).map(([calendarId, source]) => (
-                          <label key={calendarId}>
-                            <input
-                              type="checkbox"
-                              checked={!hiddenCalendarIds.includes(calendarId)}
-                              onChange={(event) =>
-                                setHiddenCalendarIds((current) =>
-                                  event.currentTarget.checked
-                                    ? current.filter((id) => id !== calendarId)
-                                    : [...current, calendarId],
-                                )
-                              }
-                            />
-                            {source.providerDisplayLabel} ·{" "}
-                            {source.calendarName}
-                          </label>
-                        ))}
-                      </fieldset>
-                      <ol className="timeline">
-                        {state.planner.events
-                          .filter(
-                            (event) =>
-                              !hiddenCalendarIds.includes(
-                                event.identity.calendarId,
-                              ),
-                          )
-                          .map((event) => (
-                            <li
-                              key={`${event.identity.calendarId}:${event.href}`}
-                            >
-                              <time dateTime={event.startsAt}>
-                                {new Date(event.startsAt).toLocaleString()}
-                              </time>
-                              <strong>
-                                {event.summary || "Untitled event"}
-                              </strong>
-                              <span className="source-badge">
-                                {event.source.providerDisplayLabel} ·{" "}
-                                {event.source.calendarName}
-                              </span>
-                              <span>
-                                until{" "}
-                                {new Date(event.endsAt).toLocaleTimeString()}
-                              </span>
-                            </li>
-                          ))}
-                      </ol>
-                    </>
-                  )}
-                </section>
-                <form
-                  className="task-capture"
-                  onSubmit={(event) => void submitTask(event)}
-                >
-                  <h3>Capture a task</h3>
-                  <Field
-                    label="What needs doing?"
-                    name="title"
-                    autoComplete="off"
-                  />
-                  <Field
-                    label="Notes"
-                    name="notes"
-                    autoComplete="off"
-                    required={false}
-                  />
-                  <label className="field">
-                    <span>Estimate minutes</span>
-                    <input
-                      name="estimateMinutes"
-                      type="number"
-                      min="1"
-                      max="720"
-                    />
-                  </label>
-                  <button disabled={busy}>
-                    {busy ? "Capturing…" : "Capture task"}
-                  </button>
-                </form>
-              </>
-            )}
+              )}
             {route === "tasks" && (
-              <section aria-labelledby="organization-title">
-                <h3 id="organization-title">Projects and tags</h3>
-                <div className="task-actions">
-                  <form
-                    onSubmit={(event) =>
-                      void submitOrganization(event, "project")
-                    }
-                  >
-                    <Field
-                      label="New project"
-                      name="title"
-                      autoComplete="off"
-                    />
-                    <button disabled={busy}>Add project</button>
-                  </form>
-                  <form
-                    onSubmit={(event) => void submitOrganization(event, "tag")}
-                  >
-                    <Field label="New tag" name="title" autoComplete="off" />
-                    <button disabled={busy}>Add tag</button>
-                  </form>
-                </div>
-              </section>
+              <TasksPage
+                tasks={state.tasks}
+                visibleTasks={visibleTasks}
+                recovery={state.recovery}
+                projects={projects}
+                tags={tags}
+                subtasks={subtasks}
+                provenance={templateProvenance}
+                baikalCalendars={state.baikal.calendars}
+                taskQuery={taskQuery}
+                taskStatusFilter={taskStatusFilter}
+                taskProjectFilter={taskProjectFilter}
+                taskTagFilter={taskTagFilter}
+                busy={busy}
+                onTaskQueryChange={setTaskQuery}
+                onTaskStatusFilterChange={setTaskStatusFilter}
+                onTaskProjectFilterChange={setTaskProjectFilter}
+                onTaskTagFilterChange={setTaskTagFilter}
+                onSubmitOrganization={submitOrganization}
+                onSubmitTaskEdit={submitTaskEdit}
+                onSubmitTimeBlock={submitTimeBlock}
+                onRemoveTimeBlock={removeTimeBlock}
+                onSubmitTaskOrganization={submitTaskOrganization}
+                onSubmitSubtask={submitSubtask}
+                onChangeSubtask={changeSubtask}
+                onSaveTaskAsTemplate={saveTaskAsTemplate}
+                onChangeTaskStatus={changeTaskStatus}
+                onRemoveTask={removeTask}
+                onRecoverTask={recoverTask}
+              />
             )}
             {route === "reuse" && (
-              <TemplateLibrary
+              <ReusePage
                 templates={templates}
-                blueprints={templateBlueprints}
-                sets={templateSets}
+                templateBlueprints={templateBlueprints}
+                templateSets={templateSets}
+                choicePools={choicePools}
+                choicePoolItems={choicePoolItems}
+                choicePoolHistory={choicePoolHistory}
+                planningPlaceholders={planningPlaceholders}
+                templatePoolSlots={templatePoolSlots}
+                tasks={state.tasks}
                 projects={projects
                   .filter((project) => project.archivedAt === null)
                   .map(({ id, title }) => ({ id, title }))}
@@ -2111,447 +1911,57 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                   .filter((tag) => tag.archivedAt === null)
                   .map(({ id, displayName }) => ({ id, displayName }))}
                 busy={busy}
-                onCreate={submitTemplateCreate}
-                onSearch={(query) => void refreshTemplateLibrary(query)}
-                onArchive={archiveTemplate}
-                onEdit={editTemplate}
-                onCreateSet={submitTemplateSetCreate}
-                onInstantiate={submitTemplateInstantiation}
-                onInstantiateSet={submitTemplateSetInstantiation}
+                onCreateTemplate={submitTemplateCreate}
+                onSearchTemplates={(query) => void refreshTemplateLibrary(query)}
+                onArchiveTemplate={archiveTemplate}
+                onEditTemplate={editTemplate}
+                onCreateTemplateSet={submitTemplateSetCreate}
+                onInstantiateTemplate={submitTemplateInstantiation}
+                onInstantiateTemplateSet={submitTemplateSetInstantiation}
+                onCreateChoicePool={submitChoicePool}
+                onCreatePlanningPlaceholder={submitPlanningPlaceholder}
+                onEditChoicePool={editChoicePool}
+                onAddTemplatePoolSlot={addTemplatePoolSlot}
+                onRecordChoicePoolCompletion={completeChoicePoolItem}
+                onSuggestPlaceholder={previewPlanningPlaceholder}
+                onResolvePlaceholder={submitPlaceholderResolution}
               />
-            )}
-            {route === "reuse" && (
-              <ChoicePoolLibrary
-                pools={choicePools}
-                items={choicePoolItems}
-                history={choicePoolHistory}
-                placeholders={planningPlaceholders}
-                tasks={state.tasks}
-                templates={templates}
-                poolSlots={templatePoolSlots}
-                busy={busy}
-                onCreatePool={submitChoicePool}
-                onCreatePlaceholder={submitPlanningPlaceholder}
-                onEditPool={editChoicePool}
-                onCreateTemplateSlot={addTemplatePoolSlot}
-                onRecordCompletion={completeChoicePoolItem}
-                onSuggest={previewPlanningPlaceholder}
-                onResolve={submitPlaceholderResolution}
-              />
-            )}
-            {route === "tasks" && (
-              <>
-                <div
-                  className="task-filter-bar"
-                  role="search"
-                  aria-label="Filter tasks"
-                >
-                  <label>
-                    Search
-                    <input
-                      type="search"
-                      value={taskQuery}
-                      onChange={(event) =>
-                        setTaskQuery(event.currentTarget.value)
-                      }
-                    />
-                  </label>
-                  <label>
-                    Status
-                    <select
-                      value={taskStatusFilter}
-                      onChange={(event) =>
-                        setTaskStatusFilter(
-                          event.currentTarget.value as "all" | Task["status"],
-                        )
-                      }
-                    >
-                      <option value="all">All</option>
-                      <option value="open">Open</option>
-                      <option value="completed">Completed</option>
-                    </select>
-                  </label>
-                  <label>
-                    Project
-                    <select
-                      value={taskProjectFilter}
-                      onChange={(event) =>
-                        setTaskProjectFilter(event.currentTarget.value)
-                      }
-                    >
-                      <option value="">All projects</option>
-                      {projects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Tag
-                    <select
-                      value={taskTagFilter}
-                      onChange={(event) =>
-                        setTaskTagFilter(event.currentTarget.value)
-                      }
-                    >
-                      <option value="">All tags</option>
-                      {tags.map((tag) => (
-                        <option key={tag.id} value={tag.id}>
-                          {tag.displayName}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <h3>Captured tasks</h3>
-                {visibleTasks.length === 0 ? (
-                  <p className="muted">No tasks match these filters.</p>
-                ) : (
-                  <ul className="tasks">
-                    {visibleTasks.map((task) => (
-                      <li
-                        key={task.id}
-                        className={
-                          task.status === "completed" ? "task--completed" : ""
-                        }
-                      >
-                        <div className="task-heading">
-                          <strong>{task.title}</strong>
-                          <small>
-                            {task.status === "completed" ? "Completed" : "Open"}{" "}
-                            · Revision {task.revision}
-                          </small>
-                        </div>
-                        {task.notes !== "" && <span>{task.notes}</span>}
-                        {templateProvenance[task.id] !== undefined && (
-                          <p className="template-provenance">
-                            Created from a reusable template.
-                          </p>
-                        )}
-                        {task.plannedStart != null && (
-                          <p className="planned-time">
-                            Planned{" "}
-                            {new Date(task.plannedStart).toLocaleString()} ·{" "}
-                            {task.estimateMinutes} minutes
-                          </p>
-                        )}
-                        <form
-                          className="task-edit"
-                          onSubmit={(event) => void submitTaskEdit(event, task)}
-                        >
-                          <Field
-                            label="Title"
-                            name="title"
-                            autoComplete="off"
-                            defaultValue={task.title}
-                          />
-                          <Field
-                            label="Notes"
-                            name="notes"
-                            autoComplete="off"
-                            defaultValue={task.notes}
-                            required={false}
-                          />
-                          <label className="field">
-                            <span>Estimate minutes</span>
-                            <input
-                              name="estimateMinutes"
-                              type="number"
-                              min="1"
-                              max="720"
-                              defaultValue={task.estimateMinutes ?? ""}
-                            />
-                          </label>
-                          <button disabled={busy}>Save task</button>
-                        </form>
-                        <form
-                          className="time-block"
-                          onSubmit={(event) =>
-                            void submitTimeBlock(event, task)
-                          }
-                        >
-                          <label className="field">
-                            <span>Calendar</span>
-                            <select name="calendarId" required>
-                              {state.baikal.calendars
-                                .filter((calendar) => calendar.supportsEvents)
-                                .map((calendar) => (
-                                  <option key={calendar.id} value={calendar.id}>
-                                    {calendar.displayName}
-                                  </option>
-                                ))}
-                            </select>
-                          </label>
-                          <label className="field">
-                            <span>Start</span>
-                            <input
-                              name="startsAt"
-                              type="datetime-local"
-                              required
-                            />
-                          </label>
-                          <label className="field">
-                            <span>Minutes</span>
-                            <input
-                              name="durationMinutes"
-                              type="number"
-                              min="1"
-                              max="720"
-                              defaultValue={task.estimateMinutes ?? 30}
-                              required
-                            />
-                          </label>
-                          <p className="hint">
-                            Manual placement stays explicit even when times
-                            overlap.
-                          </p>
-                          <button disabled={busy}>
-                            {task.plannedStart == null
-                              ? "Place in calendar"
-                              : "Move calendar block"}
-                          </button>
-                          {task.plannedStart != null && (
-                            <button
-                              type="button"
-                              className="text-button"
-                              disabled={busy}
-                              onClick={() => void removeTimeBlock(task)}
-                            >
-                              Remove calendar block
-                            </button>
-                          )}
-                        </form>
-                        <form
-                          className="task-edit"
-                          onSubmit={(event) =>
-                            void submitTaskOrganization(event, task)
-                          }
-                        >
-                          <label className="field">
-                            <span>Project</span>
-                            <select
-                              name="projectId"
-                              defaultValue={task.projectId ?? ""}
-                            >
-                              <option value="">No project</option>
-                              {projects
-                                .filter(
-                                  (project) => project.archivedAt === null,
-                                )
-                                .map((project) => (
-                                  <option key={project.id} value={project.id}>
-                                    {project.title}
-                                  </option>
-                                ))}
-                            </select>
-                          </label>
-                          <fieldset>
-                            <legend>Tags</legend>
-                            {tags
-                              .filter((tag) => tag.archivedAt === null)
-                              .map((tag) => (
-                                <label key={tag.id}>
-                                  <input
-                                    type="checkbox"
-                                    name="tagIds"
-                                    value={tag.id}
-                                    defaultChecked={task.tagIds?.includes(
-                                      tag.id,
-                                    )}
-                                  />
-                                  {tag.displayName}
-                                </label>
-                              ))}
-                          </fieldset>
-                          <button disabled={busy}>Save organization</button>
-                        </form>
-                        <div>
-                          <strong>Checklist</strong>
-                          <ul>
-                            {(subtasks[task.id] ?? []).map((subtask) => (
-                              <li key={subtask.id}>
-                                {subtask.completed ? "✓" : "○"} {subtask.title}
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() =>
-                                    void changeSubtask(subtask, "toggle")
-                                  }
-                                >
-                                  {subtask.completed ? "Reopen" : "Complete"}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={busy || subtask.position === 0}
-                                  onClick={() =>
-                                    void changeSubtask(subtask, "up")
-                                  }
-                                >
-                                  Move up
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() =>
-                                    void changeSubtask(subtask, "down")
-                                  }
-                                >
-                                  Move down
-                                </button>
-                                <button
-                                  type="button"
-                                  className="danger-button"
-                                  disabled={busy}
-                                  onClick={() =>
-                                    void changeSubtask(subtask, "delete")
-                                  }
-                                >
-                                  Delete item
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                          <form
-                            onSubmit={(event) =>
-                              void submitSubtask(event, task)
-                            }
-                          >
-                            <Field
-                              label="New checklist item"
-                              name="title"
-                              autoComplete="off"
-                            />
-                            <button disabled={busy}>Add item</button>
-                          </form>
-                        </div>
-                        <div className="task-actions">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void saveTaskAsTemplate(task)}
-                          >
-                            Save as template
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              void changeTaskStatus(
-                                task,
-                                task.status === "completed"
-                                  ? "reopen"
-                                  : "complete",
-                              )
-                            }
-                          >
-                            {task.status === "completed"
-                              ? "Reopen"
-                              : "Complete"}
-                          </button>
-                          <button
-                            className="danger-button"
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void removeTask(task)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <details className="recovery">
-                  <summary>
-                    Recently deleted tasks ({state.recovery.length})
-                  </summary>
-                  {state.recovery.length === 0 ? (
-                    <p className="muted">Nothing needs recovery.</p>
-                  ) : (
-                    <ul className="tasks">
-                      {state.recovery.map((task) => (
-                        <li key={task.id}>
-                          <strong>{task.title}</strong>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void recoverTask(task)}
-                          >
-                            Restore task
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </details>
-              </>
-            )}
-            {route === "settings" && (
-              <section aria-labelledby="settings-health-title">
-                <h3 id="settings-health-title">Client and service health</h3>
-                <dl className="settings-health">
-                  <div>
-                    <dt>Task sync</dt>
-                    <dd>{state.syncStatus ?? "offline"}</dd>
-                  </div>
-                  <div>
-                    <dt>Client</dt>
-                    <dd>{state.client?.clientId ?? "Not registered"}</dd>
-                  </div>
-                  <div>
-                    <dt>Calendar freshness</dt>
-                    <dd>{state.planner?.freshness.state ?? "unavailable"}</dd>
-                  </div>
-                </dl>
-                <p className="hint">
-                  Automation credentials remain separately scoped and revocable;
-                  connector secrets are never returned to this page.
-                </p>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => void exportDiagnostics()}
-                >
-                  Export redacted sync diagnostics
-                </button>
-              </section>
             )}
             {route === "connections" && (
-              <section aria-labelledby="connections-calendars-title">
-                <h3 id="connections-calendars-title">Discovered calendars</h3>
-                {state.baikal.calendars.length === 0 ? (
-                  <p className="muted">
-                    No calendar collections were returned.
-                  </p>
-                ) : (
-                  <ul className="calendars">
-                    {state.baikal.calendars.map((calendar) => (
-                      <li key={calendar.href}>
-                        <strong>{calendar.displayName}</strong>
-                        <span>
-                          {[
-                            calendar.supportsEvents ? "Events" : null,
-                            calendar.supportsTodos ? "Todos" : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ") || "No supported component reported"}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <CalendarMigration
-                  calendars={state.baikal.calendars}
+                <ConnectionsPage
+                  baikal={state.baikal}
+                  google={state.google}
+                  planningPreferences={state.planningPreferences}
+                  dayPlan={state.dayPlan}
                   csrfToken={state.session.csrfToken}
+                  busy={busy}
+                  onAuthorizeGoogle={authorizeGoogle}
+                  onSyncGoogle={syncGoogleCalendar}
+                  onDisconnectGoogle={removeGoogleCalendar}
+                  onSavePlanningPreferences={savePlanningPreferences}
                 />
-                <p className="boundary-note">
-                  Calendar reads and Suite-created time blocks are conditional
-                  and bounded. Calendar and focus mutations remain online-only
-                  and are never silently queued.
-                </p>
-              </section>
-            )}
+              )}
+            {route === "settings" && (
+                <SettingsPage
+                  google={state.google}
+                  planningPreferences={state.planningPreferences}
+                  dayPlan={state.dayPlan}
+                  notificationPreferences={state.notificationPreferences}
+                  notificationStatus={state.notificationStatus}
+                  syncStatus={state.syncStatus}
+                  clientId={state.client?.clientId ?? null}
+                  plannerFreshness={state.planner?.freshness.state}
+                  busy={busy}
+                  onAuthorizeGoogle={authorizeGoogle}
+                  onSyncGoogle={syncGoogleCalendar}
+                  onDisconnectGoogle={removeGoogleCalendar}
+                  onSavePlanningPreferences={savePlanningPreferences}
+                  onSaveNotificationPreferences={saveNotificationPreferences}
+                  onTestNotification={testNotification}
+                  onSyncNow={syncNow}
+                  onExportDiagnostics={exportDiagnostics}
+                />
+              )}
           </div>
         )}
       </section>

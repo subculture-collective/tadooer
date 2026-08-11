@@ -10,7 +10,7 @@ import type {
 } from "@suite/contracts";
 import { conditionalRequestHeadersSchema } from "@suite/contracts";
 import type { ConditionalTaskResult } from "@suite/persistence";
-import { taskResponse } from "./server.ts";
+import { taskResponse } from "./routes/shared.ts";
 
 export const mimeTypes: Readonly<Record<string, string>> = {
   ".css": "text/css; charset=utf-8",
