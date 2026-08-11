@@ -408,7 +408,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 setState({
                   kind: "offline",
                   ...cached,
-                  message: "Working from this browser’s durable task cache.",
+                  message: "Working from this browser\u2019s durable task cache.",
                 });
               else if (!cancelled())
                 setState({ kind: "error", message: messageFor(error) });
@@ -474,7 +474,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       setState({
         kind: "login",
         username,
-        message: "Owner account created. Sign in to connect Baïkal.",
+        message: "Owner account created. Sign in to connect Ba\u00efkal.",
       });
     } catch (error: unknown) {
       setFormError(messageFor(error));
@@ -1531,440 +1531,285 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     URL.revokeObjectURL(url);
   };
 
-  return (
-    <main className="shell">
-      <section className="hero" aria-labelledby="suite-title">
-        <p className="eyebrow">Private · self-hosted · calm by default</p>
-        <h1 id="suite-title">Productivity Suite</h1>
-        <p className="lede">
-          One quiet place for tasks, real calendar time, focused work, and
-          deliberate automation.
-        </p>
-        <p className="phase">Single-owner daily driver · Phase 10</p>
-      </section>
+  /* ── Render ─────────────────────────────────────────────────── */
+  const isAuth =
+    state.kind === "loading" ||
+    state.kind === "error" ||
+    state.kind === "setup" ||
+    state.kind === "login" ||
+    state.kind === "offline" ||
+    (state.kind === "authenticated" && !state.baikal.connected);
 
-      <section className="panel" aria-live="polite">
+  const auth = isAuth;
+  if (auth) return (
+    <div className="auth-centre">
+      <div className="auth-card">
         {state.kind === "loading" && (
-          <div className="centered">
-            <span className="status__light" aria-hidden="true" />
-            <h2>Opening your suite…</h2>
+          <div style={{ textAlign: "center" }}>
+            <div className="status-dot online" style={{ width: 8, height: 8, margin: "0 auto 0.75rem" }} />
+            <p className="muted">Opening your suite...</p>
           </div>
         )}
-
         {state.kind === "error" && (
           <div>
             <p className="step">Connection problem</p>
-            <h2>The foundation is unavailable</h2>
-            <p className="muted">{state.message}</p>
+            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "0.5rem" }}>Unable to reach the Suite</h2>
+            <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", marginBottom: "1rem" }}>{state.message}</p>
+            <button className="btn-primary" onClick={() => location.reload()}>Retry</button>
           </div>
         )}
-
         {state.kind === "setup" && (
           <form onSubmit={(event) => void submitSetup(event)}>
             <p className="step">Step 1 of 2</p>
-            <h2>Create the owner account</h2>
-            <p className="muted">
-              This first release supports one owner. The identity remains
-              explicit so future data is always ownership-scoped.
-            </p>
-            <Field
-              label="Display name"
-              name="displayName"
-              autoComplete="name"
-            />
-            <Field
-              label="Username"
-              name="username"
-              autoComplete="username"
-              minLength={3}
-            />
-            <Field
-              label="Password"
-              name="password"
-              type="password"
-              autoComplete="new-password"
-              minLength={14}
-            />
-            <p className="hint">
-              Use at least 14 characters. A memorable passphrase works well.
-            </p>
-            {formError !== null && <p className="form-error">{formError}</p>}
-            <button disabled={busy}>
-              {busy ? "Creating…" : "Create owner"}
-            </button>
+            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "1rem" }}>Create the owner account</h2>
+            <p className="muted" style={{ marginBottom: "1rem" }}>This first release supports one owner. The identity remains explicit so future data is always ownership-scoped.</p>
+            <Field label="Display name" name="displayName" autoComplete="name" />
+            <Field label="Username" name="username" autoComplete="username" minLength={3} />
+            <Field label="Password" name="password" type="password" autoComplete="new-password" minLength={14} />
+            <p className="hint" style={{ marginBottom: "0.75rem" }}>Use at least 14 characters. A memorable passphrase works well.</p>
+            {formError !== null && <p className="message message-error" style={{ marginBottom: "0.75rem" }}>{formError}</p>}
+            <button className="btn-primary" disabled={busy} style={{ width: "100%" }}>{busy ? "Creating..." : "Create owner"}</button>
           </form>
         )}
-
         {state.kind === "login" && (
           <form onSubmit={(event) => void submitLogin(event)}>
             <p className="step">Welcome back</p>
-            <h2>Sign in</h2>
-            {state.message !== undefined && (
-              <p className="success">{state.message}</p>
-            )}
-            <Field
-              label="Username"
-              name="username"
-              autoComplete="username"
-              {...(state.username === undefined
-                ? {}
-                : { defaultValue: state.username })}
-            />
-            <Field
-              label="Password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-            />
-            {state.username !== undefined && (
-              <p className="hint">Your owner username is {state.username}.</p>
-            )}
-            {formError !== null && <p className="form-error">{formError}</p>}
-            <button disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "1rem" }}>Sign in</h2>
+            {state.message !== undefined && (<p className="message message-success" style={{ marginBottom: "0.75rem" }}>{state.message}</p>)}
+            <Field label="Username" name="username" autoComplete="username" {...(state.username === undefined ? {} : { defaultValue: state.username })} />
+            <Field label="Password" name="password" type="password" autoComplete="current-password" />
+            {state.username !== undefined && (<p className="message message-error" style={{ marginTop: "0.5rem" }}>Session expired. Please sign in again.</p>)}
+            {formError !== null && <p className="message message-error" style={{ marginTop: "0.5rem" }}>{formError}</p>}
+            <button className="btn-primary" disabled={busy} style={{ width: "100%", marginTop: "0.75rem" }}>{busy ? "Signing in..." : "Sign in"}</button>
           </form>
         )}
-
         {state.kind === "offline" && (
           <div>
-            <p className="step">Offline task cache</p>
-            <h2>Keep working locally</h2>
-            <p className="success">{state.message}</p>
-            <p className="hint">
-              Calendar placement and focus control return when this browser
-              reconnects. Pending task changes remain in IndexedDB.
-            </p>
-            <nav className="workspace-nav" aria-label="Offline workspace views">
-              {(["today", "tasks"] as const).map((item) => (
-                <a
-                  key={item}
-                  href={`/${item}`}
-                  aria-current={route === item ? "page" : undefined}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    navigate(item);
-                  }}
-                >
-                  {item === "today" ? "Today" : "Tasks"}
+            <p className="step">Offline</p>
+            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "0.5rem" }}>Limited workspace</h2>
+            <p className="muted">{state.message}</p>
+            {formError !== null && <p className="message message-error" style={{ marginTop: "0.5rem" }}>{formError}</p>}
+            <nav style={{ display: "flex", gap: "0.25rem", marginTop: "1rem", marginBottom: "1rem" }}>
+              {workspaceRoutes.map((item) => (
+                <a key={item} href={`/${item}`} aria-current={route === item ? "page" : undefined} onClick={(event) => { event.preventDefault(); navigate(item); }}
+                  style={{ padding: "0.25rem 0.5rem", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", color: route === item ? "var(--color-accent)" : "var(--color-text-secondary)", background: route === item ? "var(--color-accent-muted)" : "transparent", textDecoration: "none" }}>
+                  {item === "reuse" ? "Reuse" : item.charAt(0).toUpperCase() + item.slice(1)}
                 </a>
               ))}
             </nav>
-            <div className="offline-controls" aria-label="Online-only controls">
-              <button type="button" disabled>
-                Place in calendar (offline)
-              </button>
-              <button type="button" disabled>
-                Start focus (offline)
-              </button>
+            <div>
+              <form style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }} onSubmit={(event) => void submitTask(event)}>
+                <input type="text" name="title" required placeholder="Capture a task..." aria-label="Task title" />
+                <input type="text" name="notes" placeholder="Notes (optional)" aria-label="Task notes" />
+                <button className="btn-primary" type="submit" disabled={busy}>Add</button>
+              </form>
+              <ul className="tasks" role="list">
+                {state.tasks.map((task) => (
+                  <li key={task.id} className={task.status === "completed" ? "task--completed" : undefined}>
+                    <div className="task-heading"><span>{task.title}</span><span className="mono">{task.revision}</span></div>
+                    {task.notes !== "" && <p>{task.notes}</p>}
+                    <div className="task-actions">
+                      <button className="btn-ghost" type="button" onClick={() => void changeTaskStatus(task, task.status === "completed" ? "reopen" : "complete")}>{task.status === "completed" ? "Reopen" : "Complete"}</button>
+                      <button className="btn-danger" type="button" onClick={() => void removeTask(task)}>Delete</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <details className="recovery" style={{ marginTop: "0.5rem" }}>
+                <summary>Deleted tasks ({state.recovery.length})</summary>
+                {state.recovery.map((task) => (
+                  <button key={task.id} type="button" onClick={() => void recoverTask(task)}>Restore {task.title}</button>
+                ))}
+              </details>
+              <p className="hint" style={{ marginTop: "0.5rem" }}>Visible sync conflicts: {state.conflictCount}</p>
+              <button className="btn-ghost" type="button" disabled={busy} onClick={() => void syncNow()}>Sync now</button>
+              <button className="btn-ghost" type="button" onClick={() => void exportDiagnostics()}>Export redacted sync diagnostics</button>
             </div>
-            <form
-              className="task-capture"
-              onSubmit={(event) => void submitTask(event)}
-            >
-              <Field
-                label="What needs doing?"
-                name="title"
-                autoComplete="off"
-              />
-              <Field
-                label="Notes"
-                name="notes"
-                autoComplete="off"
-                required={false}
-              />
-              <label className="field">
-                <span>Estimate minutes</span>
-                <input name="estimateMinutes" type="number" min="1" max="720" />
-              </label>
-              <button disabled={busy}>Save locally</button>
-            </form>
-            <ul className="tasks">
-              {state.tasks.map((task) => (
-                <li key={task.id}>
-                  <strong>{task.title}</strong>
-                  <span>{task.notes}</span>
-                  <form onSubmit={(event) => void submitTaskEdit(event, task)}>
-                    <Field
-                      label="Title"
-                      name="title"
-                      autoComplete="off"
-                      defaultValue={task.title}
-                    />
-                    <Field
-                      label="Notes"
-                      name="notes"
-                      autoComplete="off"
-                      defaultValue={task.notes}
-                      required={false}
-                    />
-                    <label className="field">
-                      <span>Estimate minutes</span>
-                      <input
-                        name="estimateMinutes"
-                        type="number"
-                        min="1"
-                        max="720"
-                        defaultValue={task.estimateMinutes ?? ""}
-                      />
-                    </label>
-                    <button disabled={busy}>Save locally</button>
-                  </form>
-                  <div className="task-actions">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        void changeTaskStatus(
-                          task,
-                          task.status === "completed" ? "reopen" : "complete",
-                        )
-                      }
-                    >
-                      {task.status === "completed" ? "Reopen" : "Complete"}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger-button"
-                      disabled={busy}
-                      onClick={() => void removeTask(task)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <details className="recovery">
-              <summary>Deleted tasks ({state.recovery.length})</summary>
-              {state.recovery.map((task) => (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => void recoverTask(task)}
-                >
-                  Restore {task.title}
-                </button>
-              ))}
-            </details>
-            <p className="hint">
-              Visible sync conflicts: {state.conflictCount}
-            </p>
-            <button
-              type="button"
-              className="text-button"
-              disabled={busy}
-              onClick={() => void syncNow()}
-            >
-              Sync now
-            </button>
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => void exportDiagnostics()}
-            >
-              Export redacted sync diagnostics
-            </button>
           </div>
         )}
-
         {state.kind === "authenticated" && !state.baikal.connected && (
           <form onSubmit={(event) => void submitBaikal(event)}>
-            <div className="panel-heading">
-              <div>
-                <p className="step">Step 2 of 2</p>
-                <h2>Connect Baïkal</h2>
-              </div>
-              <button
-                className="text-button"
-                type="button"
-                onClick={() => void signOut()}
-              >
-                Sign out
-              </button>
-            </div>
-            <p className="muted">
-              Enter the Baïkal user you created. The Suite verifies it through
-              CalDAV before storing an encrypted credential.
-            </p>
-            <p className="endpoint">Bundled Baïkal · server-managed CalDAV</p>
-            <Field
-              label="Baïkal username"
-              name="username"
-              autoComplete="username"
-            />
-            <Field
-              label="Baïkal password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-            />
-            {formError !== null && <p className="form-error">{formError}</p>}
-            <button disabled={busy}>
-              {busy ? "Verifying…" : "Verify and connect"}
-            </button>
+            <p className="step">Step 2 of 2</p>
+            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "1rem" }}>Connect Baikal</h2>
+            <p className="muted" style={{ marginBottom: "0.75rem" }}>Enter the Baikal user you created. The Suite verifies it through CalDAV before storing an encrypted credential.</p>
+            <p className="hint" style={{ marginBottom: "0.75rem", fontFamily: "var(--font-mono)" }}>Bundled Baikal \u00b7 server-managed CalDAV</p>
+            <Field label="Baikal username" name="username" autoComplete="username" />
+            <Field label="Baikal password" name="password" type="password" autoComplete="current-password" />
+            {formError !== null && <p className="message message-error" style={{ marginTop: "0.5rem" }}>{formError}</p>}
+            <button className="btn-primary" disabled={busy} style={{ width: "100%", marginTop: "0.75rem" }}>{busy ? "Verifying..." : "Verify and connect"}</button>
           </form>
         )}
+      </div>
+    </div>
+  );
 
-        {state.kind === "authenticated" && state.baikal.connected && (
-          <div>
-            <div className="panel-heading">
-              <div>
-                <p className="step">Planner connected</p>
-                <h2>Hello, {state.session.owner.displayName}</h2>
-              </div>
-              <button
-                className="text-button"
-                type="button"
-                onClick={() => void signOut()}
-              >
-                Sign out
-              </button>
-            </div>
-            <p className="success">
-              Baïkal is verified as {state.baikal.username}. Credentials remain
-              server-side.
-            </p>
-            <p
-              className="hint"
-              data-sync-status={state.syncStatus ?? "offline"}
+  /* ── Workspace ── */
+  return (
+    <div className="workspace">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-dot" />
+          Productivity Suite
+        </div>
+        <nav className="sidebar-nav" aria-label="Workspace views">
+          {workspaceRoutes.map((item) => (
+            <a
+              key={item}
+              href={`/${item}`}
+              aria-current={route === item ? "page" : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                navigate(item);
+              }}
             >
-              Task sync: {state.syncStatus ?? "offline"} · visible conflicts:{" "}
-              {state.conflictCount ?? 0}
-            </p>
-            <nav className="workspace-nav" aria-label="Workspace views">
-              {workspaceRoutes.map((item) => (
-                <a
-                  key={item}
-                  href={`/${item}`}
-                  aria-current={route === item ? "page" : undefined}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    navigate(item);
-                  }}
-                >
-                  {item === "reuse"
-                    ? "Reuse"
-                    : item.charAt(0).toUpperCase() + item.slice(1)}
-                </a>
-              ))}
-            </nav>
-            {formError !== null && <p className="form-error">{formError}</p>}
-            {route === "today" && (
-                <TodayPage
-                  dayPlan={state.dayPlan}
-                  tasks={state.tasks}
-                  activeSession={state.activeSession ?? null}
-                  clientId={state.client?.clientId ?? null}
-                  syncStatus={state.syncStatus}
-                  planner={state.planner}
-                  busy={busy}
-                  onFocusCommand={(command) => void handleFocusCommand(command)}
-                  onSubmitTask={submitTask}
-                />
-              )}
-            {route === "tasks" && (
-              <TasksPage
-                tasks={state.tasks}
-                visibleTasks={visibleTasks}
-                recovery={state.recovery}
-                projects={projects}
-                tags={tags}
-                subtasks={subtasks}
-                provenance={templateProvenance}
-                baikalCalendars={state.baikal.calendars}
-                taskQuery={taskQuery}
-                taskStatusFilter={taskStatusFilter}
-                taskProjectFilter={taskProjectFilter}
-                taskTagFilter={taskTagFilter}
-                busy={busy}
-                onTaskQueryChange={setTaskQuery}
-                onTaskStatusFilterChange={setTaskStatusFilter}
-                onTaskProjectFilterChange={setTaskProjectFilter}
-                onTaskTagFilterChange={setTaskTagFilter}
-                onSubmitOrganization={submitOrganization}
-                onSubmitTaskEdit={submitTaskEdit}
-                onSubmitTimeBlock={submitTimeBlock}
-                onRemoveTimeBlock={removeTimeBlock}
-                onSubmitTaskOrganization={submitTaskOrganization}
-                onSubmitSubtask={submitSubtask}
-                onChangeSubtask={changeSubtask}
-                onSaveTaskAsTemplate={saveTaskAsTemplate}
-                onChangeTaskStatus={changeTaskStatus}
-                onRemoveTask={removeTask}
-                onRecoverTask={recoverTask}
-              />
-            )}
-            {route === "reuse" && (
-              <ReusePage
-                templates={templates}
-                templateBlueprints={templateBlueprints}
-                templateSets={templateSets}
-                choicePools={choicePools}
-                choicePoolItems={choicePoolItems}
-                choicePoolHistory={choicePoolHistory}
-                planningPlaceholders={planningPlaceholders}
-                templatePoolSlots={templatePoolSlots}
-                tasks={state.tasks}
-                projects={projects
-                  .filter((project) => project.archivedAt === null)
-                  .map(({ id, title }) => ({ id, title }))}
-                tags={tags
-                  .filter((tag) => tag.archivedAt === null)
-                  .map(({ id, displayName }) => ({ id, displayName }))}
-                busy={busy}
-                onCreateTemplate={submitTemplateCreate}
-                onSearchTemplates={(query) => void refreshTemplateLibrary(query)}
-                onArchiveTemplate={archiveTemplate}
-                onEditTemplate={editTemplate}
-                onCreateTemplateSet={submitTemplateSetCreate}
-                onInstantiateTemplate={submitTemplateInstantiation}
-                onInstantiateTemplateSet={submitTemplateSetInstantiation}
-                onCreateChoicePool={submitChoicePool}
-                onCreatePlanningPlaceholder={submitPlanningPlaceholder}
-                onEditChoicePool={editChoicePool}
-                onAddTemplatePoolSlot={addTemplatePoolSlot}
-                onRecordChoicePoolCompletion={completeChoicePoolItem}
-                onSuggestPlaceholder={previewPlanningPlaceholder}
-                onResolvePlaceholder={submitPlaceholderResolution}
-              />
-            )}
-            {route === "connections" && (
-                <ConnectionsPage
-                  baikal={state.baikal}
-                  google={state.google}
-                  planningPreferences={state.planningPreferences}
-                  dayPlan={state.dayPlan}
-                  csrfToken={state.session.csrfToken}
-                  busy={busy}
-                  onAuthorizeGoogle={authorizeGoogle}
-                  onSyncGoogle={syncGoogleCalendar}
-                  onDisconnectGoogle={removeGoogleCalendar}
-                  onSavePlanningPreferences={savePlanningPreferences}
-                />
-              )}
-            {route === "settings" && (
-                <SettingsPage
-                  google={state.google}
-                  planningPreferences={state.planningPreferences}
-                  dayPlan={state.dayPlan}
-                  notificationPreferences={state.notificationPreferences}
-                  notificationStatus={state.notificationStatus}
-                  syncStatus={state.syncStatus}
-                  clientId={state.client?.clientId ?? null}
-                  plannerFreshness={state.planner?.freshness.state}
-                  busy={busy}
-                  onAuthorizeGoogle={authorizeGoogle}
-                  onSyncGoogle={syncGoogleCalendar}
-                  onDisconnectGoogle={removeGoogleCalendar}
-                  onSavePlanningPreferences={savePlanningPreferences}
-                  onSaveNotificationPreferences={saveNotificationPreferences}
-                  onTestNotification={testNotification}
-                  onSyncNow={syncNow}
-                  onExportDiagnostics={exportDiagnostics}
-                />
-              )}
+              <span className="nav-icon">
+                {item === "today" ? "\u2600" : item === "tasks" ? "\u2261" : item === "reuse" ? "\u21BB" : item === "connections" ? "\u26A1" : "\u2699"}
+              </span>
+              {item === "reuse" ? "Reuse" : item.charAt(0).toUpperCase() + item.slice(1)}
+            </a>
+          ))}
+        </nav>
+        <div className="sidebar-status">
+          <div className="status-row">
+            <span className={`status-dot ${state.syncStatus === "online" ? "online" : state.syncStatus === "syncing" ? "online" : "offline"}`} />
+            Task sync: {state.syncStatus ?? "offline"}
           </div>
+          {state.conflictCount !== undefined && state.conflictCount > 0 && (
+            <div className="status-row">
+              <span className="status-dot error" />
+              Conflicts: {state.conflictCount}
+            </div>
+          )}
+          <div className="status-row" style={{ fontSize: "var(--text-2xs)" }}>
+            {state.baikal.connected ? "Baikal verified" : "Baikal disconnected"}
+          </div>
+        </div>
+      </aside>
+
+      <header className="topbar">
+        <span className="topbar-breadcrumb">
+          {route === "reuse" ? "Reuse" : route.charAt(0).toUpperCase() + route.slice(1)}
+        </span>
+        <div className="topbar-actions">
+          {formError !== null && (
+            <span className="message message-error" style={{ padding: "0.25rem 0.5rem", fontSize: "var(--text-xs)" }}>{formError}</span>
+          )}
+          <button className="btn-ghost" type="button" onClick={() => void signOut()} style={{ fontSize: "var(--text-xs)" }}>Sign out</button>
+        </div>
+      </header>
+
+      <main className="main">
+        {route === "today" && (
+          <TodayPage
+            dayPlan={state.dayPlan}
+            tasks={state.tasks}
+            activeSession={state.activeSession ?? null}
+            clientId={state.client?.clientId ?? null}
+            syncStatus={state.syncStatus}
+            planner={state.planner}
+            busy={busy}
+            onFocusCommand={(command) => void handleFocusCommand(command)}
+            onSubmitTask={submitTask}
+          />
         )}
-      </section>
-    </main>
+        {route === "tasks" && (
+          <TasksPage
+            tasks={state.tasks}
+            visibleTasks={visibleTasks}
+            recovery={state.recovery}
+            projects={projects}
+            tags={tags}
+            subtasks={subtasks}
+            provenance={templateProvenance}
+            baikalCalendars={state.baikal.calendars}
+            taskQuery={taskQuery}
+            taskStatusFilter={taskStatusFilter}
+            taskProjectFilter={taskProjectFilter}
+            taskTagFilter={taskTagFilter}
+            busy={busy}
+            onTaskQueryChange={setTaskQuery}
+            onTaskStatusFilterChange={setTaskStatusFilter}
+            onTaskProjectFilterChange={setTaskProjectFilter}
+            onTaskTagFilterChange={setTaskTagFilter}
+            onSubmitOrganization={submitOrganization}
+            onSubmitTaskEdit={submitTaskEdit}
+            onSubmitTimeBlock={submitTimeBlock}
+            onRemoveTimeBlock={removeTimeBlock}
+            onSubmitTaskOrganization={submitTaskOrganization}
+            onSubmitSubtask={submitSubtask}
+            onChangeSubtask={changeSubtask}
+            onSaveTaskAsTemplate={saveTaskAsTemplate}
+            onChangeTaskStatus={changeTaskStatus}
+            onRemoveTask={removeTask}
+            onRecoverTask={recoverTask}
+          />
+        )}
+        {route === "reuse" && (
+          <ReusePage
+            templates={templates}
+            templateBlueprints={templateBlueprints}
+            templateSets={templateSets}
+            choicePools={choicePools}
+            choicePoolItems={choicePoolItems}
+            choicePoolHistory={choicePoolHistory}
+            planningPlaceholders={planningPlaceholders}
+            templatePoolSlots={templatePoolSlots}
+            tasks={state.tasks}
+            projects={projects.filter((project) => project.archivedAt === null).map(({ id, title }) => ({ id, title }))}
+            tags={tags.filter((tag) => tag.archivedAt === null).map(({ id, displayName }) => ({ id, displayName }))}
+            busy={busy}
+            onCreateTemplate={submitTemplateCreate}
+            onSearchTemplates={(query) => void refreshTemplateLibrary(query)}
+            onArchiveTemplate={archiveTemplate}
+            onEditTemplate={editTemplate}
+            onCreateTemplateSet={submitTemplateSetCreate}
+            onInstantiateTemplate={submitTemplateInstantiation}
+            onInstantiateTemplateSet={submitTemplateSetInstantiation}
+            onCreateChoicePool={submitChoicePool}
+            onCreatePlanningPlaceholder={submitPlanningPlaceholder}
+            onEditChoicePool={editChoicePool}
+            onAddTemplatePoolSlot={addTemplatePoolSlot}
+            onRecordChoicePoolCompletion={completeChoicePoolItem}
+            onSuggestPlaceholder={previewPlanningPlaceholder}
+            onResolvePlaceholder={submitPlaceholderResolution}
+          />
+        )}
+        {route === "connections" && (
+          <ConnectionsPage
+            baikal={state.baikal}
+            google={state.google}
+            planningPreferences={state.planningPreferences}
+            dayPlan={state.dayPlan}
+            csrfToken={state.session.csrfToken}
+            busy={busy}
+            onAuthorizeGoogle={authorizeGoogle}
+            onSyncGoogle={syncGoogleCalendar}
+            onDisconnectGoogle={removeGoogleCalendar}
+            onSavePlanningPreferences={savePlanningPreferences}
+          />
+        )}
+        {route === "settings" && (
+          <SettingsPage
+            google={state.google}
+            planningPreferences={state.planningPreferences}
+            dayPlan={state.dayPlan}
+            notificationPreferences={state.notificationPreferences}
+            notificationStatus={state.notificationStatus}
+            syncStatus={state.syncStatus}
+            clientId={state.client?.clientId ?? null}
+            plannerFreshness={state.planner?.freshness.state}
+            busy={busy}
+            onAuthorizeGoogle={authorizeGoogle}
+            onSyncGoogle={syncGoogleCalendar}
+            onDisconnectGoogle={removeGoogleCalendar}
+            onSavePlanningPreferences={savePlanningPreferences}
+            onSaveNotificationPreferences={saveNotificationPreferences}
+            onTestNotification={testNotification}
+            onSyncNow={syncNow}
+            onExportDiagnostics={exportDiagnostics}
+          />
+        )}
+      </main>
+    </div>
   );
 };

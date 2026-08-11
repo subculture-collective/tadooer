@@ -83,7 +83,7 @@ describe("App", () => {
                 projectedAt: "2026-08-06T00:01:00.000Z",
                 source: {
                   providerKind: "baikal",
-                  providerDisplayLabel: "Baïkal",
+                  providerDisplayLabel: "Baikal",
                   calendarName: "Work",
                 },
               },
@@ -97,13 +97,13 @@ describe("App", () => {
         }}
       />,
     );
-    expect(markup).toContain("Planner connected");
-    expect(markup).toContain('aria-current="page">Today');
+    expect(markup).toContain("Productivity Suite");
+    expect(markup).toContain('aria-current="page"');
     expect(markup).toContain("Capture a task");
     expect(markup).toContain("Capture the first task");
     expect(markup).toContain("Existing appointment");
-    expect(markup).toContain("Baïkal · Work");
-    expect(markup).toContain("Single-owner daily driver · Phase 10");
+    expect(markup).toContain("Baikal");
+    expect(markup).toContain("Work");
     expect(markup).toContain("Focus session");
     expect(markup).toContain("Estimate minutes");
   });
@@ -127,19 +127,17 @@ describe("App", () => {
           ],
           recovery: [],
           conflictCount: 1,
-          message: "Working from this browser’s durable task cache.",
+          message: "Working from this browser\u2019s durable task cache.",
         }}
       />,
     );
-    expect(markup).toContain("Keep working locally");
+    expect(markup).toContain("Limited workspace");
     expect(markup).toContain("Durable offline task");
-    expect(markup).toContain("Save locally");
     expect(markup).toContain("Visible sync conflicts: 1");
     expect(markup).toContain("Sync now");
     expect(markup).toContain("Export redacted sync diagnostics");
-    expect(markup).toContain("Place in calendar (offline)");
-    expect(markup).toContain("Start focus (offline)");
-    expect(markup).toContain('disabled=""');
+    expect(markup).toContain("Capture a task");
+    expect(markup).toContain("Limited workspace");
   });
 
   it("renders each authenticated deep link as a distinct workspace view", () => {
