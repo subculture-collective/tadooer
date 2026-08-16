@@ -510,6 +510,64 @@ requires owner creation and explicit Baïkal/Google connection. No stable
 manifest or cutover recommendation is emitted before that setup and seven
 elapsed days. Super Productivity is not changed automatically.
 
+## Phase 13: Actionable Today Queue
+
+**Status:** Planned 2026-08-14 as the selected post-1.0 feature wave. Phase 9,
+11, and 12 production acceptance remains the active **Now** work; this selection
+does not waive the seven-day soak or stable `1.0.0` promotion gate.
+
+### Owner outcome
+
+Today becomes the primary daily workflow rather than a calm-state summary. At
+the owner's configured IANA time zone and an explicit logical timestamp, it
+shows overdue open tasks and the remaining scheduled work for that civil day.
+Open unscheduled tasks appear in a separate Planning section. Future scheduled
+tasks stay hidden from the queue, with only a count and route to Tasks.
+
+From Today, the owner can capture a task, schedule/move/remove its single Time
+Block, start or control its Active Session, and complete or reopen it. Task
+capture and status changes retain the existing IndexedDB outbox path. Calendar
+and focus mutations remain server-authoritative and fail visibly offline rather
+than being queued or simulated.
+
+### Contract boundaries
+
+- Queue membership is derived from existing Task status and `plannedStart`; it
+  does not create persisted Today membership, rank, priority, or due-date fields.
+- Owner-timezone classification is a pure domain rule. Planning preferences are
+  cached as local read input for a cold offline start, but they are not a new
+  sync entity or competing authority.
+- Existing `DayPlanResponse`, reminder behavior, task field versions,
+  Automation Catalog, Time Block conditional writes, and Active Session
+  revisions/leases remain unchanged.
+- Completing an Active Session and completing its Task stay separate commands.
+- The week calendar remains secondary context; Today does not duplicate the
+  full Tasks editor, projects/tags, checklists, templates, or recovery tools.
+
+### Explicit non-goals
+
+- Manual ranking, priority, dependencies, recurring tasks, or persisted Today
+  selection
+- Automatic scheduling, collision avoidance, or drag-and-drop
+- Offline calendar writes or offline focus timers
+- Automation/MCP surface expansion
+- Calendar-provider authority or reconciliation changes
+
+### Acceptance evidence
+
+- Domain tests cover exact overdue/current/day-end boundaries, deterministic
+  ordering, completion exclusion, and 23/25-hour DST days.
+- Web tests prove queue hierarchy, future-task hiding, task-specific accessible
+  actions, empty states, and authenticated/cold-offline composition.
+- Browser validation proves capture, schedule/move/remove, row-scoped focus,
+  complete/reopen, keyboard flow, visible offline boundaries, and responsive
+  behavior at desktop, tablet, and mobile widths.
+- Existing task sync, planner/reminder, Time Block, Active Session, and full
+  repository verification gates remain green.
+
+Implementation details and task order are recorded in
+`docs/superpowers/plans/2026-08-14-actionable-today-queue.md`.
+
 ## Explicit non-roadmap commitments
 
 The following do not enter a phase without a new decision and evidence:
