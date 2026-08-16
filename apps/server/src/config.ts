@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { isIP } from "node:net";
 
 export interface ServerConfig {
   readonly host: string;
@@ -7,7 +8,11 @@ export interface ServerConfig {
   readonly webRoot: string;
   readonly baikalEndpoint: string;
   readonly credentialKeyPath: string;
+  readonly googleOAuthConfigPath?: string;
+  readonly ntfyPublisherConfigPath?: string;
   readonly secureCookies: boolean;
+  readonly publicOrigin?: string;
+  readonly trustedProxyCidrs?: readonly string[];
   readonly build: {
     readonly version: string;
     readonly revision: string;
@@ -53,26 +58,87 @@ const parseBaikalEndpoint = (value: string | undefined): string => {
   return endpoint.href;
 };
 
+const parsePublicOrigin = (value: string | undefined): string | undefined => {
+  if (value === undefined || value === "") return undefined;
+  const origin = new URL(value);
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(
+    origin.hostname,
+  );
+  if (
+    (origin.protocol !== "https:" &&
+      !(origin.protocol === "http:" && loopback)) ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.pathname !== "/" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  )
+    throw new Error("SUITE_PUBLIC_ORIGIN must be an HTTPS origin");
+  return origin.origin;
+};
+
+const parseTrustedProxyCidrs = (value: string | undefined): readonly string[] =>
+  (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item !== "")
+    .map((item) => {
+      const [address, prefix, extra] = item.split("/");
+      if (
+        address === undefined ||
+        extra !== undefined ||
+        !(
+          (isIP(address) === 4 && prefix === "32") ||
+          (isIP(address) === 6 && prefix === "128")
+        )
+      )
+        throw new Error(
+          "SUITE_TRUSTED_PROXY_CIDRS accepts only explicit /32 or /128 hosts",
+        );
+      return item;
+    });
+
 export const loadConfig = (
   environment: NodeJS.ProcessEnv = process.env,
-): ServerConfig => ({
-  host: environment.HOST ?? "0.0.0.0",
-  port: parsePort(environment.PORT),
-  databasePath: resolve(
-    environment.SUITE_DATABASE_PATH ?? "./data/suite.sqlite",
-  ),
-  webRoot: resolve(environment.SUITE_WEB_ROOT ?? "./apps/web/dist"),
-  baikalEndpoint: parseBaikalEndpoint(environment.BAIKAL_ENDPOINT),
-  credentialKeyPath: resolve(
-    environment.SUITE_CREDENTIAL_KEY_PATH ?? "./data/credential.key",
-  ),
-  secureCookies: parseBoolean(
-    "SUITE_SECURE_COOKIES",
-    environment.SUITE_SECURE_COOKIES,
-  ),
-  build: {
-    version: environment.SUITE_VERSION ?? "0.0.0-dev",
-    revision: environment.SUITE_REVISION ?? "development",
-    builtAt: optionalIsoDate(environment.SUITE_BUILD_DATE),
-  },
-});
+): ServerConfig => {
+  const publicOrigin = parsePublicOrigin(environment.SUITE_PUBLIC_ORIGIN);
+  return {
+    host: environment.HOST ?? "0.0.0.0",
+    port: parsePort(environment.PORT),
+    databasePath: resolve(
+      environment.SUITE_DATABASE_PATH ?? "./data/suite.sqlite",
+    ),
+    webRoot: resolve(environment.SUITE_WEB_ROOT ?? "./apps/web/dist"),
+    baikalEndpoint: parseBaikalEndpoint(environment.BAIKAL_ENDPOINT),
+    credentialKeyPath: resolve(
+      environment.SUITE_CREDENTIAL_KEY_PATH ?? "./data/credential.key",
+    ),
+    ...(environment.GOOGLE_OAUTH_CONFIG_PATH === undefined ||
+    environment.GOOGLE_OAUTH_CONFIG_PATH === ""
+      ? {}
+      : {
+          googleOAuthConfigPath: resolve(environment.GOOGLE_OAUTH_CONFIG_PATH),
+        }),
+    ...(environment.NTFY_PUBLISHER_CONFIG_PATH === undefined ||
+    environment.NTFY_PUBLISHER_CONFIG_PATH === ""
+      ? {}
+      : {
+          ntfyPublisherConfigPath: resolve(
+            environment.NTFY_PUBLISHER_CONFIG_PATH,
+          ),
+        }),
+    secureCookies: parseBoolean(
+      "SUITE_SECURE_COOKIES",
+      environment.SUITE_SECURE_COOKIES,
+    ),
+    ...(publicOrigin === undefined ? {} : { publicOrigin }),
+    trustedProxyCidrs: parseTrustedProxyCidrs(
+      environment.SUITE_TRUSTED_PROXY_CIDRS,
+    ),
+    build: {
+      version: environment.SUITE_VERSION ?? "0.0.0-dev",
+      revision: environment.SUITE_REVISION ?? "development",
+      builtAt: optionalIsoDate(environment.SUITE_BUILD_DATE),
+    },
+  };
+};

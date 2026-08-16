@@ -50,6 +50,27 @@ export const idempotencyKeySchema = z
 
 export const revisionSchema = z.number().int().positive();
 export const entityIdSchema = z.uuid();
+export const quotedRevisionEtagSchema = z.string().regex(/^"[1-9][0-9]*"$/);
+export const strongDavEtagSchema = z.string().regex(/^"[^"\r\n]+"$/);
+
+export const ianaTimeZoneSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .refine(
+    (value) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: value }).format(
+          new Date(0),
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "Time zone must be a supported IANA identifier" },
+  );
 
 export const setupStatusResponseSchema = z.object({
   setupRequired: z.boolean(),
@@ -115,6 +136,9 @@ export const clientIdentitySchema = z.object({
   id: entityIdSchema,
   ownerId: entityIdSchema,
   label: z.string().trim().min(1).max(100),
+  createdAt: z.iso.datetime().optional(),
+  lastSeenAt: z.iso.datetime().optional(),
+  revokedAt: z.iso.datetime().nullable().optional(),
 });
 
 export const calendarProviderSchema = z.object({
@@ -139,6 +163,18 @@ export const taskSchema = z.object({
   revision: revisionSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().nullable().optional(),
+  deletedAt: z.iso.datetime().nullable().optional(),
+  plannedStart: z.iso.datetime().nullable().optional(),
+  estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
+  projectId: entityIdSchema.nullable().optional(),
+  tagIds: z
+    .array(entityIdSchema)
+    .max(25)
+    .refine((tagIds) => new Set(tagIds).size === tagIds.length, {
+      message: "Task tags must be unique",
+    })
+    .optional(),
 });
 
 export const createTaskRequestSchema = z.object({
@@ -155,6 +191,1431 @@ export const taskListResponseSchema = z.object({
   tasks: z.array(taskSchema),
 });
 
+export const taskPatchRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240).optional(),
+    notes: z.string().max(20_000).optional(),
+    plannedStart: z.iso.datetime().nullable().optional(),
+    estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
+  })
+  .refine((input) => Object.keys(input).length > 0, {
+    message: "At least one mutable task field is required",
+  });
+
+export const conditionalRequestHeadersSchema = z.object({
+  ifMatch: quotedRevisionEtagSchema,
+});
+
+export const conditionalTaskMutationResponseSchema = z.object({
+  task: taskSchema,
+});
+
+export const taskRestoreRequestSchema = z.object({}).strict();
+
+export const taskRecoveryListResponseSchema = z.object({
+  tasks: z.array(taskSchema),
+});
+
+export const plannerWindowSchema = z
+  .object({
+    from: z.iso.datetime(),
+    to: z.iso.datetime(),
+  })
+  .refine(
+    ({ from, to }) => {
+      const fromTime = Date.parse(from);
+      const toTime = Date.parse(to);
+      return (
+        Number.isFinite(fromTime) &&
+        Number.isFinite(toTime) &&
+        toTime > fromTime &&
+        toTime - fromTime <= 31 * 24 * 60 * 60 * 1000
+      );
+    },
+    { message: "Planner window must be positive and no longer than 31 days" },
+  );
+
+export const calendarEventProjectionSchema = z
+  .object({
+    identity: calendarEventIdentitySchema,
+    href: z.string().trim().min(1).max(1024),
+    uid: z.string().trim().min(1).max(1024),
+    etag: strongDavEtagSchema,
+    summary: z.string().max(1024),
+    startsAt: z.iso.datetime(),
+    endsAt: z.iso.datetime(),
+    allDay: z.boolean(),
+    recurrence: z.enum(["none", "instance"]),
+    projectedAt: z.iso.datetime(),
+    source: z.object({
+      providerKind: calendarProviderKindSchema,
+      providerDisplayLabel: z.string().trim().min(1).max(100),
+      calendarName: z.string().trim().min(1).max(240),
+    }),
+  })
+  .refine(({ startsAt, endsAt }) => Date.parse(endsAt) > Date.parse(startsAt), {
+    message: "Event end must be after event start",
+  });
+
+export const calendarProjectionFreshnessSchema = z.object({
+  state: z.enum(["fresh", "stale", "unavailable"]),
+  projectedAt: z.iso.datetime().nullable(),
+  message: z.string().trim().min(1).max(240),
+});
+
+export const plannerResponseSchema = z.object({
+  window: plannerWindowSchema,
+  tasks: z.array(taskSchema),
+  events: z.array(calendarEventProjectionSchema),
+  freshness: calendarProjectionFreshnessSchema,
+});
+
+export const googleConnectorStateSchema = z.enum([
+  "disconnected",
+  "connected",
+  "reconnect_required",
+  "stale",
+]);
+export const googleCalendarFreshnessSchema = z.object({
+  calendarId: entityIdSchema,
+  state: z.enum(["fresh", "stale", "unavailable"]),
+  lastSuccessfulSyncAt: z.iso.datetime().nullable(),
+  message: z.string().min(1).max(240),
+});
+export const googleConnectorStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  connected: z.boolean(),
+  state: googleConnectorStateSchema,
+  providerId: entityIdSchema.nullable(),
+  accountLabel: z.string().nullable(),
+  grantedScopes: z.array(z.string()),
+  calendars: z.array(calendarCollectionSchema),
+  freshness: z.array(googleCalendarFreshnessSchema),
+});
+export const googleAuthorizationResponseSchema = z.object({
+  authorizationUrl: z.url(),
+  expiresAt: z.iso.datetime(),
+});
+export const googleSyncResponseSchema = z.object({
+  status: googleConnectorStatusResponseSchema,
+  resetCalendars: z.array(entityIdSchema),
+});
+
+export const planningPreferencesSchema = z
+  .object({
+    workingDays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+    workdayStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    workdayEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    breakStart: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .nullable(),
+    breakEnd: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .nullable(),
+    timeZone: ianaTimeZoneSchema,
+  })
+  .refine(({ workdayStart, workdayEnd }) => workdayStart < workdayEnd, {
+    message: "Workday end must follow start",
+  })
+  .refine(
+    ({ breakStart, breakEnd, workdayStart, workdayEnd }) =>
+      breakStart === null
+        ? breakEnd === null
+        : breakEnd !== null &&
+          breakStart < breakEnd &&
+          breakStart >= workdayStart &&
+          breakEnd <= workdayEnd,
+    { message: "Break boundaries must be a valid pair" },
+  );
+export const dayPlanResponseSchema = z.object({
+  at: z.iso.datetime(),
+  state: z.enum([
+    "working",
+    "scheduled_break",
+    "unavailable",
+    "finished_for_today",
+  ]),
+  preferences: planningPreferencesSchema,
+  orderedTasks: z.array(taskSchema),
+  nextTask: taskSchema.nullable(),
+  reminder: z.object({
+    suppressed: z.boolean(),
+    reason: z.enum([
+      "ready",
+      "stale_calendar",
+      "outside_working_hours",
+      "scheduled_break",
+      "calendar_busy",
+      "no_scheduled_task",
+    ]),
+  }),
+  freshness: calendarProjectionFreshnessSchema,
+});
+
+export const notificationPreferencesSchema = z
+  .object({
+    enabled: z.boolean(),
+    leadReminderEnabled: z.boolean(),
+    atStartReminderEnabled: z.boolean(),
+    detailedContentEnabled: z.boolean(),
+  })
+  .strict();
+
+export const notificationDeliveryStateSchema = z.enum([
+  "pending",
+  "delivered",
+  "suppressed",
+  "cancelled",
+  "failed",
+]);
+
+export const notificationStatusResponseSchema = z
+  .object({
+    configured: z.boolean(),
+    enabled: z.boolean(),
+    state: z.enum(["ready", "degraded", "unavailable"]),
+    pendingCount: z.number().int().nonnegative(),
+    failedCount: z.number().int().nonnegative(),
+    lastDelivery: z
+      .object({
+        state: notificationDeliveryStateSchema,
+        kind: z.enum(["lead", "at_start", "test"]),
+        occurredAt: z.iso.datetime(),
+        errorCode: apiErrorCodeSchema.nullable(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+export const notificationTestResponseSchema = z
+  .object({
+    accepted: z.boolean(),
+    state: z.enum(["delivered", "failed", "unavailable"]),
+    errorCode: apiErrorCodeSchema.nullable(),
+  })
+  .strict();
+
+export const createTaskTimeBlockRequestSchema = z.object({
+  calendarId: entityIdSchema,
+  startsAt: z.iso.datetime(),
+  durationMinutes: z.number().int().min(1).max(720),
+});
+
+export const taskEventMappingSchema = z.object({
+  id: entityIdSchema,
+  taskId: entityIdSchema,
+  event: calendarEventIdentitySchema,
+  href: z.string().trim().min(1).max(1024),
+  uid: z.string().trim().min(1).max(1024),
+  etag: strongDavEtagSchema,
+  state: z.enum(["active", "needs_reconciliation", "released"]),
+  createdBySuite: z.literal(true),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const taskTimeBlockMutationResponseSchema = z.object({
+  task: taskSchema,
+  mapping: taskEventMappingSchema,
+  replayed: z.boolean(),
+});
+
+export const calendarEventConflictSchema = apiErrorSchema.extend({
+  code: z.literal("CALENDAR_EVENT_CONFLICT"),
+  action: z.literal("refresh_and_replan"),
+  mappingId: entityIdSchema.nullable(),
+});
+
+export const projectSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+
+export const tagSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  displayName: z.string().trim().min(1).max(100),
+  normalizedName: z.string().trim().min(1).max(100),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+
+export const subtaskSchema = z.object({
+  id: entityIdSchema,
+  taskId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  completed: z.boolean(),
+  revision: revisionSchema,
+  position: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+// Templates are deliberately not tasks. They have their own lifecycle and
+// query surface, so they can never leak into active-task calculations.
+export const templateSubtaskBlueprintSchema = z.object({
+  id: entityIdSchema,
+  templateId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  position: z.number().int().nonnegative(),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+});
+
+export const taskTemplateSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  notes: z.string().max(20_000),
+  estimateMinutes: z.number().int().min(1).max(720).nullable(),
+  suggestedProjectId: entityIdSchema.nullable(),
+  tagIds: z
+    .array(entityIdSchema)
+    .max(25)
+    .refine((ids) => new Set(ids).size === ids.length),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+
+export const templateSetSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+
+export const templateSetMemberSchema = z.object({
+  setId: entityIdSchema,
+  templateId: entityIdSchema,
+  position: z.number().int().nonnegative(),
+});
+export const createTemplateSetRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    templateIds: z
+      .array(entityIdSchema)
+      .min(1)
+      .max(100)
+      .refine((ids) => new Set(ids).size === ids.length),
+  })
+  .strict();
+export const templateSetPatchRequestSchema = createTemplateSetRequestSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one mutable template set field is required",
+  });
+
+export const taskTemplateProvenanceSchema = z.object({
+  taskId: entityIdSchema,
+  templateId: entityIdSchema,
+  templateRevision: revisionSchema,
+  instantiationId: entityIdSchema,
+  instantiatedAt: z.iso.datetime(),
+});
+
+export const createTaskTemplateRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    notes: z.string().max(20_000).default(""),
+    estimateMinutes: z.number().int().min(1).max(720).nullable().default(null),
+    suggestedProjectId: entityIdSchema.nullable().default(null),
+    tagIds: z.array(entityIdSchema).max(25).default([]),
+    subtasks: z
+      .array(z.object({ title: z.string().trim().min(1).max(240) }).strict())
+      .max(100)
+      .default([]),
+  })
+  .strict();
+export const createTaskTemplateFromTaskRequestSchema = z
+  .object({ taskId: entityIdSchema })
+  .strict();
+export const taskTemplatePatchRequestSchema = createTaskTemplateRequestSchema
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one mutable template field is required",
+  });
+export const templateSearchRequestSchema = z
+  .object({
+    query: z.string().trim().max(240).default(""),
+    includeArchived: z.boolean().default(false),
+  })
+  .strict();
+export const instantiateTemplateRequestSchema = z
+  .object({
+    destinationProjectId: entityIdSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export const instantiateTemplateSetRequestSchema =
+  instantiateTemplateRequestSchema;
+export const instantiatedTaskTreeSchema = z.object({
+  task: taskSchema,
+  subtasks: z.array(subtaskSchema),
+  provenance: taskTemplateProvenanceSchema,
+});
+export const templateInstantiationResponseSchema = z
+  .object({
+    instantiationId: entityIdSchema,
+    tasks: z.array(instantiatedTaskTreeSchema).min(1),
+    replayed: z.boolean(),
+  })
+  .strict();
+export const templatePoolSlotSchema = z.object({
+  id: entityIdSchema,
+  templateId: entityIdSchema,
+  poolId: entityIdSchema,
+  pickCount: z.number().int().min(1).max(25),
+  position: z.number().int().nonnegative(),
+  createdAt: z.iso.datetime(),
+});
+export const taskTemplateLibraryResponseSchema = z
+  .object({
+    templates: z.array(taskTemplateSchema),
+    blueprints: z.array(templateSubtaskBlueprintSchema),
+    provenance: z.array(taskTemplateProvenanceSchema).default([]),
+    poolSlots: z.array(templatePoolSlotSchema).default([]),
+  })
+  .strict();
+export const templateSetLibraryResponseSchema = z
+  .object({
+    sets: z.array(templateSetSchema),
+    members: z.array(templateSetMemberSchema),
+  })
+  .strict();
+
+export const choicePoolPolicySchema = z.enum([
+  "none",
+  "cooldown",
+  "cycle",
+  "one_shot",
+]);
+export const choicePoolSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  policy: choicePoolPolicySchema,
+  pickCount: z.number().int().min(1).max(25),
+  cooldownSeconds: z.number().int().min(1).max(31_536_000).nullable(),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolItemSchema = z.object({
+  id: entityIdSchema,
+  poolId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  position: z.number().int().nonnegative(),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolHistoryEventSchema = z.object({
+  id: entityIdSchema,
+  poolId: entityIdSchema,
+  itemId: entityIdSchema,
+  placeholderId: entityIdSchema.nullable(),
+  kind: z.enum(["selected", "completed"]),
+  cycle: revisionSchema,
+  overridden: z.boolean(),
+  occurredAt: z.iso.datetime(),
+});
+export const planningPlaceholderSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  taskId: entityIdSchema,
+  poolId: entityIdSchema,
+  pickCount: z.number().int().min(1).max(25),
+  position: z.number().int().nonnegative(),
+  state: z.enum(["unresolved", "resolved"]),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  resolvedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolEligibilitySchema = z.object({
+  itemId: entityIdSchema,
+  eligible: z.boolean(),
+  reason: z.enum([
+    "eligible",
+    "archived",
+    "cooldown",
+    "cycle_selected",
+    "one_shot_selected",
+  ]),
+  eligibleAt: z.iso.datetime().nullable(),
+  lastSelectedAt: z.iso.datetime().nullable(),
+});
+export const choicePoolSuggestionResponseSchema = z.object({
+  pool: choicePoolSchema,
+  selectedItemIds: z.array(entityIdSchema).max(25),
+  cycle: revisionSchema,
+  eligibility: z.array(choicePoolEligibilitySchema).max(250),
+  logicalTime: z.iso.datetime(),
+});
+export const createChoicePoolRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    policy: choicePoolPolicySchema,
+    pickCount: z.number().int().min(1).max(25),
+    cooldownSeconds: z.number().int().min(1).max(31_536_000).nullable(),
+    items: z
+      .array(z.object({ title: z.string().trim().min(1).max(240) }).strict())
+      .min(1)
+      .max(250),
+  })
+  .strict()
+  .superRefine(({ policy, cooldownSeconds }, context) => {
+    if (policy === "cooldown" && cooldownSeconds === null)
+      context.addIssue({
+        code: "custom",
+        message: "Cooldown policy requires cooldownSeconds",
+      });
+    if (policy !== "cooldown" && cooldownSeconds !== null)
+      context.addIssue({
+        code: "custom",
+        message: "Only cooldown policy accepts cooldownSeconds",
+      });
+  });
+export const updateChoicePoolRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240),
+    policy: choicePoolPolicySchema,
+    pickCount: z.number().int().min(1).max(25),
+    cooldownSeconds: z.number().int().min(1).max(31_536_000).nullable(),
+    items: z
+      .array(
+        z
+          .object({
+            id: entityIdSchema.optional(),
+            title: z.string().trim().min(1).max(240),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(250),
+  })
+  .strict();
+export const createTemplatePoolSlotRequestSchema = z
+  .object({
+    poolId: entityIdSchema,
+    pickCount: z.number().int().min(1).max(25),
+    position: z.number().int().nonnegative(),
+  })
+  .strict();
+export const completeChoicePoolItemRequestSchema = z
+  .object({
+    placeholderId: entityIdSchema.nullable().default(null),
+    occurredAt: z.iso.datetime(),
+  })
+  .strict();
+export const createPlanningPlaceholderRequestSchema = z
+  .object({
+    taskId: entityIdSchema,
+    poolId: entityIdSchema,
+    pickCount: z.number().int().min(1).max(25).optional(),
+  })
+  .strict();
+export const resolvePlanningPlaceholderPreviewInputSchema = z
+  .object({
+    placeholderId: entityIdSchema,
+    selectedItemIds: z.array(entityIdSchema).min(1).max(25),
+    logicalTime: z.iso.datetime(),
+    override: z.boolean().default(false),
+    expectedRevision: revisionSchema,
+  })
+  .strict()
+  .refine(
+    ({ selectedItemIds }) =>
+      new Set(selectedItemIds).size === selectedItemIds.length,
+    {
+      message: "Selected pool items must be unique",
+    },
+  );
+export const resolvePlanningPlaceholderRequestSchema = z
+  .object({
+    placeholderId: entityIdSchema.optional(),
+    selectedItemIds: z.array(entityIdSchema).min(1).max(25),
+    logicalTime: z.iso.datetime(),
+    override: z.boolean().default(false),
+    expectedRevision: revisionSchema,
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict()
+  .refine(
+    ({ selectedItemIds }) =>
+      new Set(selectedItemIds).size === selectedItemIds.length,
+    { message: "Selected pool items must be unique" },
+  );
+export const planningPlaceholderResolutionSchema = z.object({
+  id: entityIdSchema,
+  placeholderId: entityIdSchema,
+  selectedItemIds: z.array(entityIdSchema).min(1).max(25),
+  subtaskIds: z.array(entityIdSchema).min(1).max(25),
+  historyIds: z.array(entityIdSchema).min(1).max(25),
+  logicalTime: z.iso.datetime(),
+  overridden: z.boolean(),
+  createdAt: z.iso.datetime(),
+});
+export const planningPlaceholderResolutionResponseSchema = z.object({
+  placeholder: planningPlaceholderSchema,
+  resolution: planningPlaceholderResolutionSchema,
+  subtasks: z.array(subtaskSchema).min(1).max(25),
+  history: z.array(choicePoolHistoryEventSchema).min(1).max(25),
+  replayed: z.boolean(),
+});
+export const choicePoolLibraryResponseSchema = z.object({
+  pools: z.array(choicePoolSchema),
+  items: z.array(choicePoolItemSchema),
+  history: z.array(choicePoolHistoryEventSchema),
+  placeholders: z.array(planningPlaceholderSchema),
+});
+
+export const clientRegistrationRequestSchema = z
+  .object({
+    label: z.string().trim().min(1).max(100),
+  })
+  .strict();
+
+export const clientCredentialSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+
+export const clientRegistrationResponseSchema = z.object({
+  client: clientIdentitySchema,
+  clientCredential: clientCredentialSchema,
+  initialCursor: z.string().min(1).max(512),
+});
+
+export const clientAuthenticationHeadersSchema = z
+  .object({
+    clientId: entityIdSchema,
+    clientCredential: clientCredentialSchema,
+  })
+  .strict();
+
+export const syncCursorSchema = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[A-Za-z0-9._~-]+$/);
+
+export const coreTaskFieldSchema = z.enum([
+  "title",
+  "notes",
+  "status",
+  "estimateMinutes",
+  "projectId",
+  "tagIds",
+]);
+
+export const taskFieldVersionsSchema = z.object({
+  title: revisionSchema,
+  notes: revisionSchema,
+  status: revisionSchema,
+  estimateMinutes: revisionSchema,
+  projectId: revisionSchema,
+  tagIds: revisionSchema,
+});
+
+export const syncTaskSnapshotSchema = z.object({
+  task: taskSchema,
+  fieldVersions: taskFieldVersionsSchema,
+  changeSequence: revisionSchema,
+});
+
+const syncPatchFieldsSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240).optional(),
+    notes: z.string().max(20_000).optional(),
+    estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
+  })
+  .strict()
+  .refine((fields) => Object.keys(fields).length > 0, {
+    message: "At least one syncable task field is required",
+  });
+
+const syncPatchBaseVersionsSchema = z
+  .object({
+    title: revisionSchema.optional(),
+    notes: revisionSchema.optional(),
+    estimateMinutes: revisionSchema.optional(),
+  })
+  .strict();
+
+const syncOperationBaseSchema = z.object({
+  operationId: entityIdSchema,
+  clientSequence: revisionSchema,
+  createdAt: z.iso.datetime(),
+  requestHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+});
+
+export const syncOperationSchema = z.discriminatedUnion("kind", [
+  syncOperationBaseSchema.extend({
+    kind: z.literal("task.create"),
+    task: z
+      .object({
+        id: entityIdSchema,
+        title: z.string().trim().min(1).max(240),
+        notes: z.string().max(20_000),
+        estimateMinutes: z.number().int().min(1).max(720).nullable(),
+      })
+      .strict(),
+  }),
+  syncOperationBaseSchema
+    .extend({
+      kind: z.literal("task.patch"),
+      taskId: entityIdSchema,
+      fields: syncPatchFieldsSchema,
+      baseFieldVersions: syncPatchBaseVersionsSchema,
+    })
+    .refine(
+      ({ fields, baseFieldVersions }) => {
+        const fieldNames = Object.keys(fields).sort();
+        const versionNames = Object.keys(baseFieldVersions).sort();
+        return (
+          fieldNames.length === versionNames.length &&
+          fieldNames.every((name, index) => name === versionNames[index])
+        );
+      },
+      { message: "Patch base versions must exactly match changed fields" },
+    ),
+  syncOperationBaseSchema.extend({
+    kind: z.enum(["task.complete", "task.reopen"]),
+    taskId: entityIdSchema,
+    baseStatusVersion: revisionSchema,
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.enum(["task.delete", "task.restore"]),
+    taskId: entityIdSchema,
+    baseRevision: revisionSchema,
+  }),
+]);
+
+export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.enum(["applied", "replayed"]),
+    operationId: entityIdSchema,
+    entityId: entityIdSchema,
+    entityRevision: revisionSchema,
+    changeSequence: revisionSchema,
+  }),
+  z.object({
+    kind: z.literal("conflict"),
+    operationId: entityIdSchema,
+    code: z.enum(["SYNC_FIELD_CONFLICT", "SYNC_RESOURCE_CONFLICT"]),
+    taskId: entityIdSchema,
+    taskRevision: revisionSchema,
+    conflictingFields: z.array(coreTaskFieldSchema).min(1).max(6).optional(),
+  }),
+  z.object({
+    kind: z.literal("rejected"),
+    operationId: entityIdSchema,
+    code: z.enum([
+      "IDEMPOTENCY_CONFLICT",
+      "INVALID_SYNC_OPERATION",
+      "TASK_ID_CONFLICT",
+      "CLIENT_REVOKED",
+    ]),
+  }),
+]);
+
+export const activeSessionPhaseSchema = z.enum(["focus", "break"]);
+export const activeSessionStateSchema = z.enum([
+  "running",
+  "paused",
+  "completed",
+  "expired",
+]);
+
+export const trackedIntervalSchema = z
+  .object({
+    id: entityIdSchema,
+    sessionId: entityIdSchema,
+    taskId: entityIdSchema,
+    phase: activeSessionPhaseSchema,
+    ordinal: revisionSchema,
+    startedAt: z.iso.datetime(),
+    endedAt: z.iso.datetime().nullable(),
+  })
+  .refine(
+    ({ startedAt, endedAt }) =>
+      endedAt === null || Date.parse(endedAt) >= Date.parse(startedAt),
+    { message: "Interval end must not be before its start" },
+  );
+
+export const activeSessionSchema = z
+  .object({
+    id: entityIdSchema,
+    ownerId: entityIdSchema,
+    taskId: entityIdSchema,
+    controllerClientId: entityIdSchema.nullable(),
+    state: activeSessionStateSchema,
+    phase: activeSessionPhaseSchema,
+    revision: revisionSchema,
+    startedAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+    leaseExpiresAt: z.iso.datetime().nullable(),
+    hardExpiresAt: z.iso.datetime().nullable(),
+    currentIntervalId: entityIdSchema.nullable(),
+  })
+  .refine(
+    ({
+      state,
+      controllerClientId,
+      leaseExpiresAt,
+      hardExpiresAt,
+      currentIntervalId,
+    }) =>
+      state !== "running" ||
+      (controllerClientId !== null &&
+        leaseExpiresAt !== null &&
+        hardExpiresAt !== null &&
+        currentIntervalId !== null),
+    { message: "Running sessions require a lease and open interval" },
+  );
+
+const sessionCommandBaseSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+});
+
+export const activeSessionCommandSchema = z.discriminatedUnion("command", [
+  sessionCommandBaseSchema.extend({
+    command: z.literal("start"),
+    taskId: entityIdSchema,
+  }),
+  sessionCommandBaseSchema.extend({
+    command: z.enum([
+      "pause",
+      "resume",
+      "start_break",
+      "end_break",
+      "complete",
+      "takeover",
+      "heartbeat",
+    ]),
+    sessionId: entityIdSchema,
+    expectedRevision: revisionSchema,
+  }),
+]);
+
+export const activeSessionCommandResponseSchema = z.object({
+  session: activeSessionSchema,
+  openedInterval: trackedIntervalSchema.nullable(),
+  closedInterval: trackedIntervalSchema.nullable(),
+  replayed: z.boolean(),
+  changeSequence: revisionSchema,
+});
+
+export const syncTaskTemplateSnapshotSchema = z
+  .object({
+    template: taskTemplateSchema,
+    blueprints: z.array(templateSubtaskBlueprintSchema).max(100),
+    poolSlots: z.array(templatePoolSlotSchema).max(25).default([]),
+  })
+  .strict();
+
+export const syncTemplateSetSnapshotSchema = z
+  .object({
+    set: templateSetSchema,
+    members: z.array(templateSetMemberSchema).max(100),
+  })
+  .strict();
+
+export const syncChoicePoolSnapshotSchema = z.object({
+  pool: choicePoolSchema,
+  items: z.array(choicePoolItemSchema).max(250),
+  history: z.array(choicePoolHistoryEventSchema).max(2_000),
+});
+export const syncPlanningPlaceholderSnapshotSchema = z.object({
+  placeholder: planningPlaceholderSchema,
+  resolution: planningPlaceholderResolutionSchema.nullable(),
+});
+
+export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
+  z.object({ entityKind: z.literal("task"), value: syncTaskSnapshotSchema }),
+  z.object({ entityKind: z.literal("project"), value: projectSchema }),
+  z.object({ entityKind: z.literal("tag"), value: tagSchema }),
+  z.object({ entityKind: z.literal("subtask"), value: subtaskSchema }),
+  z.object({
+    entityKind: z.literal("template"),
+    value: syncTaskTemplateSnapshotSchema,
+  }),
+  z.object({
+    entityKind: z.literal("template_set"),
+    value: syncTemplateSetSnapshotSchema,
+  }),
+  z.object({
+    entityKind: z.literal("choice_pool"),
+    value: syncChoicePoolSnapshotSchema,
+  }),
+  z.object({
+    entityKind: z.literal("planning_placeholder"),
+    value: syncPlanningPlaceholderSnapshotSchema,
+  }),
+  z.object({
+    entityKind: z.literal("active_session"),
+    value: activeSessionSchema,
+  }),
+]);
+
+export const syncChangeSchema = z.object({
+  sequence: revisionSchema,
+  entityKind: z.enum([
+    "task",
+    "project",
+    "tag",
+    "subtask",
+    "template",
+    "template_set",
+    "choice_pool",
+    "planning_placeholder",
+    "active_session",
+  ]),
+  entityId: entityIdSchema,
+  kind: z.enum(["upsert", "deleted", "session_changed"]),
+  entityRevision: revisionSchema,
+  changedAt: z.iso.datetime(),
+  snapshot: syncEntitySnapshotSchema.nullable(),
+});
+
+export const syncRoundRequestSchema = z
+  .object({
+    cursor: syncCursorSchema.nullable(),
+    operations: z.array(syncOperationSchema).max(100),
+    pullLimit: z.number().int().min(1).max(200),
+  })
+  .strict()
+  .refine(
+    ({ operations }) =>
+      new Set(operations.map((operation) => operation.operationId)).size ===
+      operations.length,
+    { message: "Sync operation IDs must be unique in a round" },
+  );
+
+export const syncRoundResponseSchema = z.object({
+  outcomes: z.array(syncOperationOutcomeSchema).max(100),
+  changes: z.array(syncChangeSchema).max(200),
+  nextCursor: syncCursorSchema,
+  hasMore: z.boolean(),
+  serverTimestamp: z.iso.datetime(),
+});
+
+export const syncCursorExpiredSchema = apiErrorSchema.extend({
+  code: z.literal("SYNC_CURSOR_EXPIRED"),
+  action: z.literal("replace_cache_from_snapshot"),
+});
+
+export const syncSnapshotResponseSchema = z.object({
+  snapshots: z.array(syncEntitySnapshotSchema).max(200),
+  nextCursor: syncCursorSchema,
+  hasMore: z.boolean(),
+  serverTimestamp: z.iso.datetime(),
+});
+
+export const syncDiagnosticOperationSchema = z
+  .object({
+    operationId: entityIdSchema,
+    entityId: entityIdSchema.nullable(),
+    kind: z.enum([
+      "task.create",
+      "task.patch",
+      "task.complete",
+      "task.reopen",
+      "task.delete",
+      "task.restore",
+    ]),
+    state: z.enum([
+      "queued",
+      "sending",
+      "acknowledged",
+      "conflicted",
+      "rejected",
+    ]),
+    requestHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    baseRevision: revisionSchema.nullable(),
+    safeErrorCode: apiErrorCodeSchema.nullable(),
+  })
+  .strict();
+
+export const syncDiagnosticManifestSchema = z
+  .object({
+    schemaVersion: z.literal("suite-sync-diagnostics-v1"),
+    exportedAt: z.iso.datetime(),
+    installationId: entityIdSchema,
+    clientId: entityIdSchema,
+    cursor: syncCursorSchema.nullable(),
+    pendingOperationCount: z.number().int().nonnegative(),
+    conflictCount: z.number().int().nonnegative(),
+    operations: z.array(syncDiagnosticOperationSchema).max(500),
+  })
+  .strict();
+
+// Phase 4 automation is a separate actor from browser sessions and registered
+// sync clients. These contracts deliberately describe the public, safe edge:
+// raw token secrets and preview input are never returned in inventories, audit
+// records, or diagnostic exports.
+export const automationTokenScopeSchema = z.enum([
+  "tasks:read",
+  "tasks:write",
+  "schedule:read",
+  "schedule:write",
+  "projects:read",
+  "tags:read",
+  "focus:read",
+  "focus:write",
+  "templates:read",
+  "templates:write",
+  "pools:read",
+  "pools:write",
+]);
+
+export const automationTokenSchema = z
+  .object({
+    id: entityIdSchema,
+    ownerId: entityIdSchema,
+    label: z.string().trim().min(1).max(100),
+    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    createdAt: z.iso.datetime(),
+    lastUsedAt: z.iso.datetime().nullable(),
+    expiresAt: z.iso.datetime(),
+    revokedAt: z.iso.datetime().nullable(),
+  })
+  .strict()
+  .refine(({ scopes }) => new Set(scopes).size === scopes.length, {
+    message: "Automation token scopes must be unique",
+  });
+
+export const createAutomationTokenRequestSchema = z
+  .object({
+    label: z.string().trim().min(1).max(100),
+    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    expiresAt: z.iso.datetime(),
+  })
+  .strict()
+  .refine(({ scopes }) => new Set(scopes).size === scopes.length, {
+    message: "Automation token scopes must be unique",
+  });
+
+export const automationTokenSecretSchema = z
+  .string()
+  .regex(
+    /^suite_at_[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/,
+    "Automation token must be an opaque Suite credential",
+  );
+
+export const createAutomationTokenResponseSchema = z
+  .object({ token: automationTokenSecretSchema, record: automationTokenSchema })
+  .strict();
+
+export const automationTokenListResponseSchema = z
+  .object({ tokens: z.array(automationTokenSchema) })
+  .strict();
+
+export const automationOperationSchema = z.enum([
+  "tasks.create",
+  "schedule.create_time_block",
+  "focus.start",
+  "focus.pause",
+  "focus.resume",
+  "focus.start_break",
+  "focus.end_break",
+  "focus.complete",
+  "focus.takeover",
+  "templates.instantiate",
+  "template_sets.instantiate",
+  "placeholders.resolve",
+]);
+
+const automationSessionCommandBaseSchema = z.object({
+  sessionId: entityIdSchema,
+  expectedRevision: revisionSchema,
+});
+
+export const automationFocusCommandInputSchema = z.discriminatedUnion(
+  "operation",
+  [
+    z.object({ operation: z.literal("focus.start"), taskId: entityIdSchema }),
+    ...[
+      "focus.pause",
+      "focus.resume",
+      "focus.start_break",
+      "focus.end_break",
+      "focus.complete",
+      "focus.takeover",
+    ].map((operation) =>
+      automationSessionCommandBaseSchema.extend({
+        operation: z.literal(
+          operation as Exclude<
+            z.infer<typeof automationOperationSchema>,
+            "tasks.create" | "schedule.create_time_block" | "focus.start"
+          >,
+        ),
+      }),
+    ),
+  ],
+);
+
+export const automationPreviewCommandSchema = z.discriminatedUnion(
+  "operation",
+  [
+    z.object({
+      operation: z.literal("tasks.create"),
+      input: createTaskRequestSchema,
+    }),
+    z.object({
+      operation: z.literal("schedule.create_time_block"),
+      input: z
+        .object({ taskId: entityIdSchema })
+        .extend(createTaskTimeBlockRequestSchema.shape),
+    }),
+    z.object({
+      operation: z.literal("templates.instantiate"),
+      input: z.object({
+        templateId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    }),
+    z.object({
+      operation: z.literal("template_sets.instantiate"),
+      input: z.object({
+        setId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    }),
+    z.object({
+      operation: z.literal("placeholders.resolve"),
+      input: resolvePlanningPlaceholderPreviewInputSchema,
+    }),
+    ...[
+      "focus.start",
+      "focus.pause",
+      "focus.resume",
+      "focus.start_break",
+      "focus.end_break",
+      "focus.complete",
+      "focus.takeover",
+    ].map((operation) =>
+      z.object({
+        operation: z.literal(
+          operation as Extract<
+            z.infer<typeof automationOperationSchema>,
+            `focus.${string}`
+          >,
+        ),
+        input: automationFocusCommandInputSchema.refine(
+          (input) => input.operation === operation,
+          { message: "Focus preview operation and input must agree" },
+        ),
+      }),
+    ),
+  ],
+);
+
+const automationToolInputSchema = (
+  operation: z.infer<typeof automationOperationSchema>,
+): z.ZodType => {
+  if (operation === "tasks.create")
+    return z.object({
+      operation: z.literal("tasks.create"),
+      input: createTaskRequestSchema,
+    });
+  if (operation === "schedule.create_time_block")
+    return z.object({
+      operation: z.literal("schedule.create_time_block"),
+      input: z
+        .object({ taskId: entityIdSchema })
+        .extend(createTaskTimeBlockRequestSchema.shape),
+    });
+  if (operation === "templates.instantiate")
+    return z.object({
+      operation: z.literal("templates.instantiate"),
+      input: z.object({
+        templateId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    });
+  if (operation === "template_sets.instantiate")
+    return z.object({
+      operation: z.literal("template_sets.instantiate"),
+      input: z.object({
+        setId: entityIdSchema,
+        destinationProjectId: entityIdSchema,
+      }),
+    });
+  if (operation === "placeholders.resolve")
+    return z.object({
+      operation: z.literal("placeholders.resolve"),
+      input: resolvePlanningPlaceholderPreviewInputSchema,
+    });
+  if (operation === "focus.start")
+    return z.object({
+      operation: z.literal("focus.start"),
+      input: z.object({
+        operation: z.literal("focus.start"),
+        taskId: entityIdSchema,
+      }),
+    });
+  return z.object({
+    operation: z.literal(operation),
+    input: automationSessionCommandBaseSchema.extend({
+      operation: z.literal(operation),
+    }),
+  });
+};
+
+export const automationAffectedEntitySchema = z
+  .object({
+    entityKind: z.enum([
+      "task",
+      "calendar",
+      "active_session",
+      "template",
+      "template_set",
+      "project",
+      "choice_pool",
+      "planning_placeholder",
+      "pool_item",
+    ]),
+    entityId: entityIdSchema,
+  })
+  .strict();
+
+export const automationBaseRevisionSchema = z
+  .object({
+    entityKind: z.enum([
+      "task",
+      "active_session",
+      "template",
+      "template_set",
+      "project",
+      "choice_pool",
+      "planning_placeholder",
+      "pool_item",
+    ]),
+    entityId: entityIdSchema,
+    revision: revisionSchema,
+  })
+  .strict();
+
+export const automationPreviewSchema = z
+  .object({
+    id: entityIdSchema,
+    operation: automationOperationSchema,
+    inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+    summary: z.string().trim().min(1).max(1_000),
+    affected: z.array(automationAffectedEntitySchema).max(125),
+    baseRevisions: z.array(automationBaseRevisionSchema).max(125),
+    expiresAt: z.iso.datetime(),
+    requiresConfirmation: z.literal(true),
+  })
+  .strict();
+
+export const automationPreviewResponseSchema = z
+  .object({ preview: automationPreviewSchema })
+  .strict();
+
+export const automationConfirmRequestSchema = z
+  .object({ idempotencyKey: idempotencyKeySchema })
+  .strict();
+
+export const automationConfirmToolInputSchema = z
+  .object({ previewId: entityIdSchema, idempotencyKey: idempotencyKeySchema })
+  .strict();
+
+export const automationExecutionResultSchema = z.union([
+  taskTimeBlockMutationResponseSchema,
+  activeSessionCommandResponseSchema,
+  taskMutationResponseSchema,
+  templateInstantiationResponseSchema,
+  planningPlaceholderResolutionResponseSchema,
+]);
+
+export const automationConfirmationResponseSchema = z
+  .object({
+    previewId: entityIdSchema,
+    operation: automationOperationSchema,
+    replayed: z.boolean(),
+    result: automationExecutionResultSchema,
+  })
+  .strict();
+
+export const automationTaskResourceSchema = z
+  .object({ tasks: z.array(taskSchema) })
+  .strict();
+export const automationScheduleResourceSchema = plannerResponseSchema;
+export const automationProjectResourceSchema = z
+  .object({ projects: z.array(projectSchema) })
+  .strict();
+export const automationTagResourceSchema = z
+  .object({ tags: z.array(tagSchema) })
+  .strict();
+export const automationActiveSessionResourceSchema = z
+  .object({ session: activeSessionSchema.nullable() })
+  .strict();
+export const automationTemplateResourceSchema =
+  taskTemplateLibraryResponseSchema;
+export const automationTemplateSetResourceSchema =
+  templateSetLibraryResponseSchema;
+export const automationChoicePoolResourceSchema =
+  choicePoolLibraryResponseSchema;
+
+export interface AutomationCatalogEntry {
+  readonly id: string;
+  readonly kind: "resource" | "tool";
+  readonly scopes: readonly z.infer<typeof automationTokenScopeSchema>[];
+  readonly confirmationRequired: boolean;
+  readonly apiPath: string;
+  readonly mcpName: string;
+  readonly mcpUri?: string;
+  readonly inputSchema: z.ZodType;
+  readonly outputSchema: z.ZodType;
+}
+
+// This is the only automation catalog. HTTP handlers and the stdio adapter must
+// import it instead of maintaining parallel operation lists.
+export const automationCatalog = [
+  {
+    id: "tasks.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tasks",
+    mcpName: "suite.tasks.list",
+    mcpUri: "suite://v1/tasks",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTaskResourceSchema,
+  },
+  {
+    id: "schedule.get",
+    kind: "resource",
+    scopes: ["schedule:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/schedule",
+    mcpName: "suite.schedule.get",
+    mcpUri: "suite://v1/schedule{?from,to}",
+    inputSchema: plannerWindowSchema,
+    outputSchema: automationScheduleResourceSchema,
+  },
+  {
+    id: "projects.list",
+    kind: "resource",
+    scopes: ["projects:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/projects",
+    mcpName: "suite.projects.list",
+    mcpUri: "suite://v1/projects",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationProjectResourceSchema,
+  },
+  {
+    id: "tags.list",
+    kind: "resource",
+    scopes: ["tags:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tags",
+    mcpName: "suite.tags.list",
+    mcpUri: "suite://v1/tags",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTagResourceSchema,
+  },
+  {
+    id: "active-session.get",
+    kind: "resource",
+    scopes: ["focus:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/active-session",
+    mcpName: "suite.active_session.get",
+    mcpUri: "suite://v1/active-session",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationActiveSessionResourceSchema,
+  },
+  {
+    id: "templates.list",
+    kind: "resource",
+    scopes: ["templates:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/templates",
+    mcpName: "suite.templates.list",
+    mcpUri: "suite://v1/templates",
+    inputSchema: templateSearchRequestSchema,
+    outputSchema: automationTemplateResourceSchema,
+  },
+  {
+    id: "template-sets.list",
+    kind: "resource",
+    scopes: ["templates:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/template-sets",
+    mcpName: "suite.template_sets.list",
+    mcpUri: "suite://v1/template-sets",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTemplateSetResourceSchema,
+  },
+  {
+    id: "pools.list",
+    kind: "resource",
+    scopes: ["pools:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/pools",
+    mcpName: "suite.pools.list",
+    mcpUri: "suite://v1/pools",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationChoicePoolResourceSchema,
+  },
+  ...automationOperationSchema.options.map((id) => ({
+    id,
+    kind: "tool" as const,
+    scopes: [
+      id === "tasks.create"
+        ? "tasks:write"
+        : id === "schedule.create_time_block"
+          ? "schedule:write"
+          : id.startsWith("templates.") || id.startsWith("template_sets.")
+            ? "templates:write"
+            : id === "placeholders.resolve"
+              ? "pools:write"
+              : "focus:write",
+    ] as const,
+    confirmationRequired: true,
+    apiPath: "/api/automation/v1/previews",
+    mcpName: `suite.${id}`,
+    inputSchema: automationToolInputSchema(id),
+    outputSchema: automationPreviewResponseSchema,
+  })),
+  {
+    id: "automation.confirm",
+    kind: "tool",
+    scopes: [
+      "tasks:write",
+      "schedule:write",
+      "focus:write",
+      "templates:write",
+      "pools:write",
+    ],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/previews/{previewId}/confirm",
+    mcpName: "suite.confirm",
+    inputSchema: automationConfirmToolInputSchema,
+    outputSchema: automationConfirmationResponseSchema,
+  },
+] as const satisfies readonly AutomationCatalogEntry[];
+
 export const importTaskCandidateSchema = z.object({
   externalId: z.string().trim().min(1).max(1024),
   title: z.string().trim().min(1).max(240),
@@ -166,7 +1627,106 @@ export const importTaskCandidateSchema = z.object({
   }),
 });
 
+export const calendarImportSourceSchema = z.enum(["ics", "google_ics"]);
+export const calendarImportIssueSchema = z.object({
+  code: z.enum([
+    "malformed_component",
+    "missing_uid",
+    "duplicate_uid",
+    "recurrence_preserved",
+    "attendees_preserved",
+    "alarms_preserved",
+    "unknown_properties_preserved",
+  ]),
+  detail: z.string().min(1).max(2048),
+});
+export const calendarImportCandidateSchema = z.object({
+  externalId: z.string().min(1).max(1024),
+  uid: z.string().min(1).max(1024),
+  summary: z.string().max(1024),
+  rawIcs: z
+    .string()
+    .min(1)
+    .max(4 * 1024 * 1024),
+  recurrence: z.boolean(),
+  attendeeCount: z.number().int().nonnegative(),
+  alarmCount: z.number().int().nonnegative(),
+  unknownProperties: z.array(z.string()).max(100),
+  issues: z.array(calendarImportIssueSchema),
+});
+export const calendarImportReportSchema = z.object({
+  source: calendarImportSourceSchema,
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  candidates: z.array(calendarImportCandidateSchema).max(10_000),
+  skipped: z.array(calendarImportIssueSchema).max(10_000),
+  totals: z.object({
+    components: z.number().int().nonnegative(),
+    ready: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    recurring: z.number().int().nonnegative(),
+    attendees: z.number().int().nonnegative(),
+    alarms: z.number().int().nonnegative(),
+    unknownProperties: z.number().int().nonnegative(),
+  }),
+});
+export const calendarImportPreviewRequestSchema = z.object({
+  source: calendarImportSourceSchema,
+  calendarId: entityIdSchema,
+  rawIcs: z
+    .string()
+    .min(1)
+    .max(4 * 1024 * 1024),
+});
+export const calendarImportItemSchema = z.object({
+  externalId: z.string(),
+  uid: z.string(),
+  href: z.string(),
+  state: z.enum(["pending", "applied", "reconciliation_required", "skipped"]),
+  appliedAt: z.iso.datetime().nullable(),
+});
+export const calendarImportJobSchema = z.object({
+  id: entityIdSchema,
+  calendarId: entityIdSchema,
+  source: calendarImportSourceSchema,
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  state: z.enum(["previewed", "applied", "partial"]),
+  report: calendarImportReportSchema,
+  items: z.array(calendarImportItemSchema),
+  createdAt: z.iso.datetime(),
+  appliedAt: z.iso.datetime().nullable(),
+});
+export const calendarImportMutationResponseSchema = z.object({
+  job: calendarImportJobSchema,
+  replayed: z.boolean(),
+});
+export const calendarFeedCreateRequestSchema = z.object({
+  calendarId: entityIdSchema,
+  label: z.string().trim().min(1).max(100),
+});
+export const calendarFeedCapabilitySchema = z.object({
+  id: entityIdSchema,
+  calendarId: entityIdSchema,
+  label: z.string(),
+  createdAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+});
+export const calendarFeedCreateResponseSchema = z.object({
+  capability: calendarFeedCapabilitySchema,
+  url: z.string().min(1),
+});
+export const calendarFeedListResponseSchema = z.object({
+  capabilities: z.array(calendarFeedCapabilitySchema),
+});
+
 export type ApiError = z.infer<typeof apiErrorSchema>;
+export type CalendarImportReport = z.infer<typeof calendarImportReportSchema>;
+export type CalendarImportJob = z.infer<typeof calendarImportJobSchema>;
+export type CalendarImportMutationResponse = z.infer<
+  typeof calendarImportMutationResponseSchema
+>;
+export type CalendarFeedCapability = z.infer<
+  typeof calendarFeedCapabilitySchema
+>;
 export type SetupStatusResponse = z.infer<typeof setupStatusResponseSchema>;
 export type OwnerSetupRequest = z.infer<typeof ownerSetupRequestSchema>;
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
@@ -180,3 +1740,135 @@ export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
+export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
+export type ConditionalRequestHeaders = z.infer<
+  typeof conditionalRequestHeadersSchema
+>;
+export type ConditionalTaskMutationResponse = z.infer<
+  typeof conditionalTaskMutationResponseSchema
+>;
+export type TaskRestoreRequest = z.infer<typeof taskRestoreRequestSchema>;
+export type PlannerWindow = z.infer<typeof plannerWindowSchema>;
+export type CalendarEventProjection = z.infer<
+  typeof calendarEventProjectionSchema
+>;
+export type CalendarProjectionFreshness = z.infer<
+  typeof calendarProjectionFreshnessSchema
+>;
+export type PlannerResponse = z.infer<typeof plannerResponseSchema>;
+export type GoogleConnectorStatusResponse = z.infer<
+  typeof googleConnectorStatusResponseSchema
+>;
+export type GoogleSyncResponse = z.infer<typeof googleSyncResponseSchema>;
+export type PlanningPreferences = z.infer<typeof planningPreferencesSchema>;
+export type DayPlanResponse = z.infer<typeof dayPlanResponseSchema>;
+export type NotificationPreferences = z.infer<
+  typeof notificationPreferencesSchema
+>;
+export type NotificationStatusResponse = z.infer<
+  typeof notificationStatusResponseSchema
+>;
+export type NotificationTestResponse = z.infer<
+  typeof notificationTestResponseSchema
+>;
+export type CreateTaskTimeBlockRequest = z.infer<
+  typeof createTaskTimeBlockRequestSchema
+>;
+export type TaskEventMapping = z.infer<typeof taskEventMappingSchema>;
+export type TaskTimeBlockMutationResponse = z.infer<
+  typeof taskTimeBlockMutationResponseSchema
+>;
+export type CalendarEventConflict = z.infer<typeof calendarEventConflictSchema>;
+export type Project = z.infer<typeof projectSchema>;
+export type Tag = z.infer<typeof tagSchema>;
+export type Subtask = z.infer<typeof subtaskSchema>;
+export type TaskTemplate = z.infer<typeof taskTemplateSchema>;
+export type TemplateSubtaskBlueprint = z.infer<
+  typeof templateSubtaskBlueprintSchema
+>;
+export type TemplateSet = z.infer<typeof templateSetSchema>;
+export type TemplateSetMember = z.infer<typeof templateSetMemberSchema>;
+export type TaskTemplateProvenance = z.infer<
+  typeof taskTemplateProvenanceSchema
+>;
+export type CreateTaskTemplateRequest = z.infer<
+  typeof createTaskTemplateRequestSchema
+>;
+export type CreateTemplateSetRequest = z.infer<
+  typeof createTemplateSetRequestSchema
+>;
+export type InstantiateTemplateRequest = z.infer<
+  typeof instantiateTemplateRequestSchema
+>;
+export type TemplateInstantiationResponse = z.infer<
+  typeof templateInstantiationResponseSchema
+>;
+export type ChoicePool = z.infer<typeof choicePoolSchema>;
+export type ChoicePoolItem = z.infer<typeof choicePoolItemSchema>;
+export type ChoicePoolHistoryEvent = z.infer<
+  typeof choicePoolHistoryEventSchema
+>;
+export type PlanningPlaceholder = z.infer<typeof planningPlaceholderSchema>;
+export type ChoicePoolSuggestionResponse = z.infer<
+  typeof choicePoolSuggestionResponseSchema
+>;
+export type PlanningPlaceholderResolution = z.infer<
+  typeof planningPlaceholderResolutionSchema
+>;
+export type PlanningPlaceholderResolutionResponse = z.infer<
+  typeof planningPlaceholderResolutionResponseSchema
+>;
+export type TemplatePoolSlot = z.infer<typeof templatePoolSlotSchema>;
+export type ClientRegistrationRequest = z.infer<
+  typeof clientRegistrationRequestSchema
+>;
+export type ClientRegistrationResponse = z.infer<
+  typeof clientRegistrationResponseSchema
+>;
+export type ClientAuthenticationHeaders = z.infer<
+  typeof clientAuthenticationHeadersSchema
+>;
+export type SyncCursor = z.infer<typeof syncCursorSchema>;
+export type CoreTaskField = z.infer<typeof coreTaskFieldSchema>;
+export type TaskFieldVersions = z.infer<typeof taskFieldVersionsSchema>;
+export type SyncTaskSnapshot = z.infer<typeof syncTaskSnapshotSchema>;
+export type SyncOperation = z.infer<typeof syncOperationSchema>;
+export type SyncOperationOutcome = z.infer<typeof syncOperationOutcomeSchema>;
+export type TrackedInterval = z.infer<typeof trackedIntervalSchema>;
+export type ActiveSession = z.infer<typeof activeSessionSchema>;
+export type ActiveSessionCommand = z.infer<typeof activeSessionCommandSchema>;
+export type ActiveSessionCommandResponse = z.infer<
+  typeof activeSessionCommandResponseSchema
+>;
+export type SyncEntitySnapshot = z.infer<typeof syncEntitySnapshotSchema>;
+export type SyncChange = z.infer<typeof syncChangeSchema>;
+export type SyncRoundRequest = z.infer<typeof syncRoundRequestSchema>;
+export type SyncRoundResponse = z.infer<typeof syncRoundResponseSchema>;
+export type SyncCursorExpired = z.infer<typeof syncCursorExpiredSchema>;
+export type SyncSnapshotResponse = z.infer<typeof syncSnapshotResponseSchema>;
+export type SyncDiagnosticManifest = z.infer<
+  typeof syncDiagnosticManifestSchema
+>;
+export type AutomationTokenScope = z.infer<typeof automationTokenScopeSchema>;
+export type AutomationToken = z.infer<typeof automationTokenSchema>;
+export type CreateAutomationTokenRequest = z.infer<
+  typeof createAutomationTokenRequestSchema
+>;
+export type CreateAutomationTokenResponse = z.infer<
+  typeof createAutomationTokenResponseSchema
+>;
+export type AutomationPreviewCommand = z.infer<
+  typeof automationPreviewCommandSchema
+>;
+export type AutomationPreview = z.infer<typeof automationPreviewSchema>;
+export type AutomationPreviewResponse = z.infer<
+  typeof automationPreviewResponseSchema
+>;
+export type AutomationConfirmRequest = z.infer<
+  typeof automationConfirmRequestSchema
+>;
+export type AutomationConfirmationResponse = z.infer<
+  typeof automationConfirmationResponseSchema
+>;
+
+export { ApiRequestError, createAutomationClient } from "./http-client.ts";

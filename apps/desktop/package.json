@@ -1,0 +1,17 @@
+{
+  "name": "@suite/desktop",
+  "productName": "Productivity Suite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "test": "vitest run src/policy.test.mjs",
+    "package:linux": "electron-packager . 'Productivity Suite' --platform=linux --arch=x64 --out=dist-packages --overwrite --prune=false --ignore='(^|/)(dist-packages|src/.*test.*)$'",
+    "smoke:linux": "'./dist-packages/Productivity Suite-linux-x64/Productivity Suite' --suite-smoke"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.2.0",
+    "electron": "43.3.0"
+  }
+}

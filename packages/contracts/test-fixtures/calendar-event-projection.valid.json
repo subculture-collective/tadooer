@@ -1,0 +1,21 @@
+{
+  "identity": {
+    "providerId": "d1054acd-c04d-4bd8-a814-254b007154ba",
+    "calendarId": "1b34cc57-972c-42e8-bafa-0ba455dced20",
+    "eventId": "/dav.php/calendars/owner/work/suite-block-a.ics"
+  },
+  "href": "/dav.php/calendars/owner/work/suite-block-a.ics",
+  "uid": "suite-block-a@example.invalid",
+  "etag": "\"baikal-etag-1\"",
+  "summary": "Existing calendar event",
+  "startsAt": "2026-08-06T15:00:00.000Z",
+  "endsAt": "2026-08-06T16:00:00.000Z",
+  "allDay": false,
+  "recurrence": "none",
+  "projectedAt": "2026-08-06T14:55:00.000Z",
+  "source": {
+    "providerKind": "baikal",
+    "providerDisplayLabel": "Baïkal",
+    "calendarName": "Work"
+  }
+}

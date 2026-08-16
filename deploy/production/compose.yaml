@@ -1,0 +1,44 @@
+name: tadooer
+
+services:
+  suite:
+    image: ${SUITE_IMAGE:?Set SUITE_IMAGE to an immutable registry digest}
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    ports:
+      - "10.0.0.56:18080:8080"
+    environment:
+      BAIKAL_ENDPOINT: http://baikal/dav.php/
+      SUITE_CREDENTIAL_KEY_PATH: /data/credential.key
+      GOOGLE_OAUTH_CONFIG_PATH: /data/google-oauth.json
+      NTFY_PUBLISHER_CONFIG_PATH: /data/ntfy-publisher.json
+      SUITE_SECURE_COOKIES: "true"
+      SUITE_PUBLIC_ORIGIN: https://tadooer.subcult.tv
+      SUITE_TRUSTED_PROXY_CIDRS: 10.0.0.200/32
+    volumes:
+      - /srv/apps/productivity/data/tadooer:/data
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    networks:
+      productivity: {}
+      monitoring:
+        aliases:
+          - tadooer-suite
+          - tadooer.subcult.tv
+      management: {}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  productivity:
+    external: true
+    name: productivity
+  monitoring:
+    external: true
+    name: monitoring
+  management:
+    external: true
+    name: management

@@ -1,0 +1,52 @@
+groups:
+  - name: tadooer
+    rules:
+      - alert: TadooerUnavailable
+        expr: up{job="tadooer"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tadooer is unavailable
+      - alert: TadooerMigrationMismatch
+        expr: suite_database_migrations{job="tadooer"} != 14
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tadooer database migration count differs from the release
+      - alert: TadooerServerErrors
+        expr: increase(suite_http_requests_total{job="tadooer",status=~"5.."}[10m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Tadooer is returning repeated server errors
+      - alert: TadooerRestartLoop
+        expr: changes(container_start_time_seconds{name="tadooer-suite-1"}[15m]) > 2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tadooer is repeatedly restarting
+      - alert: TadooerBackupMissing
+        expr: absent(tadooer_backup_success)
+        for: 2h
+        labels:
+          severity: critical
+        annotations:
+          summary: Tadooer backup status metrics are missing
+      - alert: TadooerBackupFailed
+        expr: tadooer_backup_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The latest Tadooer backup failed
+      - alert: TadooerBackupStale
+        expr: time() - tadooer_last_successful_backup_timestamp_seconds > 129600
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: Tadooer has no successful backup in 36 hours

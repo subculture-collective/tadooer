@@ -21,10 +21,21 @@ import type {
   CalendarCollection,
 } from "@suite/contracts";
 import {
+  createCalDavEvent,
+  deleteCalDavEvent,
   discoverCalDavCalendars,
+  readBoundedCalDavEvents,
+  replaceCalDavEvent,
+  serializeBoundedVEvent,
+  type CalendarEventResource,
+  type CalDavEventFailure,
   type CalDavDiscoveryFailure,
 } from "@suite/caldav";
-import type { SuiteDatabase } from "@suite/persistence";
+import type {
+  BaikalConnectorRecord,
+  OwnedCalendarRecord,
+  SuiteDatabase,
+} from "@suite/persistence";
 
 const keyBytes = 32;
 
@@ -89,6 +100,13 @@ const aad = (
 
 export type ConnectorFailure =
   CalDavDiscoveryFailure | "credential-unavailable";
+
+export type CalendarOperationFailure =
+  ConnectorFailure | CalDavEventFailure | "calendar-not-found";
+
+export type CalendarOperationResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly reason: CalendarOperationFailure };
 
 export type ConnectorResult =
   | { readonly ok: true; readonly status: BaikalStatusResponse }
@@ -202,6 +220,131 @@ export class BaikalConnectorService {
     }
   }
 
+  async projectEvents(
+    ownerId: string,
+    calendarId: string,
+    from: string,
+    to: string,
+  ): Promise<CalendarOperationResult<readonly CalendarEventResource[]>> {
+    const access = this.#calendarAccess(ownerId, calendarId);
+    if (!access.ok) return access;
+    const result = await this.#withTimeout((signal) =>
+      readBoundedCalDavEvents({
+        collectionUrl: access.collectionUrl,
+        username: access.connector.username,
+        password: access.password,
+        startsAt: from,
+        endsAt: to,
+        fetch: this.fetcher,
+        signal,
+      }),
+    );
+    return result.ok ? { ok: true, value: result.value } : result;
+  }
+
+  async putTaskBlock(input: {
+    readonly ownerId: string;
+    readonly calendarId: string;
+    readonly href: string;
+    readonly uid: string;
+    readonly summary: string;
+    readonly startsAt: string;
+    readonly endsAt: string;
+    readonly expectedEtag?: string;
+  }): Promise<CalendarOperationResult<CalendarEventResource>> {
+    const access = this.#calendarAccess(input.ownerId, input.calendarId);
+    if (!access.ok) return access;
+    const rawIcs = serializeBoundedVEvent({
+      uid: input.uid,
+      summary: input.summary,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      allDay: false,
+    });
+    if (rawIcs === undefined) return { ok: false, reason: "invalid-protocol" };
+    const write = await this.#withTimeout((signal) =>
+      input.expectedEtag === undefined
+        ? createCalDavEvent({
+            collectionUrl: access.collectionUrl,
+            username: access.connector.username,
+            password: access.password,
+            href: input.href,
+            rawIcs,
+            fetch: this.fetcher,
+            signal,
+          })
+        : replaceCalDavEvent({
+            collectionUrl: access.collectionUrl,
+            username: access.connector.username,
+            password: access.password,
+            href: input.href,
+            rawIcs,
+            expectedEtag: input.expectedEtag,
+            fetch: this.fetcher,
+            signal,
+          }),
+    );
+    if (!write.ok && write.reason !== "precondition-failed") return write;
+    if (!write.ok && input.expectedEtag !== undefined) return write;
+
+    const observed = await this.projectEvents(
+      input.ownerId,
+      input.calendarId,
+      new Date(Date.parse(input.startsAt) - 60 * 60 * 1000).toISOString(),
+      new Date(Date.parse(input.endsAt) + 60 * 60 * 1000).toISOString(),
+    );
+    if (!observed.ok) return observed;
+    const event = observed.value.find(
+      (candidate) =>
+        candidate.href === input.href && candidate.event.uid === input.uid,
+    );
+    return event === undefined
+      ? { ok: false, reason: "outcome-unknown" }
+      : { ok: true, value: event };
+  }
+
+  async putImportedEvent(input: {
+    readonly ownerId: string;
+    readonly calendarId: string;
+    readonly href: string;
+    readonly rawIcs: string;
+  }): Promise<CalendarOperationResult<void>> {
+    const access = this.#calendarAccess(input.ownerId, input.calendarId);
+    if (!access.ok) return access;
+    return this.#withTimeout((signal) =>
+      createCalDavEvent({
+        collectionUrl: access.collectionUrl,
+        username: access.connector.username,
+        password: access.password,
+        href: input.href,
+        rawIcs: input.rawIcs,
+        fetch: this.fetcher,
+        signal,
+      }),
+    );
+  }
+
+  async deleteTaskBlock(input: {
+    readonly ownerId: string;
+    readonly calendarId: string;
+    readonly href: string;
+    readonly expectedEtag: string;
+  }): Promise<CalendarOperationResult<void>> {
+    const access = this.#calendarAccess(input.ownerId, input.calendarId);
+    if (!access.ok) return access;
+    return this.#withTimeout((signal) =>
+      deleteCalDavEvent({
+        collectionUrl: access.collectionUrl,
+        username: access.connector.username,
+        password: access.password,
+        href: input.href,
+        expectedEtag: input.expectedEtag,
+        fetch: this.fetcher,
+        signal,
+      }),
+    );
+  }
+
   async #discover(
     username: string,
     password: string,
@@ -236,6 +379,70 @@ export class BaikalConnectorService {
             })),
           }
         : result;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  #calendarAccess(
+    ownerId: string,
+    calendarId: string,
+  ):
+    | {
+        readonly ok: true;
+        readonly connector: BaikalConnectorRecord;
+        readonly calendar: OwnedCalendarRecord;
+        readonly collectionUrl: URL;
+        readonly password: string;
+      }
+    | { readonly ok: false; readonly reason: CalendarOperationFailure } {
+    const connector = this.database.getBaikalConnector(ownerId);
+    const calendar = this.database.getOwnedCalendar(ownerId, calendarId);
+    if (
+      connector === undefined ||
+      calendar === undefined ||
+      !calendar.supportsEvents ||
+      calendar.connectorId !== connector.id
+    )
+      return { ok: false, reason: "calendar-not-found" };
+    if (
+      connector.endpoint !== this.endpoint.href ||
+      connector.credentialKeyId !== this.#keyId
+    )
+      return { ok: false, reason: "credential-unavailable" };
+    try {
+      const decipher = createDecipheriv(
+        "aes-256-gcm",
+        this.#key,
+        connector.credentialNonce,
+      );
+      decipher.setAAD(
+        aad(ownerId, connector.endpoint, connector.username, this.#keyId),
+      );
+      decipher.setAuthTag(Buffer.from(connector.credentialTag));
+      const password = Buffer.concat([
+        decipher.update(Buffer.from(connector.credentialCiphertext)),
+        decipher.final(),
+      ]).toString("utf8");
+      return {
+        ok: true,
+        connector,
+        calendar,
+        collectionUrl: new URL(calendar.href, connector.endpoint),
+        password,
+      };
+    } catch {
+      return { ok: false, reason: "credential-unavailable" };
+    }
+  }
+
+  async #withTimeout<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      return await operation(controller.signal);
     } finally {
       clearTimeout(timeout);
     }

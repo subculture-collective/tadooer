@@ -12,6 +12,9 @@
   "dependencies": {
     "@suite/caldav": "workspace:*",
     "@suite/contracts": "workspace:*",
+    "@suite/domain": "workspace:*",
+    "@suite/import-export": "workspace:*",
+    "@suite/google-calendar": "workspace:*",
     "@suite/persistence": "workspace:*"
   },
   "devDependencies": {

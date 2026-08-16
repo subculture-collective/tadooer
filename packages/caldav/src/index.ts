@@ -344,3 +344,476 @@ export const discoverCalDavCalendars = async (
     ? { ok: false, reason: "unsafe-remote-url" }
     : { ok: true, principalUrl, calendarHomeUrl, collections: discovered };
 };
+
+/** A deliberately small, lossless Phase 1 VEVENT projection. */
+export interface ProjectedCalendarEvent {
+  readonly uid: string;
+  readonly summary: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly allDay: boolean;
+}
+
+export interface CalendarEventResource {
+  readonly href: string;
+  readonly etag: string;
+  readonly rawIcs: string;
+  readonly event: ProjectedCalendarEvent;
+}
+
+export type CalDavEventFailure =
+  CalDavDiscoveryFailure | "precondition-failed" | "outcome-unknown";
+
+export type CalDavEventResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly reason: CalDavEventFailure };
+
+export interface CalDavEventReadOptions {
+  readonly collectionUrl: URL;
+  readonly username: string;
+  readonly password: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly fetch?: typeof fetch;
+  readonly signal?: AbortSignal;
+}
+
+export interface CalDavEventWriteOptions {
+  readonly collectionUrl: URL;
+  readonly username: string;
+  readonly password: string;
+  readonly href: string;
+  readonly rawIcs: string;
+  readonly expectedEtag?: string;
+  readonly fetch?: typeof fetch;
+  readonly signal?: AbortSignal;
+}
+
+export type CalDavEventDeleteOptions = Omit<CalDavEventWriteOptions, "rawIcs">;
+
+const maxEventMembers = 1_000;
+const maxIcsBytes = 2 * 1024 * 1024;
+const strongEtag = /^"[^"\r\n]+"$/;
+
+const authorizationFor = (username: string, password: string): string =>
+  `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
+
+const directMemberUrl = (href: string, collectionUrl: URL): URL | undefined => {
+  const url = resolveSafeUrl(href, collectionUrl);
+  if (url === undefined) return undefined;
+  const root = collectionUrl.pathname.endsWith("/")
+    ? collectionUrl.pathname
+    : `${collectionUrl.pathname}/`;
+  const child = url.pathname.slice(root.length);
+  if (
+    !url.pathname.startsWith(root) ||
+    child === "" ||
+    child.includes("/") ||
+    !child.endsWith(".ics")
+  )
+    return undefined;
+  try {
+    const decoded = decodeURIComponent(child);
+    return decoded.includes("/") || decoded.includes("\\") || decoded === ".ics"
+      ? undefined
+      : url;
+  } catch {
+    return undefined;
+  }
+};
+
+const validInstant = (value: string): boolean =>
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+  Number.isFinite(Date.parse(value));
+
+const calendarQuery = (startsAt: string, endsAt: string): string => {
+  const compact = (value: string): string =>
+    value.replace(".000Z", "Z").replace(/[-:]/g, "");
+  return `<?xml version="1.0" encoding="utf-8"?>
+<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop><D:getetag/></D:prop>
+  <C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="${compact(startsAt)}" end="${compact(endsAt)}"/></C:comp-filter></C:comp-filter></C:filter>
+</C:calendar-query>`;
+};
+
+const responseFailure = (
+  response: Response,
+): CalDavEventFailure | undefined => {
+  if (response.status === 401) return "authentication-required";
+  if (response.status === 403) return "authorization-denied";
+  if (response.status === 404) return "not-found";
+  if (response.status === 412) return "precondition-failed";
+  if (response.status >= 500) return "remote-unavailable";
+  return undefined;
+};
+
+const eventMembers = (
+  document: XmlDocument,
+  collectionUrl: URL,
+): readonly { href: string; etag: string }[] | undefined => {
+  const result: { href: string; etag: string }[] = [];
+  const responses = document.getElementsByTagNameNS(davNamespace, "response");
+  if (responses.length > maxEventMembers) return undefined;
+  for (let index = 0; index < responses.length; index += 1) {
+    const response = responses.item(index);
+    const href = response
+      ?.getElementsByTagNameNS(davNamespace, "href")
+      .item(0)
+      ?.textContent?.trim();
+    if (
+      response === null ||
+      href === undefined ||
+      directMemberUrl(href, collectionUrl) === undefined
+    )
+      return undefined;
+    let etag: string | undefined;
+    for (const prop of successfulProps(response)) {
+      const candidate = prop
+        .getElementsByTagNameNS(davNamespace, "getetag")
+        .item(0)
+        ?.textContent?.trim();
+      if (candidate !== undefined && strongEtag.test(candidate))
+        etag = candidate;
+    }
+    if (etag === undefined || result.some((member) => member.href === href))
+      return undefined;
+    result.push({ href, etag });
+  }
+  return result;
+};
+
+const unfoldedLines = (rawIcs: string): readonly string[] | undefined => {
+  if (rawIcs.includes("\0") || rawIcs.length === 0) return undefined;
+  const lines = rawIcs.replace(/\r\n/g, "\n").split("\n");
+  const unfolded: string[] = [];
+  for (const line of lines) {
+    if (
+      (line.startsWith(" ") || line.startsWith("\t")) &&
+      unfolded.length > 0
+    ) {
+      const index = unfolded.length - 1;
+      unfolded[index] = `${unfolded[index] ?? ""}${line.slice(1)}`;
+    } else if (line !== "") unfolded.push(line);
+  }
+  return unfolded;
+};
+
+const unescapeIcsText = (value: string): string =>
+  value
+    .replace(/\\[nN]/g, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\");
+
+const parseUtc = (value: string): string | undefined => {
+  if (!/^\d{8}T\d{6}Z$/.test(value)) return undefined;
+  const iso = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T${value.slice(9, 11)}:${value.slice(11, 13)}:${value.slice(13, 15)}Z`;
+  return Number.isFinite(Date.parse(iso)) ? iso : undefined;
+};
+
+const parseDate = (value: string): string | undefined =>
+  /^\d{8}$/.test(value) &&
+  Number.isFinite(
+    Date.parse(
+      `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}T00:00:00Z`,
+    ),
+  )
+    ? value
+    : undefined;
+
+/** Rejects recurrence, floating/local time, and multi-VEVENT resources. */
+export const parseBoundedVEvent = (
+  rawIcs: string,
+): ProjectedCalendarEvent | undefined => {
+  const lines = unfoldedLines(rawIcs);
+  if (lines?.[0] !== "BEGIN:VCALENDAR" || !lines.includes("END:VCALENDAR"))
+    return undefined;
+  const begins = lines.filter((line) => line === "BEGIN:VEVENT").length;
+  if (
+    begins !== 1 ||
+    lines.filter((line) => line === "END:VEVENT").length !== 1
+  )
+    return undefined;
+  const start = lines.indexOf("BEGIN:VEVENT");
+  const end = lines.indexOf("END:VEVENT");
+  if (start < 0 || end <= start) return undefined;
+  const fields = new Map<string, { params: string; value: string }>();
+  for (const line of lines.slice(start + 1, end)) {
+    const separator = line.indexOf(":");
+    if (separator < 1) return undefined;
+    const [name, ...parameterParts] = line.slice(0, separator).split(";");
+    const upper = name?.toUpperCase();
+    if (upper === undefined || fields.has(upper)) return undefined;
+    fields.set(upper, {
+      params: parameterParts.join(";").toUpperCase(),
+      value: line.slice(separator + 1),
+    });
+  }
+  if (
+    ["RRULE", "RDATE", "EXDATE", "RECURRENCE-ID"].some((name) =>
+      fields.has(name),
+    )
+  )
+    return undefined;
+  const uid = fields.get("UID")?.value;
+  const summary = fields.get("SUMMARY")?.value ?? "";
+  const dtstart = fields.get("DTSTART");
+  const dtend = fields.get("DTEND");
+  if (!uid || !dtstart || !dtend || uid.length > 1024 || summary.length > 4_096)
+    return undefined;
+  const allDay =
+    (dtstart.params === "VALUE=DATE" || dtstart.params === "") &&
+    (dtend.params === "VALUE=DATE" || dtend.params === "") &&
+    /^\d{8}$/.test(dtstart.value) &&
+    /^\d{8}$/.test(dtend.value);
+  if (allDay) {
+    const startsAt = parseDate(dtstart.value);
+    const endsAt = parseDate(dtend.value);
+    return startsAt && endsAt && endsAt > startsAt
+      ? {
+          uid,
+          summary: unescapeIcsText(summary),
+          startsAt,
+          endsAt,
+          allDay: true,
+        }
+      : undefined;
+  }
+  if (dtstart.params !== "" || dtend.params !== "") return undefined;
+  const startsAt = parseUtc(dtstart.value);
+  const endsAt = parseUtc(dtend.value);
+  return startsAt && endsAt && Date.parse(endsAt) > Date.parse(startsAt)
+    ? {
+        uid,
+        summary: unescapeIcsText(summary),
+        startsAt,
+        endsAt,
+        allDay: false,
+      }
+    : undefined;
+};
+
+export const serializeBoundedVEvent = (
+  input: ProjectedCalendarEvent,
+): string | undefined => {
+  if (!input.uid || input.uid.length > 1024 || input.summary.length > 4_096)
+    return undefined;
+  const escape = (value: string): string =>
+    value
+      .replace(/\\/g, "\\\\")
+      .replace(/\n/g, "\\n")
+      .replace(/;/g, "\\;")
+      .replace(/,/g, "\\,");
+  if (input.allDay) {
+    if (
+      !/^\d{8}$/.test(input.startsAt) ||
+      !/^\d{8}$/.test(input.endsAt) ||
+      input.endsAt <= input.startsAt
+    )
+      return undefined;
+    return [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      `UID:${input.uid}`,
+      `DTSTART;VALUE=DATE:${input.startsAt}`,
+      `DTEND;VALUE=DATE:${input.endsAt}`,
+      `SUMMARY:${escape(input.summary)}`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+  }
+  if (
+    !validInstant(input.startsAt) ||
+    !validInstant(input.endsAt) ||
+    Date.parse(input.endsAt) <= Date.parse(input.startsAt)
+  )
+    return undefined;
+  const compact = (value: string): string =>
+    value.replace(".000Z", "Z").replace(/[-:]/g, "");
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    `UID:${input.uid}`,
+    `DTSTART:${compact(input.startsAt)}`,
+    `DTEND:${compact(input.endsAt)}`,
+    `SUMMARY:${escape(input.summary)}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ].join("\r\n");
+};
+
+const getCalendarResource = async (
+  fetcher: typeof fetch,
+  url: URL,
+  authorization: string,
+  expectedEtag: string,
+  signal: AbortSignal | undefined,
+): Promise<CalDavEventResult<CalendarEventResource>> => {
+  let response: Response;
+  try {
+    response = await fetcher(url, {
+      method: "GET",
+      redirect: "manual",
+      headers: { Authorization: authorization, Accept: "text/calendar" },
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch {
+    return { ok: false, reason: "outcome-unknown" };
+  }
+  if (response.url !== "" && response.url !== url.href)
+    return { ok: false, reason: "unsafe-remote-url" };
+  const failure = responseFailure(response);
+  if (failure !== undefined) return { ok: false, reason: failure };
+  if (
+    response.status !== 200 ||
+    response.headers.get("etag") !== expectedEtag ||
+    !strongEtag.test(expectedEtag)
+  )
+    return { ok: false, reason: "invalid-protocol" };
+  try {
+    const rawIcs = await readBoundedText(response);
+    const event = rawIcs === undefined ? undefined : parseBoundedVEvent(rawIcs);
+    return rawIcs !== undefined && event !== undefined
+      ? {
+          ok: true,
+          value: { href: url.pathname, etag: expectedEtag, rawIcs, event },
+        }
+      : { ok: false, reason: "invalid-protocol" };
+  } catch {
+    return { ok: false, reason: "invalid-protocol" };
+  }
+};
+
+export const readBoundedCalDavEvents = async (
+  options: CalDavEventReadOptions,
+): Promise<CalDavEventResult<readonly CalendarEventResource[]>> => {
+  if (
+    !safeUrl(options.collectionUrl, options.collectionUrl.origin) ||
+    !validInstant(options.startsAt) ||
+    !validInstant(options.endsAt) ||
+    Date.parse(options.endsAt) <= Date.parse(options.startsAt) ||
+    Date.parse(options.endsAt) - Date.parse(options.startsAt) > 366 * 86_400_000
+  )
+    return { ok: false, reason: "invalid-protocol" };
+  const fetcher = options.fetch ?? fetch;
+  const authorization = authorizationFor(options.username, options.password);
+  let response: Response;
+  try {
+    response = await fetcher(options.collectionUrl, {
+      method: "REPORT",
+      redirect: "manual",
+      headers: {
+        Authorization: authorization,
+        Depth: "1",
+        "Content-Type": "application/xml; charset=utf-8",
+      },
+      body: calendarQuery(options.startsAt, options.endsAt),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch {
+    return { ok: false, reason: "transport-failed" };
+  }
+  if (response.url !== "" && response.url !== options.collectionUrl.href)
+    return { ok: false, reason: "unsafe-remote-url" };
+  const failure = responseFailure(response);
+  if (failure !== undefined) return { ok: false, reason: failure };
+  if (
+    response.status !== 207 ||
+    !response.headers.get("content-type")?.toLowerCase().includes("xml")
+  )
+    return { ok: false, reason: "invalid-protocol" };
+  let document: XmlDocument | undefined;
+  try {
+    const text = await readBoundedText(response);
+    document = text === undefined ? undefined : parseMultiStatus(text);
+  } catch {
+    document = undefined;
+  }
+  const members =
+    document === undefined
+      ? undefined
+      : eventMembers(document, options.collectionUrl);
+  if (members === undefined) return { ok: false, reason: "invalid-protocol" };
+  const resources: CalendarEventResource[] = [];
+  for (const member of members) {
+    const url = directMemberUrl(member.href, options.collectionUrl);
+    if (url === undefined) return { ok: false, reason: "unsafe-remote-url" };
+    const resource = await getCalendarResource(
+      fetcher,
+      url,
+      authorization,
+      member.etag,
+      options.signal,
+    );
+    if (!resource.ok) return resource;
+    resources.push({ ...resource.value, href: member.href });
+  }
+  return { ok: true, value: resources };
+};
+
+const writeCalendarResource = async (
+  method: "PUT" | "DELETE",
+  options: CalDavEventWriteOptions | CalDavEventDeleteOptions,
+): Promise<CalDavEventResult<void>> => {
+  const url = directMemberUrl(options.href, options.collectionUrl);
+  if (
+    url === undefined ||
+    !safeUrl(options.collectionUrl, options.collectionUrl.origin)
+  )
+    return { ok: false, reason: "unsafe-remote-url" };
+  if (
+    "rawIcs" in options &&
+    Buffer.byteLength(options.rawIcs, "utf8") > maxIcsBytes
+  )
+    return { ok: false, reason: "invalid-protocol" };
+  const headers = new Headers({
+    Authorization: authorizationFor(options.username, options.password),
+  });
+  if (method === "PUT")
+    headers.set("Content-Type", "text/calendar; charset=utf-8");
+  if (options.expectedEtag === undefined) headers.set("If-None-Match", "*");
+  else if (strongEtag.test(options.expectedEtag))
+    headers.set("If-Match", options.expectedEtag);
+  else return { ok: false, reason: "invalid-protocol" };
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)(url, {
+      method,
+      redirect: "manual",
+      headers,
+      ...("rawIcs" in options ? { body: options.rawIcs } : {}),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch {
+    return { ok: false, reason: "outcome-unknown" };
+  }
+  if (response.url !== "" && response.url !== url.href)
+    return { ok: false, reason: "unsafe-remote-url" };
+  const failure = responseFailure(response);
+  if (failure !== undefined) return { ok: false, reason: failure };
+  return response.status === 200 ||
+    response.status === 201 ||
+    response.status === 204
+    ? { ok: true, value: undefined }
+    : { ok: false, reason: "invalid-protocol" };
+};
+
+export const createCalDavEvent = (
+  options: CalDavEventWriteOptions,
+): Promise<CalDavEventResult<void>> => writeCalendarResource("PUT", options);
+export const replaceCalDavEvent = (
+  options: CalDavEventWriteOptions,
+): Promise<CalDavEventResult<void>> =>
+  options.expectedEtag === undefined
+    ? Promise.resolve({ ok: false, reason: "invalid-protocol" })
+    : writeCalendarResource("PUT", options);
+export const deleteCalDavEvent = (
+  options: CalDavEventDeleteOptions,
+): Promise<CalDavEventResult<void>> =>
+  options.expectedEtag === undefined
+    ? Promise.resolve({ ok: false, reason: "invalid-protocol" })
+    : writeCalendarResource("DELETE", options);

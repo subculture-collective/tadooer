@@ -2,9 +2,11 @@
 
 ## Status
 
-Approved product direction and captured requirement. Sequenced after the core
-task/sync contracts in the roadmap, but not committed to the first usable
-release or accepted as a persisted data contract.
+The Task Template and Template Set portion was accepted and implemented in
+Phase 5 on 2026-08-07. Choice Pools and Planning Placeholders were implemented
+in Phase 6 on 2026-08-07 under ADR 0013: cooldown begins at selection,
+generated work is attached as subtasks to an ordinary parent task, and the
+parent's calendar placement remains authoritative.
 
 ## Goal
 
@@ -163,8 +165,8 @@ Monday planning:
   a selection count of three and a per-item cooldown of five days.
 - Eligibility is derived from explicit policy plus recorded history and must be
   explainable to the user.
-- Selection and completion are distinct events. The cooldown trigger remains an
-  open product choice and cannot be silently inferred.
+- Selection and completion are distinct events. Phase 6 eligibility and
+  cooldown use selection time; completion remains append-only reporting data.
 - Removing an item from a pool does not delete historical tasks or selection
   records.
 - Sync conflict behavior must preserve committed history and prevent two devices
@@ -207,17 +209,15 @@ Monday planning:
 - Backup/restore round trip including template provenance and pool history.
 - MCP contract tests for list, preview, confirm, retry, and conflict behavior.
 
-## Open questions
+## Resolved Phase 6 questions
 
 The trailing phrase "Also, maybe we have an option to make a task ..." was an
 abandoned start of the Task Template requirement, not an additional feature.
 
-1. Does cooldown start when an item is selected, when its generated task is
-   completed, or is that configurable per pool?
-2. Does a pool item normally produce a subtask, a sibling task, or can the pool
-   define the output shape?
-3. Should a placeholder reserve calendar time before it is resolved, or can it
-   also exist only as a planning-list item?
+1. Cooldown starts when an item is selected.
+2. Pool items produce ordered subtasks on the placeholder's parent task.
+3. The placeholder is attached to a normal planning task; calendar time remains
+   on that parent and is not copied to generated subtasks.
 4. When a project suggested by a template does not exist, should instantiation
    ask for another destination, create it after preview, or instantiate into an
    Inbox?

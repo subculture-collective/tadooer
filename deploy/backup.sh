@@ -10,4 +10,10 @@ docker compose exec -T suite sh -eu -c '
   cp /data/credential.key "/data/backups/$1"
   chmod 600 "/data/backups/$1"
 ' sh "${backup_name%.sqlite}.key"
-echo "Backup pair stored in the suite-data volume at /data/backups/${backup_name} and ${backup_name%.sqlite}.key"
+docker compose exec -T suite sh -eu -c '
+  if [ -f /data/google-oauth.json ]; then
+    cp /data/google-oauth.json "/data/backups/$1"
+    chmod 600 "/data/backups/$1"
+  fi
+' sh "${backup_name%.sqlite}.google-oauth.json"
+echo "Backup set stored in the suite-data volume at /data/backups/${backup_name}, ${backup_name%.sqlite}.key, and the optional Google OAuth configuration"

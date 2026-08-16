@@ -17,7 +17,7 @@ SUITE_PORT="$suite_port" BAIKAL_PORT="$baikal_port" \
 first_ready="$(SUITE_PORT="$suite_port" ./deploy/smoke.sh)"
 first_instance="$(node -e 'console.log(JSON.parse(process.argv[1]).instanceId)' "$first_ready")"
 first_migrations="$(node -e 'console.log(JSON.parse(process.argv[1]).migrationCount)' "$first_ready")"
-test "$first_migrations" = "5"
+test "$first_migrations" = "12"
 task_state="$(node ./deploy/phase0-task-smoke.mjs create "http://127.0.0.1:${suite_port}")"
 
 SUITE_PORT="$suite_port" BAIKAL_PORT="$baikal_port" \

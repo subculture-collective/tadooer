@@ -1,6 +1,7 @@
 # Feature Prioritization
 
-**Status:** Approved 2026-08-05 for roadmap and backlog decisions.
+**Status:** Framework approved 2026-08-05. Current application refreshed
+2026-08-14 after the Phase 12 implementation checkpoint.
 
 ## Goal
 
@@ -101,6 +102,9 @@ at lower effort. Record why an exception is made.
 - **Next:** dependency-ready and likely to enter the following slice.
 - **Later:** approved direction with unmet dependencies or lower current value.
 - **Candidate:** captured but not yet approved or sequenced.
+- **Delivered:** implemented with the roadmap's recorded source and disposable
+  qualification evidence. Any remaining production acceptance is listed
+  separately as **Now**.
 - **Declined:** intentionally excluded, with the reason retained.
 
 No feature enters **Now** without:
@@ -114,30 +118,40 @@ No feature enters **Now** without:
 
 ## Current application
 
-| Feature | State | Reason |
+The implementation roadmap has advanced through the Phase 12 qualification
+tooling. The active **Now** slice is operational qualification for `1.0.0`, not
+another unreviewed feature expansion. The selected post-1.0 **Next** wave is the
+Actionable Today Queue: a bounded daily workflow that composes existing task,
+calendar, focus, and offline contracts without adding a persisted priority or
+ranking model. This selection does not waive the active production acceptance
+and stable-promotion gates.
+
+| Feature or outcome | State | Evidence or entry condition |
 | --- | --- | --- |
-| First-run owner and two-container deployment | Now | Required to reach any self-hosted workflow |
-| Basic task capture/edit/complete | Now | Starts the primary loop |
-| Existing Baikal discovery and event projection | Now | Supplies real planning context |
-| Plan one task into Baikal calendar time | Now | Proves the task/calendar product thesis |
-| Persisted task state and backup | Now | Prevents a disposable demo from masquerading as a product |
-| New sync and active-session contracts | Next, contract spike now | Required before multi-device focus can ship safely |
-| Two-device timer/focus/break handoff | Next | Completes the cross-device focus loop after sync foundation |
-| Google live calendar connector | Next, OAuth spike early | High user value; provider risk should be learned before broad UI |
-| Core MCP read and preview operations | Next, contract spike early | Shapes a stable suite API without exposing premature mutations |
-| Projects, tags, subtasks, and estimates | Next | Everyday organization once the core loop is coherent |
-| Availability-aware quiet reminders | Next | Connects calendar state to calm work behavior |
-| Task Templates | Later, first reusable-work slice | Depends on stable task creation/copy semantics |
-| Template Sets | Later, after Task Templates | Reuses template instantiation and destination selection |
-| Choice Pools and history | Later | Depends on task templates, logical time, persistence, and sync |
-| Planning Placeholders | Later | Composes stable templates, pools, task planning, and calendar blocks |
-| One-time calendar migration into Baikal | Later | Needs provider identity, recurrence-safe writes, and reconciliation reports |
-| Read-only published ICS capability URLs | Later | Valuable interoperability, not required for the primary loop |
-| Super Productivity/task-app importers | Candidate/Later | New-user product; build the common import contract before source breadth |
-| Project Templates | Candidate | Template Sets may solve the workflow with less permanent scope |
-| One-way provider mirrors | Candidate | Only after a demonstrated Baikal-only client need |
+| Core self-hosted loop: owner setup, task capture, Baïkal projection, calendar placement, persistence, and recovery | Delivered | Completed through Phases 0–1 |
+| Local-first task sync, projects, tags, subtasks, estimates, and cross-device focus/break handoff | Delivered | Completed in Phase 2 |
+| Google federation, calm daily planning, freshness, and reminder suppression rules | Delivered | Completed and live-qualified in Phase 3 |
+| Scoped MCP/HTTP automation with preview, confirmation, audit, and retry safety | Delivered | Completed in Phase 4 |
+| Task Templates, Template Sets, independent instantiation, and provenance | Delivered | Completed in Phase 5 |
+| Choice Pools, policy history, suggestions, and Planning Placeholder resolution | Delivered | Completed in Phase 6 |
+| Provenance-aware calendar import, one-time migration, ICS export, and revocable read-only publication | Delivered | Completed in Phase 7 |
+| Constrained Linux Electron packaging, immutable release channels, rollback, metrics, and production qualification tooling | Delivered | Completed in Phase 8 |
+| Route-backed calm daily workspace, search, organization filters, time-zone correctness, and provider-aware calendar filtering | Delivered | Completed in Phase 10 |
+| Durable ntfy reminder claims, retries, suppression, redaction, and browser settings | Delivered | Source and disposable deployment qualification completed in Phase 11 |
+| Production owner creation plus explicit Baïkal and Google authorization | Now | Required to close Phase 9 and start the production soak |
+| Live authenticated ntfy delivery acceptance | Now | Required to close the Phase 11 production acceptance gate |
+| Seven-day production soak and stable `1.0.0` promotion | Now | Starts only after production owner, calendars, and ntfy are configured; any failed required observation or P0/P1 restarts qualification |
+| Actionable Today Queue: automatic overdue/today queue, separate unscheduled planning, inline capture/calendar/focus/completion actions, and explicit offline boundaries | Next | Selected 2026-08-14 as Phase 13; contract and implementation plan recorded in `docs/superpowers/plans/2026-08-14-actionable-today-queue.md` |
+| Super Productivity, Apple Reminders, Google Tasks, and other task-app source adapters | Candidate | The common import contract exists, but source breadth needs a selected user outcome and representative fixtures |
+| Project Templates | Candidate | Enter only if Template Sets plus explicit destination selection demonstrably fail the workflow |
+| One-way provider mirrors | Candidate | Enter only after a demonstrated client limitation and a separate authority/reconciliation review |
+| Hosted MCP transport | Candidate | Requires a separate authentication, token-delivery, revocation, rate-limit, and deployment decision |
+| User-configurable external CalDAV origins | Candidate | Requires dedicated SSRF, DNS-rebinding, TLS, redirect, credential-isolation, and revocation contracts |
+| Android/iOS delivery | Candidate | Requires platform-specific offline/background behavior and credential-storage design |
+| PostgreSQL adapter | Candidate | Enter only after measured SQLite concurrency, availability, or deployment limits |
+| Multi-user mode | Candidate | Requires an owner-scoped authorization audit and explicit sharing/administration contracts |
 | Bidirectional provider mirrors | Declined by default | Creates competing event authorities and conflict loops |
-| Full Super Productivity parity | Declined | Contradicts Greenfield new-user scope |
+| Full Super Productivity parity | Declined | Contradicts the Greenfield new-user scope |
 
 ## Review cadence
 

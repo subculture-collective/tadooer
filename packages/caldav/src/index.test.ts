@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { discoverCalDavCalendars } from "./index.ts";
+import {
+  createCalDavEvent,
+  deleteCalDavEvent,
+  discoverCalDavCalendars,
+  parseBoundedVEvent,
+  readBoundedCalDavEvents,
+  replaceCalDavEvent,
+  serializeBoundedVEvent,
+} from "./index.ts";
 
 const fixture = (name: string): string =>
   readFileSync(new URL(`../test-fixtures/${name}`, import.meta.url), "utf8");
+
+const requestUrl = (input: RequestInfo | URL): string =>
+  input instanceof URL
+    ? input.href
+    : typeof input === "string"
+      ? input
+      : input.url;
 
 describe("CalDAV discovery", () => {
   it("discovers event and todo support without following cross-origin hrefs", async () => {
@@ -83,5 +98,193 @@ describe("CalDAV discovery", () => {
         ),
     });
     expect(entity).toEqual({ ok: false, reason: "invalid-protocol" });
+  });
+});
+
+const eventXml = fixture("event-listing.xml");
+const rawEvent = fixture("event.ics");
+
+describe("bounded CalDAV event port", () => {
+  const collectionUrl = new URL(
+    "https://baikal.test/dav.php/calendars/alice/work/",
+  );
+
+  it("lists strong ETag members then GETs exact raw ICS", async () => {
+    const requests: { url: string; init?: RequestInit }[] = [];
+    const result = await readBoundedCalDavEvents({
+      collectionUrl,
+      username: "alice",
+      password: "secret",
+      startsAt: "2026-08-06T00:00:00Z",
+      endsAt: "2026-08-07T00:00:00Z",
+      fetch: (input, init) => {
+        const url = requestUrl(input);
+        requests.push(init === undefined ? { url } : { url, init });
+        return Promise.resolve(
+          url.endsWith("work/")
+            ? new Response(eventXml, {
+                status: 207,
+                headers: { "content-type": "application/xml" },
+              })
+            : new Response(rawEvent, {
+                status: 200,
+                headers: {
+                  etag: '"event-v1"',
+                  "content-type": "text/calendar",
+                },
+              }),
+        );
+      },
+    });
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        {
+          href: "/dav.php/calendars/alice/work/existing.ics",
+          etag: '"event-v1"',
+          rawIcs: rawEvent,
+          event: {
+            uid: "event-1",
+            summary: "Focus, work",
+            startsAt: "2026-08-06T12:00:00Z",
+            endsAt: "2026-08-06T13:00:00Z",
+            allDay: false,
+          },
+        },
+      ],
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.init?.method).toBe("REPORT");
+    expect(new Headers(requests[0]?.init?.headers).get("depth")).toBe("1");
+    expect(requests[1]?.init?.method).toBe("GET");
+    expect(new Headers(requests[1]?.init?.headers).get("accept")).toBe(
+      "text/calendar",
+    );
+  });
+
+  it("fails closed on weak ETags, traversal hrefs, and changed-during-fetch", async () => {
+    for (const { href, etag, getEtag } of [
+      {
+        href: "/dav.php/calendars/alice/work/a.ics",
+        etag: 'W/"v1"',
+        getEtag: 'W/"v1"',
+      },
+      {
+        href: "/dav.php/calendars/alice/work/%2e%2e/evil.ics",
+        etag: '"v1"',
+        getEtag: '"v1"',
+      },
+      {
+        href: "/dav.php/calendars/alice/work/a.ics",
+        etag: '"v1"',
+        getEtag: '"v2"',
+      },
+    ]) {
+      const xml = eventXml
+        .replace("/dav.php/calendars/alice/work/existing.ics", href)
+        .replace('"event-v1"', etag);
+      await expect(
+        readBoundedCalDavEvents({
+          collectionUrl,
+          username: "a",
+          password: "b",
+          startsAt: "2026-08-06T00:00:00Z",
+          endsAt: "2026-08-07T00:00:00Z",
+          fetch: (input) =>
+            Promise.resolve(
+              requestUrl(input).endsWith("work/")
+                ? new Response(xml, {
+                    status: 207,
+                    headers: { "content-type": "application/xml" },
+                  })
+                : new Response(rawEvent, {
+                    status: 200,
+                    headers: { etag: getEtag },
+                  }),
+            ),
+        }),
+      ).resolves.toEqual({ ok: false, reason: "invalid-protocol" });
+    }
+  });
+
+  it("projects only non-recurring UTC timed or date-only all-day VEVENTs", () => {
+    expect(parseBoundedVEvent(rawEvent)).toMatchObject({
+      uid: "event-1",
+      allDay: false,
+    });
+    expect(
+      parseBoundedVEvent(
+        rawEvent.replace(
+          "DTSTART:20260806T120000Z",
+          "DTSTART;TZID=America/Chicago:20260806T070000",
+        ),
+      ),
+    ).toBeUndefined();
+    expect(
+      parseBoundedVEvent(
+        rawEvent.replace(
+          "SUMMARY:Focus\\, work",
+          "RRULE:FREQ=DAILY\nSUMMARY:Focus\\, work",
+        ),
+      ),
+    ).toBeUndefined();
+    const allDay = {
+      uid: "day",
+      summary: "Day",
+      startsAt: "20260806",
+      endsAt: "20260807",
+      allDay: true,
+    } as const;
+    const serialized = serializeBoundedVEvent(allDay);
+    expect(serialized).toBeDefined();
+    if (serialized === undefined)
+      throw new Error("All-day event did not serialize");
+    expect(parseBoundedVEvent(serialized)).toEqual(allDay);
+    expect(parseBoundedVEvent(serialized.replace(";VALUE=DATE", ""))).toEqual(
+      allDay,
+    );
+  });
+
+  it("uses conditional CalDAV writes and exposes a typed stale conflict", async () => {
+    const request = async (
+      method: "create" | "replace" | "delete",
+      status = 204,
+    ) => {
+      let captured: RequestInit | undefined;
+      const options = {
+        collectionUrl,
+        username: "alice",
+        password: "secret",
+        href: "/dav.php/calendars/alice/work/new.ics",
+        rawIcs: rawEvent,
+        ...(method === "replace" || method === "delete"
+          ? { expectedEtag: '"v1"' }
+          : {}),
+        fetch: (_input: RequestInfo | URL, init?: RequestInit) => {
+          captured = init;
+          return Promise.resolve(new Response("", { status }));
+        },
+      };
+      const result =
+        method === "create"
+          ? await createCalDavEvent(options)
+          : method === "replace"
+            ? await replaceCalDavEvent(options)
+            : await deleteCalDavEvent(options);
+      return {
+        result,
+        headers: new Headers(captured?.headers),
+        init: captured,
+      };
+    };
+    expect((await request("create")).headers.get("if-none-match")).toBe("*");
+    expect((await request("replace")).headers.get("if-match")).toBe('"v1"');
+    const deleted = await request("delete");
+    expect(deleted.init?.method).toBe("DELETE");
+    expect(deleted.headers.get("if-match")).toBe('"v1"');
+    expect((await request("replace", 412)).result).toEqual({
+      ok: false,
+      reason: "precondition-failed",
+    });
   });
 });
