@@ -124,19 +124,11 @@ export class SqliteNotificationStore
     };
   }
 
-  markDeliveryFailed(
-    _ownerId: string,
-    deliveryId: string,
-    now: string,
-  ): void {
+  markDeliveryFailed(_ownerId: string, deliveryId: string, now: string): void {
     this.finishNotificationDelivery(deliveryId, "failed", "MANUAL_FAIL", now);
   }
 
-  cancelPendingDeliveries(
-    ownerId: string,
-    taskId: string,
-    now: string,
-  ): void {
+  cancelPendingDeliveries(ownerId: string, taskId: string, now: string): void {
     this.db
       .prepare(
         `UPDATE notification_deliveries SET state='cancelled',error_code='OBSOLETE',updated_at=?

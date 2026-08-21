@@ -512,9 +512,14 @@ elapsed days. Super Productivity is not changed automatically.
 
 ## Phase 13: Actionable Today Queue
 
-**Status:** Planned 2026-08-14 as the selected post-1.0 feature wave. Phase 9,
-11, and 12 production acceptance remains the active **Now** work; this selection
-does not waive the seven-day soak or stable `1.0.0` promotion gate.
+**Status:** Implementation and local qualification completed on 2026-08-21.
+Focused automated coverage, the repository gate, and authenticated local-browser
+validation are green. The browser pass covered capture; schedule, move, and
+remove; row-scoped focus; complete/reopen; offline action boundaries; a cold
+offline reload using cached preferences; and desktop, tablet, mobile, and 200%
+zoom layouts. This is local evidence only, not production or soak evidence.
+Phase 9, 11, and 12 production acceptance remains the active **Now** work; this
+selection does not waive the seven-day soak or stable `1.0.0` promotion gate.
 
 ### Owner outcome
 
@@ -559,9 +564,12 @@ than being queued or simulated.
   ordering, completion exclusion, and 23/25-hour DST days.
 - Web tests prove queue hierarchy, future-task hiding, task-specific accessible
   actions, empty states, and authenticated/cold-offline composition.
-- Browser validation proves capture, schedule/move/remove, row-scoped focus,
-  complete/reopen, keyboard flow, visible offline boundaries, and responsive
-  behavior at desktop, tablet, and mobile widths.
+- Authenticated local-browser validation proved capture, schedule/move/remove,
+  row-scoped focus, complete/reopen, visible offline boundaries, a cold offline
+  reload, and responsive behavior at desktop, tablet, mobile, and 200% zoom.
+  Direct tab inspection also confirmed the semantic reading/focusable order;
+  the browser automation transport timed out during scripted keyboard stepping
+  and screenshot capture. The browser console had no warning or error entries.
 - Existing task sync, planner/reminder, Time Block, Active Session, and full
   repository verification gates remain green.
 

@@ -125,9 +125,7 @@ export class SqliteCalendarImportStore implements CalendarImportStore {
   // createImportItem
   // -----------------------------------------------------------------------
 
-  createImportItem(
-    record: CalendarImportItemRecord,
-  ): void {
+  createImportItem(record: CalendarImportItemRecord): void {
     this.db
       .prepare(
         `INSERT INTO calendar_import_items (job_id,external_id,uid,raw_ics,href,state,applied_at)
@@ -148,9 +146,7 @@ export class SqliteCalendarImportStore implements CalendarImportStore {
   // listImportItems
   // -----------------------------------------------------------------------
 
-  listImportItems(
-    jobId: string,
-  ): readonly CalendarImportItemRecord[] {
+  listImportItems(jobId: string): readonly CalendarImportItemRecord[] {
     const items = this.db
       .prepare(
         "SELECT * FROM calendar_import_items WHERE job_id=? ORDER BY external_id",

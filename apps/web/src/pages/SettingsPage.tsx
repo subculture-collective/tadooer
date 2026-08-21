@@ -22,11 +22,9 @@ export interface SettingsPageProps {
   readonly onSyncGoogle: (() => Promise<void>) | undefined;
   readonly onDisconnectGoogle: (() => Promise<void>) | undefined;
   readonly onSavePlanningPreferences:
-    | ((preferences: PlanningPreferences) => Promise<void>)
-    | undefined;
+    ((preferences: PlanningPreferences) => Promise<void>) | undefined;
   readonly onSaveNotificationPreferences:
-    | ((preferences: NotificationPreferences) => Promise<void>)
-    | undefined;
+    ((preferences: NotificationPreferences) => Promise<void>) | undefined;
   readonly onTestNotification: (() => Promise<void>) | undefined;
   readonly onSyncNow: () => Promise<void>;
   readonly onExportDiagnostics: () => Promise<void>;

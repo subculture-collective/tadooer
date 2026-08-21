@@ -2,9 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { PlanningPreferencesRecord } from "./index.js";
 import type { PlanningPreferencesStore } from "./stores.js";
 
-export class SqlitePlanningPreferencesStore
-  implements PlanningPreferencesStore
-{
+export class SqlitePlanningPreferencesStore implements PlanningPreferencesStore {
   constructor(private readonly db: DatabaseSync) {}
 
   getPlanningPreferences(ownerId: string): PlanningPreferencesRecord {

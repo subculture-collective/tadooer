@@ -122,6 +122,7 @@ export type AppState =
       readonly recovery: readonly Task[];
       readonly conflictCount: number;
       readonly message: string;
+      readonly planningPreferences?: PlanningPreferences;
     }
   | { readonly kind: "error"; readonly message: string };
 
@@ -212,6 +213,20 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   >("all");
   const [taskProjectFilter, setTaskProjectFilter] = useState("");
   const [taskTagFilter, setTaskTagFilter] = useState("");
+  const [networkOnline, setNetworkOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+
+  useEffect(() => {
+    const markOnline = (): void => setNetworkOnline(true);
+    const markOffline = (): void => setNetworkOnline(false);
+    window.addEventListener("online", markOnline);
+    window.addEventListener("offline", markOffline);
+    return () => {
+      window.removeEventListener("online", markOnline);
+      window.removeEventListener("offline", markOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const onPopState = (): void => setRoute(routeFromPath(location.pathname));
@@ -343,6 +358,13 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         // browser profiles retain their IndexedDB cache for offline use.
       }
       const visibleTasks = local?.tasks ?? taskList.tasks;
+      try {
+        await localStore.savePlanningPreferences(planningPreferences);
+      } catch {
+        setFormError(
+          "Planning preferences are current, but they could not be cached for offline use.",
+        );
+      }
       const subtaskEntries = await Promise.all(
         visibleTasks.map(
           async (task) => [task.id, await getSubtasks(task.id)] as const,
@@ -371,7 +393,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             }),
       });
     },
-    [synchronize],
+    [localStore, synchronize],
   );
 
   useEffect(() => {
@@ -399,16 +421,21 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       })
       .catch((error: unknown) => {
         if (!cancelled())
-          void cachedTaskState()
-            .then((cached) => {
-              if (
-                !cancelled() &&
-                (cached.tasks.length > 0 || cached.recovery.length > 0)
-              )
+          void Promise.all([
+            cachedTaskState(),
+            localStore.loadPlanningPreferences(),
+            localStore.clientIdentity(),
+          ])
+            .then(([cached, planningPreferences, identity]) => {
+              if (!cancelled() && identity !== undefined)
                 setState({
                   kind: "offline",
                   ...cached,
-                  message: "Working from this browser\u2019s durable task cache.",
+                  ...(planningPreferences === undefined
+                    ? {}
+                    : { planningPreferences }),
+                  message:
+                    "Working from this browser\u2019s durable task cache.",
                 });
               else if (!cancelled())
                 setState({ kind: "error", message: messageFor(error) });
@@ -421,7 +448,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     return () => {
       lifecycle.cancelled = true;
     };
-  }, [cachedTaskState, initialState, loadAuthenticated]);
+  }, [cachedTaskState, initialState, loadAuthenticated, localStore]);
 
   useEffect(() => {
     if (state.kind !== "authenticated") return;
@@ -604,6 +631,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         state.session.csrfToken,
       );
       const dayPlan = await getDayPlan();
+      await localStore.savePlanningPreferences(saved);
       setState((current) =>
         current.kind === "authenticated"
           ? { ...current, planningPreferences: saved, dayPlan }
@@ -839,15 +867,18 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const changeTaskStatus = async (
     task: Task,
     action: "complete" | "reopen",
-  ): Promise<void> => {
-    if (state.kind !== "authenticated" && state.kind !== "offline") return;
+  ): Promise<boolean> => {
+    if (state.kind !== "authenticated" && state.kind !== "offline")
+      return false;
     setBusy(true);
     setFormError(null);
     try {
       await localStore.queueTaskStatus(task.id, action === "complete");
       await syncAfterLocalMutation();
+      return true;
     } catch (error: unknown) {
       handleTaskError(error);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1093,9 +1124,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
       replaceTask(result.task);
       const window = plannerWindow();
-      const planner = await getPlanner(window.from, window.to);
+      const [planner, dayPlan] = await Promise.all([
+        getPlanner(window.from, window.to),
+        getDayPlan(),
+        syncAfterLocalMutation(),
+      ]);
       setState((current) =>
-        current.kind === "authenticated" ? { ...current, planner } : current,
+        current.kind === "authenticated"
+          ? { ...current, planner, dayPlan }
+          : current,
       );
     } catch (error: unknown) {
       handleTaskError(error);
@@ -1116,9 +1153,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
       replaceTask(result.task);
       const window = plannerWindow();
-      const planner = await getPlanner(window.from, window.to);
+      const [planner, dayPlan] = await Promise.all([
+        getPlanner(window.from, window.to),
+        getDayPlan(),
+        syncAfterLocalMutation(),
+      ]);
       setState((current) =>
-        current.kind === "authenticated" ? { ...current, planner } : current,
+        current.kind === "authenticated"
+          ? { ...current, planner, dayPlan }
+          : current,
       );
     } catch (error: unknown) {
       handleTaskError(error);
@@ -1532,116 +1575,439 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   };
 
   /* ── Render ─────────────────────────────────────────────────── */
+  const offlineState = state.kind === "offline" ? state : undefined;
+  const shouldRenderOffline = (): boolean => offlineState !== undefined;
+  const offlineForRender = (): Extract<
+    AppState,
+    { readonly kind: "offline" }
+  > => {
+    if (offlineState === undefined)
+      throw new Error("Offline state is unavailable");
+    return offlineState;
+  };
+  if (shouldRenderOffline()) {
+    const renderedOfflineState = offlineForRender();
+    return (
+      <main className="main">
+        <TodayPage
+          dayPlan={undefined}
+          planningPreferences={renderedOfflineState.planningPreferences}
+          tasks={renderedOfflineState.tasks}
+          activeSession={null}
+          clientId={null}
+          syncStatus="offline"
+          planner={null}
+          baikalCalendars={[]}
+          calendarActionsAvailable={false}
+          focusActionsAvailable={false}
+          busy={busy}
+          onFocusCommand={() => undefined}
+          onSubmitTask={submitTask}
+          onChangeTaskStatus={changeTaskStatus}
+          onSubmitTimeBlock={submitTimeBlock}
+          onRemoveTimeBlock={removeTimeBlock}
+          onViewTasks={() => navigate("tasks")}
+        />
+        <section aria-label="Offline sync status">
+          <p>Visible sync conflicts: {renderedOfflineState.conflictCount}</p>
+          {formError !== null ? (
+            <p className="message message-error">{formError}</p>
+          ) : null}
+          <button
+            className="btn-ghost"
+            type="button"
+            disabled={busy}
+            onClick={() => void syncNow()}
+          >
+            Sync now
+          </button>
+          <button
+            className="btn-ghost"
+            type="button"
+            onClick={() => void exportDiagnostics()}
+          >
+            Export redacted sync diagnostics
+          </button>
+        </section>
+      </main>
+    );
+  }
   const isAuth =
     state.kind === "loading" ||
     state.kind === "error" ||
     state.kind === "setup" ||
     state.kind === "login" ||
     state.kind === "offline" ||
-    (state.kind === "authenticated" && !state.baikal.connected);
+    !state.baikal.connected;
 
   const auth = isAuth;
-  if (auth) return (
-    <div className="auth-centre">
-      <div className="auth-card">
-        {state.kind === "loading" && (
-          <div style={{ textAlign: "center" }}>
-            <div className="status-dot online" style={{ width: 8, height: 8, margin: "0 auto 0.75rem" }} />
-            <p className="muted">Opening your suite...</p>
-          </div>
-        )}
-        {state.kind === "error" && (
-          <div>
-            <p className="step">Connection problem</p>
-            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "0.5rem" }}>Unable to reach the Suite</h2>
-            <p style={{ fontSize: "var(--text-sm)", color: "var(--color-text-secondary)", marginBottom: "1rem" }}>{state.message}</p>
-            <button className="btn-primary" onClick={() => location.reload()}>Retry</button>
-          </div>
-        )}
-        {state.kind === "setup" && (
-          <form onSubmit={(event) => void submitSetup(event)}>
-            <p className="step">Step 1 of 2</p>
-            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "1rem" }}>Create the owner account</h2>
-            <p className="muted" style={{ marginBottom: "1rem" }}>This first release supports one owner. The identity remains explicit so future data is always ownership-scoped.</p>
-            <Field label="Display name" name="displayName" autoComplete="name" />
-            <Field label="Username" name="username" autoComplete="username" minLength={3} />
-            <Field label="Password" name="password" type="password" autoComplete="new-password" minLength={14} />
-            <p className="hint" style={{ marginBottom: "0.75rem" }}>Use at least 14 characters. A memorable passphrase works well.</p>
-            {formError !== null && <p className="message message-error" style={{ marginBottom: "0.75rem" }}>{formError}</p>}
-            <button className="btn-primary" disabled={busy} style={{ width: "100%" }}>{busy ? "Creating..." : "Create owner"}</button>
-          </form>
-        )}
-        {state.kind === "login" && (
-          <form onSubmit={(event) => void submitLogin(event)}>
-            <p className="step">Welcome back</p>
-            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "1rem" }}>Sign in</h2>
-            {state.message !== undefined && (<p className="message message-success" style={{ marginBottom: "0.75rem" }}>{state.message}</p>)}
-            <Field label="Username" name="username" autoComplete="username" {...(state.username === undefined ? {} : { defaultValue: state.username })} />
-            <Field label="Password" name="password" type="password" autoComplete="current-password" />
-            {state.username !== undefined && (<p className="message message-error" style={{ marginTop: "0.5rem" }}>Session expired. Please sign in again.</p>)}
-            {formError !== null && <p className="message message-error" style={{ marginTop: "0.5rem" }}>{formError}</p>}
-            <button className="btn-primary" disabled={busy} style={{ width: "100%", marginTop: "0.75rem" }}>{busy ? "Signing in..." : "Sign in"}</button>
-          </form>
-        )}
-        {state.kind === "offline" && (
-          <div>
-            <p className="step">Offline</p>
-            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "0.5rem" }}>Limited workspace</h2>
-            <p className="muted">{state.message}</p>
-            {formError !== null && <p className="message message-error" style={{ marginTop: "0.5rem" }}>{formError}</p>}
-            <nav style={{ display: "flex", gap: "0.25rem", marginTop: "1rem", marginBottom: "1rem" }}>
-              {workspaceRoutes.map((item) => (
-                <a key={item} href={`/${item}`} aria-current={route === item ? "page" : undefined} onClick={(event) => { event.preventDefault(); navigate(item); }}
-                  style={{ padding: "0.25rem 0.5rem", borderRadius: "var(--radius-sm)", fontSize: "var(--text-xs)", color: route === item ? "var(--color-accent)" : "var(--color-text-secondary)", background: route === item ? "var(--color-accent-muted)" : "transparent", textDecoration: "none" }}>
-                  {item === "reuse" ? "Reuse" : item.charAt(0).toUpperCase() + item.slice(1)}
-                </a>
-              ))}
-            </nav>
-            <div>
-              <form style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }} onSubmit={(event) => void submitTask(event)}>
-                <input type="text" name="title" required placeholder="Capture a task..." aria-label="Task title" />
-                <input type="text" name="notes" placeholder="Notes (optional)" aria-label="Task notes" />
-                <button className="btn-primary" type="submit" disabled={busy}>Add</button>
-              </form>
-              <ul className="tasks" role="list">
-                {state.tasks.map((task) => (
-                  <li key={task.id} className={task.status === "completed" ? "task--completed" : undefined}>
-                    <div className="task-heading"><span>{task.title}</span><span className="mono">{task.revision}</span></div>
-                    {task.notes !== "" && <p>{task.notes}</p>}
-                    <div className="task-actions">
-                      <button className="btn-ghost" type="button" onClick={() => void changeTaskStatus(task, task.status === "completed" ? "reopen" : "complete")}>{task.status === "completed" ? "Reopen" : "Complete"}</button>
-                      <button className="btn-danger" type="button" onClick={() => void removeTask(task)}>Delete</button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <details className="recovery" style={{ marginTop: "0.5rem" }}>
-                <summary>Deleted tasks ({state.recovery.length})</summary>
-                {state.recovery.map((task) => (
-                  <button key={task.id} type="button" onClick={() => void recoverTask(task)}>Restore {task.title}</button>
-                ))}
-              </details>
-              <p className="hint" style={{ marginTop: "0.5rem" }}>Visible sync conflicts: {state.conflictCount}</p>
-              <button className="btn-ghost" type="button" disabled={busy} onClick={() => void syncNow()}>Sync now</button>
-              <button className="btn-ghost" type="button" onClick={() => void exportDiagnostics()}>Export redacted sync diagnostics</button>
+  if (auth)
+    return (
+      <div className="auth-centre">
+        <div className="auth-card">
+          {state.kind === "loading" && (
+            <div style={{ textAlign: "center" }}>
+              <div
+                className="status-dot online"
+                style={{ width: 8, height: 8, margin: "0 auto 0.75rem" }}
+              />
+              <p className="muted">Opening your suite...</p>
             </div>
-          </div>
-        )}
-        {state.kind === "authenticated" && !state.baikal.connected && (
-          <form onSubmit={(event) => void submitBaikal(event)}>
-            <p className="step">Step 2 of 2</p>
-            <h2 style={{ fontSize: "var(--text-xl)", fontWeight: 600, marginBottom: "1rem" }}>Connect Baikal</h2>
-            <p className="muted" style={{ marginBottom: "0.75rem" }}>Enter the Baikal user you created. The Suite verifies it through CalDAV before storing an encrypted credential.</p>
-            <p className="hint" style={{ marginBottom: "0.75rem", fontFamily: "var(--font-mono)" }}>Bundled Baikal \u00b7 server-managed CalDAV</p>
-            <Field label="Baikal username" name="username" autoComplete="username" />
-            <Field label="Baikal password" name="password" type="password" autoComplete="current-password" />
-            {formError !== null && <p className="message message-error" style={{ marginTop: "0.5rem" }}>{formError}</p>}
-            <button className="btn-primary" disabled={busy} style={{ width: "100%", marginTop: "0.75rem" }}>{busy ? "Verifying..." : "Verify and connect"}</button>
-          </form>
-        )}
+          )}
+          {state.kind === "error" && (
+            <div>
+              <p className="step">Connection problem</p>
+              <h2
+                style={{
+                  fontSize: "var(--text-xl)",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
+                Unable to reach the Suite
+              </h2>
+              <p
+                style={{
+                  fontSize: "var(--text-sm)",
+                  color: "var(--color-text-secondary)",
+                  marginBottom: "1rem",
+                }}
+              >
+                {state.message}
+              </p>
+              <button className="btn-primary" onClick={() => location.reload()}>
+                Retry
+              </button>
+            </div>
+          )}
+          {state.kind === "setup" && (
+            <form onSubmit={(event) => void submitSetup(event)}>
+              <p className="step">Step 1 of 2</p>
+              <h2
+                style={{
+                  fontSize: "var(--text-xl)",
+                  fontWeight: 600,
+                  marginBottom: "1rem",
+                }}
+              >
+                Create the owner account
+              </h2>
+              <p className="muted" style={{ marginBottom: "1rem" }}>
+                This first release supports one owner. The identity remains
+                explicit so future data is always ownership-scoped.
+              </p>
+              <Field
+                label="Display name"
+                name="displayName"
+                autoComplete="name"
+              />
+              <Field
+                label="Username"
+                name="username"
+                autoComplete="username"
+                minLength={3}
+              />
+              <Field
+                label="Password"
+                name="password"
+                type="password"
+                autoComplete="new-password"
+                minLength={14}
+              />
+              <p className="hint" style={{ marginBottom: "0.75rem" }}>
+                Use at least 14 characters. A memorable passphrase works well.
+              </p>
+              {formError !== null && (
+                <p
+                  className="message message-error"
+                  style={{ marginBottom: "0.75rem" }}
+                >
+                  {formError}
+                </p>
+              )}
+              <button
+                className="btn-primary"
+                disabled={busy}
+                style={{ width: "100%" }}
+              >
+                {busy ? "Creating..." : "Create owner"}
+              </button>
+            </form>
+          )}
+          {state.kind === "login" && (
+            <form onSubmit={(event) => void submitLogin(event)}>
+              <p className="step">Welcome back</p>
+              <h2
+                style={{
+                  fontSize: "var(--text-xl)",
+                  fontWeight: 600,
+                  marginBottom: "1rem",
+                }}
+              >
+                Sign in
+              </h2>
+              {state.message !== undefined && (
+                <p
+                  className="message message-success"
+                  style={{ marginBottom: "0.75rem" }}
+                >
+                  {state.message}
+                </p>
+              )}
+              <Field
+                label="Username"
+                name="username"
+                autoComplete="username"
+                {...(state.username === undefined
+                  ? {}
+                  : { defaultValue: state.username })}
+              />
+              <Field
+                label="Password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+              />
+              {state.username !== undefined && (
+                <p
+                  className="message message-error"
+                  style={{ marginTop: "0.5rem" }}
+                >
+                  Session expired. Please sign in again.
+                </p>
+              )}
+              {formError !== null && (
+                <p
+                  className="message message-error"
+                  style={{ marginTop: "0.5rem" }}
+                >
+                  {formError}
+                </p>
+              )}
+              <button
+                className="btn-primary"
+                disabled={busy}
+                style={{ width: "100%", marginTop: "0.75rem" }}
+              >
+                {busy ? "Signing in..." : "Sign in"}
+              </button>
+            </form>
+          )}
+          {state.kind === "offline" && (
+            <div>
+              <p className="step">Offline</p>
+              <h2
+                style={{
+                  fontSize: "var(--text-xl)",
+                  fontWeight: 600,
+                  marginBottom: "0.5rem",
+                }}
+              >
+                Limited workspace
+              </h2>
+              <p className="muted">{state.message}</p>
+              {formError !== null && (
+                <p
+                  className="message message-error"
+                  style={{ marginTop: "0.5rem" }}
+                >
+                  {formError}
+                </p>
+              )}
+              <nav
+                style={{
+                  display: "flex",
+                  gap: "0.25rem",
+                  marginTop: "1rem",
+                  marginBottom: "1rem",
+                }}
+              >
+                {workspaceRoutes.map((item) => (
+                  <a
+                    key={item}
+                    href={`/${item}`}
+                    aria-current={route === item ? "page" : undefined}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      navigate(item);
+                    }}
+                    style={{
+                      padding: "0.25rem 0.5rem",
+                      borderRadius: "var(--radius-sm)",
+                      fontSize: "var(--text-xs)",
+                      color:
+                        route === item
+                          ? "var(--color-accent)"
+                          : "var(--color-text-secondary)",
+                      background:
+                        route === item
+                          ? "var(--color-accent-muted)"
+                          : "transparent",
+                      textDecoration: "none",
+                    }}
+                  >
+                    {item === "reuse"
+                      ? "Reuse"
+                      : item.charAt(0).toUpperCase() + item.slice(1)}
+                  </a>
+                ))}
+              </nav>
+              <div>
+                <form
+                  style={{
+                    display: "flex",
+                    gap: "0.5rem",
+                    marginBottom: "0.75rem",
+                  }}
+                  onSubmit={(event) => void submitTask(event)}
+                >
+                  <input
+                    type="text"
+                    name="title"
+                    required
+                    placeholder="Capture a task..."
+                    aria-label="Task title"
+                  />
+                  <input
+                    type="text"
+                    name="notes"
+                    placeholder="Notes (optional)"
+                    aria-label="Task notes"
+                  />
+                  <button className="btn-primary" type="submit" disabled={busy}>
+                    Add
+                  </button>
+                </form>
+                <ul className="tasks" role="list">
+                  {state.tasks.map((task) => (
+                    <li
+                      key={task.id}
+                      className={
+                        task.status === "completed"
+                          ? "task--completed"
+                          : undefined
+                      }
+                    >
+                      <div className="task-heading">
+                        <span>{task.title}</span>
+                        <span className="mono">{task.revision}</span>
+                      </div>
+                      {task.notes !== "" && <p>{task.notes}</p>}
+                      <div className="task-actions">
+                        <button
+                          className="btn-ghost"
+                          type="button"
+                          onClick={() =>
+                            void changeTaskStatus(
+                              task,
+                              task.status === "completed"
+                                ? "reopen"
+                                : "complete",
+                            )
+                          }
+                        >
+                          {task.status === "completed" ? "Reopen" : "Complete"}
+                        </button>
+                        <button
+                          className="btn-danger"
+                          type="button"
+                          onClick={() => void removeTask(task)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <details className="recovery" style={{ marginTop: "0.5rem" }}>
+                  <summary>Deleted tasks ({state.recovery.length})</summary>
+                  {state.recovery.map((task) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => void recoverTask(task)}
+                    >
+                      Restore {task.title}
+                    </button>
+                  ))}
+                </details>
+                <p className="hint" style={{ marginTop: "0.5rem" }}>
+                  Visible sync conflicts: {state.conflictCount}
+                </p>
+                <button
+                  className="btn-ghost"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void syncNow()}
+                >
+                  Sync now
+                </button>
+                <button
+                  className="btn-ghost"
+                  type="button"
+                  onClick={() => void exportDiagnostics()}
+                >
+                  Export redacted sync diagnostics
+                </button>
+              </div>
+            </div>
+          )}
+          {state.kind === "authenticated" && !state.baikal.connected && (
+            <form onSubmit={(event) => void submitBaikal(event)}>
+              <p className="step">Step 2 of 2</p>
+              <h2
+                style={{
+                  fontSize: "var(--text-xl)",
+                  fontWeight: 600,
+                  marginBottom: "1rem",
+                }}
+              >
+                Connect Baikal
+              </h2>
+              <p className="muted" style={{ marginBottom: "0.75rem" }}>
+                Enter the Baikal user you created. The Suite verifies it through
+                CalDAV before storing an encrypted credential.
+              </p>
+              <p
+                className="hint"
+                style={{
+                  marginBottom: "0.75rem",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                Bundled Baikal \u00b7 server-managed CalDAV
+              </p>
+              <Field
+                label="Baikal username"
+                name="username"
+                autoComplete="username"
+              />
+              <Field
+                label="Baikal password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+              />
+              {formError !== null && (
+                <p
+                  className="message message-error"
+                  style={{ marginTop: "0.5rem" }}
+                >
+                  {formError}
+                </p>
+              )}
+              <button
+                className="btn-primary"
+                disabled={busy}
+                style={{ width: "100%", marginTop: "0.75rem" }}
+              >
+                {busy ? "Verifying..." : "Verify and connect"}
+              </button>
+            </form>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
 
   /* ── Workspace ── */
   return (
@@ -1663,15 +2029,27 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               }}
             >
               <span className="nav-icon">
-                {item === "today" ? "\u2600" : item === "tasks" ? "\u2261" : item === "reuse" ? "\u21BB" : item === "connections" ? "\u26A1" : "\u2699"}
+                {item === "today"
+                  ? "\u2600"
+                  : item === "tasks"
+                    ? "\u2261"
+                    : item === "reuse"
+                      ? "\u21BB"
+                      : item === "connections"
+                        ? "\u26A1"
+                        : "\u2699"}
               </span>
-              {item === "reuse" ? "Reuse" : item.charAt(0).toUpperCase() + item.slice(1)}
+              {item === "reuse"
+                ? "Reuse"
+                : item.charAt(0).toUpperCase() + item.slice(1)}
             </a>
           ))}
         </nav>
         <div className="sidebar-status">
           <div className="status-row">
-            <span className={`status-dot ${state.syncStatus === "online" ? "online" : state.syncStatus === "syncing" ? "online" : "offline"}`} />
+            <span
+              className={`status-dot ${state.syncStatus === "online" ? "online" : state.syncStatus === "syncing" ? "online" : "offline"}`}
+            />
             Task sync: {state.syncStatus ?? "offline"}
           </div>
           {state.conflictCount !== undefined && state.conflictCount > 0 && (
@@ -1688,13 +2066,27 @@ export const App = ({ initialState, initialPath }: AppProps) => {
 
       <header className="topbar">
         <span className="topbar-breadcrumb">
-          {route === "reuse" ? "Reuse" : route.charAt(0).toUpperCase() + route.slice(1)}
+          {route === "reuse"
+            ? "Reuse"
+            : route.charAt(0).toUpperCase() + route.slice(1)}
         </span>
         <div className="topbar-actions">
           {formError !== null && (
-            <span className="message message-error" style={{ padding: "0.25rem 0.5rem", fontSize: "var(--text-xs)" }}>{formError}</span>
+            <span
+              className="message message-error"
+              style={{ padding: "0.25rem 0.5rem", fontSize: "var(--text-xs)" }}
+            >
+              {formError}
+            </span>
           )}
-          <button className="btn-ghost" type="button" onClick={() => void signOut()} style={{ fontSize: "var(--text-xs)" }}>Sign out</button>
+          <button
+            className="btn-ghost"
+            type="button"
+            onClick={() => void signOut()}
+            style={{ fontSize: "var(--text-xs)" }}
+          >
+            Sign out
+          </button>
         </div>
       </header>
 
@@ -1702,14 +2094,22 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         {route === "today" && (
           <TodayPage
             dayPlan={state.dayPlan}
+            planningPreferences={state.planningPreferences}
             tasks={state.tasks}
             activeSession={state.activeSession ?? null}
             clientId={state.client?.clientId ?? null}
             syncStatus={state.syncStatus}
             planner={state.planner}
+            baikalCalendars={state.baikal.calendars}
+            calendarActionsAvailable={networkOnline}
+            focusActionsAvailable={networkOnline && state.client !== undefined}
             busy={busy}
             onFocusCommand={(command) => void handleFocusCommand(command)}
             onSubmitTask={submitTask}
+            onChangeTaskStatus={changeTaskStatus}
+            onSubmitTimeBlock={submitTimeBlock}
+            onRemoveTimeBlock={removeTimeBlock}
+            onViewTasks={() => navigate("tasks")}
           />
         )}
         {route === "tasks" && (
@@ -1727,6 +2127,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             taskProjectFilter={taskProjectFilter}
             taskTagFilter={taskTagFilter}
             busy={busy}
+            calendarActionsAvailable={networkOnline}
             onTaskQueryChange={setTaskQuery}
             onTaskStatusFilterChange={setTaskStatusFilter}
             onTaskProjectFilterChange={setTaskProjectFilter}
@@ -1755,8 +2156,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             planningPlaceholders={planningPlaceholders}
             templatePoolSlots={templatePoolSlots}
             tasks={state.tasks}
-            projects={projects.filter((project) => project.archivedAt === null).map(({ id, title }) => ({ id, title }))}
-            tags={tags.filter((tag) => tag.archivedAt === null).map(({ id, displayName }) => ({ id, displayName }))}
+            projects={projects
+              .filter((project) => project.archivedAt === null)
+              .map(({ id, title }) => ({ id, title }))}
+            tags={tags
+              .filter((tag) => tag.archivedAt === null)
+              .map(({ id, displayName }) => ({ id, displayName }))}
             busy={busy}
             onCreateTemplate={submitTemplateCreate}
             onSearchTemplates={(query) => void refreshTemplateLibrary(query)}

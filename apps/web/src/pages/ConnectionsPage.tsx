@@ -18,8 +18,7 @@ export interface ConnectionsPageProps {
   readonly onSyncGoogle: (() => Promise<void>) | undefined;
   readonly onDisconnectGoogle: (() => Promise<void>) | undefined;
   readonly onSavePlanningPreferences:
-    | ((preferences: PlanningPreferences) => Promise<void>)
-    | undefined;
+    ((preferences: PlanningPreferences) => Promise<void>) | undefined;
 }
 
 export const ConnectionsPage = ({
@@ -58,9 +57,7 @@ export const ConnectionsPage = ({
       <section aria-labelledby="connections-calendars-title">
         <h3 id="connections-calendars-title">Discovered calendars</h3>
         {baikal.calendars.length === 0 ? (
-          <p className="muted">
-            No calendar collections were returned.
-          </p>
+          <p className="muted">No calendar collections were returned.</p>
         ) : (
           <ul className="calendars">
             {baikal.calendars.map((calendar) => (
@@ -78,14 +75,11 @@ export const ConnectionsPage = ({
             ))}
           </ul>
         )}
-        <CalendarMigration
-          calendars={baikal.calendars}
-          csrfToken={csrfToken}
-        />
+        <CalendarMigration calendars={baikal.calendars} csrfToken={csrfToken} />
         <p className="boundary-note">
-          Calendar reads and Suite-created time blocks are conditional
-          and bounded. Calendar and focus mutations remain online-only
-          and are never silently queued.
+          Calendar reads and Suite-created time blocks are conditional and
+          bounded. Calendar and focus mutations remain online-only and are never
+          silently queued.
         </p>
       </section>
     </>

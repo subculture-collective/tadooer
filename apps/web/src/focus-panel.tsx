@@ -25,6 +25,7 @@ export interface FocusPanelProps {
   readonly busy: boolean;
   readonly online: boolean;
   readonly onCommand: (command: FocusPanelCommand) => void;
+  readonly showStartForm?: boolean;
 }
 
 const startableTasks = (tasks: readonly Task[]): readonly Task[] =>
@@ -92,6 +93,7 @@ export const FocusPanel = ({
   busy,
   online,
   onCommand,
+  showStartForm = true,
 }: FocusPanelProps) => {
   const session = activeSession;
   const isTerminal = terminal(session);
@@ -112,12 +114,14 @@ export const FocusPanel = ({
         {!online ? (
           <p className="hint">Reconnect to start a focus session.</p>
         ) : null}
-        <StartSession
-          tasks={tasks}
-          busy={busy}
-          online={online}
-          onCommand={onCommand}
-        />
+        {showStartForm ? (
+          <StartSession
+            tasks={tasks}
+            busy={busy}
+            online={online}
+            onCommand={onCommand}
+          />
+        ) : null}
       </section>
     );
   }

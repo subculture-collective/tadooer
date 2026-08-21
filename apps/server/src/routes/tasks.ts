@@ -1,25 +1,41 @@
 import { randomUUID, createHash } from "node:crypto";
-import type { TaskListResponse, TaskMutationResponse, TaskTimeBlockMutationResponse } from "@suite/contracts";
-import { createTaskRequestSchema, taskPatchRequestSchema, createTaskTimeBlockRequestSchema, idempotencyKeySchema } from "@suite/contracts";
+import type {
+  TaskListResponse,
+  TaskMutationResponse,
+  TaskTimeBlockMutationResponse,
+} from "@suite/contracts";
+import {
+  createTaskRequestSchema,
+  taskPatchRequestSchema,
+  createTaskTimeBlockRequestSchema,
+  idempotencyKeySchema,
+} from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
-import { sendJson, sendError, readJson, sameOrigin, expectedRevision, sendConditionalTask } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  expectedRevision,
+  sendConditionalTask,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { taskResponse } from "./shared.ts";
 
-export const handleTasks: RouteHandler = async (request, response, url, ctx) => {
-  const { stores: database, auth, config: _config, baikal: connector } = ctx;
+export const handleTasks: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
+  const { stores: database, auth, baikal: connector } = ctx;
   const method = request.method ?? "GET";
 
   if (method === "GET" && url.pathname === "/api/tasks") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const body: TaskListResponse = {
@@ -41,12 +57,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -55,12 +66,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     const idempotencyKey = request.headers["idempotency-key"];
@@ -74,9 +80,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
       );
       return true;
     }
-    const parsed = createTaskRequestSchema.safeParse(
-      await readJson(request),
-    );
+    const parsed = createTaskRequestSchema.safeParse(await readJson(request));
     if (!parsed.success) {
       sendError(response, 400, "INVALID_TASK", "Task input is invalid");
       return true;
@@ -126,18 +130,11 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
   if (method === "GET" && url.pathname === "/api/tasks/recovery") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const body: TaskListResponse = {
-      tasks: database
-        .listDeletedTasks(session.owner.id)
-        .map(taskResponse),
+      tasks: database.listDeletedTasks(session.owner.id).map(taskResponse),
     };
     sendJson(response, 200, body);
     return true;
@@ -147,10 +144,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
     /^\/api\/tasks\/([0-9a-f-]{36})(?:\/(complete|reopen|restore|time-block))?$/.exec(
       url.pathname,
     );
-  if (
-    taskRoute !== null &&
-    ["PATCH", "POST", "DELETE"].includes(method)
-  ) {
+  if (taskRoute !== null && ["PATCH", "POST", "DELETE"].includes(method)) {
     if (!sameOrigin(request)) {
       sendError(
         response,
@@ -162,12 +156,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -176,12 +165,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     const revision = expectedRevision(request, response);
@@ -190,9 +174,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
     const action = taskRoute[2];
 
     if (method === "PATCH" && action === undefined) {
-      const parsed = taskPatchRequestSchema.safeParse(
-        await readJson(request),
-      );
+      const parsed = taskPatchRequestSchema.safeParse(await readJson(request));
       if (!parsed.success) {
         sendError(response, 400, "INVALID_TASK", "Task input is invalid");
         return true;
@@ -223,10 +205,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
       return true;
     }
 
-    if (
-      method === "POST" &&
-      (action === "complete" || action === "reopen")
-    ) {
+    if (method === "POST" && (action === "complete" || action === "reopen")) {
       sendConditionalTask(
         response,
         database.setTaskCompleted(
@@ -252,8 +231,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         return true;
       }
       if (
-        database.getTaskCalendarBlock(session.owner.id, taskId) !==
-        undefined
+        database.getTaskCalendarBlock(session.owner.id, taskId) !== undefined
       ) {
         sendError(
           response,
@@ -290,10 +268,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         );
         return true;
       }
-      const block = database.getTaskCalendarBlock(
-        session.owner.id,
-        taskId,
-      );
+      const block = database.getTaskCalendarBlock(session.owner.id, taskId);
       if (block === undefined) {
         sendError(
           response,
@@ -320,8 +295,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         if (conflict) {
           sendJson(response, 409, {
             code: "CALENDAR_EVENT_CONFLICT",
-            message:
-              "The calendar event changed; refresh before removing it",
+            message: "The calendar event changed; refresh before removing it",
             requestId: randomUUID(),
             action: "refresh_and_replan",
             mappingId: block.id,
@@ -427,16 +401,10 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         input.data.calendarId,
       );
       if (calendar?.supportsEvents !== true) {
-        sendError(
-          response,
-          404,
-          "CALENDAR_NOT_FOUND",
-          "Calendar not found",
-        );
+        sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
         return true;
       }
-      const uid =
-        existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;
+      const uid = existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;
       const href =
         existingBlock?.eventHref ??
         `${calendar.href.replace(/\/$/, "")}/${randomUUID()}.ics`;
@@ -484,12 +452,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         return true;
       }
       if (reservation.kind === "calendar-not-found") {
-        sendError(
-          response,
-          404,
-          "CALENDAR_NOT_FOUND",
-          "Calendar not found",
-        );
+        sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
         return true;
       }
       if (
@@ -497,10 +460,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
         reservation.operation.state === "completed"
       ) {
         const task = database.getTask(session.owner.id, taskId);
-        const block = database.getTaskCalendarBlock(
-          session.owner.id,
-          taskId,
-        );
+        const block = database.getTaskCalendarBlock(session.owner.id, taskId);
         if (block === undefined) {
           sendError(
             response,
@@ -612,8 +572,7 @@ export const handleTasks: RouteHandler = async (request, response, url, ctx) => 
           );
           sendJson(response, 409, {
             code: "CALENDAR_EVENT_CONFLICT",
-            message:
-              "The calendar event changed; refresh before replanning",
+            message: "The calendar event changed; refresh before replanning",
             requestId: randomUUID(),
             action: "refresh_and_replan",
             mappingId: existingBlock?.id ?? null,

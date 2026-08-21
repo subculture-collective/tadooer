@@ -43,11 +43,7 @@ export class SqliteAutomationTokenStore implements AutomationTokenStore {
     return row === undefined ? undefined : this.#automationTokenFromRow(row);
   }
 
-  deleteToken(
-    ownerId: string,
-    tokenId: string,
-    now: string,
-  ): boolean {
+  deleteToken(ownerId: string, tokenId: string, now: string): boolean {
     return (
       this.db
         .prepare(

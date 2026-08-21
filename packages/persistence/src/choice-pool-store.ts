@@ -22,18 +22,14 @@ export class SqliteChoicePoolStore implements ChoicePoolStore {
   // createChoicePool
   // -----------------------------------------------------------------------
 
-  createChoicePool(
-    pool: ChoicePoolRecord,
-  ): ChoicePoolRecord {
+  createChoicePool(pool: ChoicePoolRecord): ChoicePoolRecord {
     // Note: The original method accepted items separately, but the store
     // interface has items embedded in the record. We use a compatible
     // parameter but here items come in via the update path.
     // This follows the pattern where items are managed via updateChoicePool.
     this.db.exec("BEGIN IMMEDIATE;");
     try {
-      if (
-        pool.policy === "cooldown" && pool.cooldownSeconds === null
-      )
+      if (pool.policy === "cooldown" && pool.cooldownSeconds === null)
         throw new Error(
           "Choice pool with cooldown policy must specify cooldownSeconds",
         );
@@ -119,17 +115,17 @@ export class SqliteChoicePoolStore implements ChoicePoolStore {
       readonly policy: ChoicePoolRecord["policy"];
       readonly pickCount: number;
       readonly cooldownSeconds: number | null;
-      readonly items: readonly { readonly id?: string; readonly title: string }[];
+      readonly items: readonly {
+        readonly id?: string;
+        readonly title: string;
+      }[];
     },
     now: string,
   ): ChoicePoolRecord | undefined {
     this.db.exec("BEGIN IMMEDIATE;");
     try {
       const current = this.getChoicePool(ownerId, poolId);
-      if (
-        current === undefined ||
-        patch.items.length < patch.pickCount
-      ) {
+      if (current === undefined || patch.items.length < patch.pickCount) {
         this.db.exec("COMMIT;");
         return undefined;
       }
@@ -159,31 +155,17 @@ export class SqliteChoicePoolStore implements ChoicePoolStore {
             : existingById.get(candidate.id)) ??
           existingByTitle.get(candidate.title.toLocaleLowerCase());
         if (matched === undefined)
-          insert.run(
-            randomUUID(),
-            poolId,
-            candidate.title,
-            position,
-            now,
-            now,
-          );
+          insert.run(randomUUID(), poolId, candidate.title, position, now, now);
         else {
           retained.add(matched.id);
-          update.run(
-            candidate.title,
-            position,
-            now,
-            matched.id,
-            poolId,
-          );
+          update.run(candidate.title, position, now, matched.id, poolId);
         }
       }
       const archive = this.db.prepare(
         "UPDATE choice_pool_items SET archived_at=?,updated_at=?,revision=revision+1 WHERE id=? AND pool_id=? AND archived_at IS NULL",
       );
       for (const item of existing)
-        if (!retained.has(item.id))
-          archive.run(now, now, item.id, poolId);
+        if (!retained.has(item.id)) archive.run(now, now, item.id, poolId);
       this.db
         .prepare(
           "UPDATE choice_pools SET title=?,policy=?,pick_count=?,cooldown_seconds=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=?",
@@ -217,9 +199,7 @@ export class SqliteChoicePoolStore implements ChoicePoolStore {
   // createChoicePoolItem
   // -----------------------------------------------------------------------
 
-  createChoicePoolItem(
-    record: ChoicePoolItemRecord,
-  ): void {
+  createChoicePoolItem(record: ChoicePoolItemRecord): void {
     this.db
       .prepare(
         "INSERT INTO choice_pool_items (id,pool_id,title,position,revision,created_at,updated_at,archived_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -874,17 +854,15 @@ export class SqliteChoicePoolStore implements ChoicePoolStore {
     };
   }
 
-  #getTask(
-    ownerId: string,
-    taskId: string,
-  ): TaskRecord | undefined {
+  #getTask(ownerId: string, taskId: string): TaskRecord | undefined {
     const row = this.db
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
                 completed_at, deleted_at, planned_start, estimate_minutes
          FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL`,
       )
-      .get(ownerId, taskId) as unknown as Record<string, string | number | null> | undefined;
+      .get(ownerId, taskId) as unknown as
+      Record<string, string | number | null> | undefined;
     if (row === undefined) return undefined;
     const task: TaskRecord = {
       id: String(row.id),
@@ -897,8 +875,10 @@ export class SqliteChoicePoolStore implements ChoicePoolStore {
       updatedAt: String(row.updated_at),
       completedAt: row.completed_at === null ? null : String(row.completed_at),
       deletedAt: row.deleted_at === null ? null : String(row.deleted_at),
-      plannedStart: row.planned_start === null ? null : String(row.planned_start),
-      estimateMinutes: row.estimate_minutes === null ? null : Number(row.estimate_minutes),
+      plannedStart:
+        row.planned_start === null ? null : String(row.planned_start),
+      estimateMinutes:
+        row.estimate_minutes === null ? null : Number(row.estimate_minutes),
     };
     const project = this.db
       .prepare("SELECT project_id FROM tasks WHERE owner_id = ? AND id = ?")

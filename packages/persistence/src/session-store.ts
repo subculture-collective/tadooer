@@ -5,9 +5,7 @@ import type { SessionStore } from "./stores.js";
 export class SqliteSessionStore implements SessionStore {
   constructor(private readonly db: DatabaseSync) {}
 
-  insertSession(
-    session: SessionRecord & { readonly issuedAt: string },
-  ): void {
+  insertSession(session: SessionRecord & { readonly issuedAt: string }): void {
     this.db
       .prepare(
         `INSERT INTO web_sessions

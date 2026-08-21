@@ -69,10 +69,7 @@ export class SqliteCalendarProjectionStore implements CalendarProjectionStore {
     this.db.exec("BEGIN IMMEDIATE;");
     try {
       for (const record of records) {
-        const event = record as Omit<
-          CalendarEventProjectionRecord,
-          "ownerId"
-        >;
+        const event = record as Omit<CalendarEventProjectionRecord, "ownerId">;
         this.#putCalendarEvent(
           (record as unknown as { ownerId: string }).ownerId,
           event,
@@ -114,8 +111,7 @@ export class SqliteCalendarProjectionStore implements CalendarProjectionStore {
           `SELECT * FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL`,
         )
         .get(input.ownerId, input.taskId) as unknown as
-        | Record<string, string | number | null>
-        | undefined;
+        Record<string, string | number | null> | undefined;
       if (taskRow === undefined) {
         this.db.exec("COMMIT;");
         return { kind: "task-not-found" };
@@ -139,9 +135,7 @@ export class SqliteCalendarProjectionStore implements CalendarProjectionStore {
                 ? null
                 : String(taskRow.completed_at),
             deletedAt:
-              taskRow.deleted_at === null
-                ? null
-                : String(taskRow.deleted_at),
+              taskRow.deleted_at === null ? null : String(taskRow.deleted_at),
             plannedStart:
               taskRow.planned_start === null
                 ? null
@@ -230,9 +224,7 @@ export class SqliteCalendarProjectionStore implements CalendarProjectionStore {
 
   deleteTaskCalendarBlock(ownerId: string, blockId: string): void {
     this.db
-      .prepare(
-        "DELETE FROM task_calendar_blocks WHERE owner_id = ? AND id = ?",
-      )
+      .prepare("DELETE FROM task_calendar_blocks WHERE owner_id = ? AND id = ?")
       .run(ownerId, blockId);
   }
 

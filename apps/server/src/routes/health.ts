@@ -14,6 +14,7 @@ export const handleHealth: RouteHandler = async (
   url,
   ctx,
 ) => {
+  await Promise.resolve();
   const { stores: database, config, requestCounts } = ctx;
   const method = request.method ?? "GET";
   const timestamp = new Date().toISOString();

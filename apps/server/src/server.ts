@@ -4,7 +4,11 @@ import {
   type ServerResponse,
 } from "node:http";
 import { type AddressInfo } from "node:net";
-import { evaluateReminder, zonedDayWindow, type SessionClock } from "@suite/domain";
+import {
+  evaluateReminder,
+  zonedDayWindow,
+  type SessionClock,
+} from "@suite/domain";
 import { SuiteDatabase } from "@suite/persistence";
 import type { ServerConfig } from "./config.ts";
 import { AuthService } from "./auth.ts";

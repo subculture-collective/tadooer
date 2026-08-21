@@ -32,7 +32,11 @@ import type {
   ActiveSessionIntervalRecord,
   ActiveSessionEventRecord,
 } from "@suite/persistence";
-import { suggestChoicePool, type ActiveSession, type SessionClock } from "@suite/domain";
+import {
+  suggestChoicePool,
+  type ActiveSession,
+  type SessionClock,
+} from "@suite/domain";
 import type { AuthService } from "../auth.ts";
 import type { ServerConfig } from "../config.ts";
 import type { BaikalConnectorService, ConnectorFailure } from "../connector.ts";
@@ -194,8 +198,12 @@ export const templateSetResponse = (set: {
   readonly archivedAt: string | null;
 }): TemplateSet => ({ ...set });
 
-export const choicePoolResponse = (pool: ChoicePool): ChoicePool => ({ ...pool });
-export const choicePoolItemResponse = (item: ChoicePoolItem): ChoicePoolItem => ({
+export const choicePoolResponse = (pool: ChoicePool): ChoicePool => ({
+  ...pool,
+});
+export const choicePoolItemResponse = (
+  item: ChoicePoolItem,
+): ChoicePoolItem => ({
   ...item,
 });
 export const choicePoolHistoryResponse = (
@@ -411,12 +419,7 @@ export const activeFromPersistence = (
     startedAt: interval.startedAt,
     endedAt: interval.endedAt,
     closedBy: interval.closedBy as
-      | "pause"
-      | "break"
-      | "complete"
-      | "takeover"
-      | "expiry"
-      | null,
+      "pause" | "break" | "complete" | "takeover" | "expiry" | null,
   })),
   events: events.map((event) => ({
     revision: event.revision,

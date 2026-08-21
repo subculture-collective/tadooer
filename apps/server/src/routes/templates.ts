@@ -8,7 +8,13 @@ import {
   idempotencyKeySchema,
   templateSearchRequestSchema,
 } from "@suite/contracts";
-import { sendJson, sendError, readJson, sameOrigin, expectedRevision } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  expectedRevision,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import {
   templateResponse,
@@ -17,7 +23,12 @@ import {
   templateInstantiationResponse,
 } from "./shared.ts";
 
-export const handleTemplates: RouteHandler = async (request, response, url, ctx) => {
+export const handleTemplates: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
   const { stores: database, auth } = ctx;
   const method = request.method ?? "GET";
 
@@ -59,8 +70,7 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
   if (method === "GET" && url.pathname === "/api/templates") {
     const search = templateSearchRequestSchema.safeParse({
       query: url.searchParams.get("query") ?? "",
-      includeArchived:
-        url.searchParams.get("includeArchived") === "true",
+      includeArchived: url.searchParams.get("includeArchived") === "true",
     });
     if (!search.success) {
       sendError(
@@ -145,8 +155,9 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
 
   // ── POST /api/templates/from-task/:id ─────────────────────────────────
 
-  const fromTask =
-    /^\/api\/templates\/from-task\/([0-9a-f-]{36})$/.exec(url.pathname);
+  const fromTask = /^\/api\/templates\/from-task\/([0-9a-f-]{36})$/.exec(
+    url.pathname,
+  );
   if (method === "POST" && fromTask !== null) {
     const taskId = fromTask[1] ?? "";
     const parsed = createTaskTemplateFromTaskRequestSchema.safeParse(
@@ -205,8 +216,9 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
 
   // ── POST /api/templates/:id/archive ───────────────────────────────────
 
-  const templateArchive =
-    /^\/api\/templates\/([0-9a-f-]{36})\/archive$/.exec(url.pathname);
+  const templateArchive = /^\/api\/templates\/([0-9a-f-]{36})\/archive$/.exec(
+    url.pathname,
+  );
   if (method === "POST" && templateArchive !== null) {
     const revision = expectedRevision(request, response);
     if (revision === undefined) return true;
@@ -233,9 +245,7 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
 
   // ── PATCH /api/templates/:id ──────────────────────────────────────────
 
-  const templateItem = /^\/api\/templates\/([0-9a-f-]{36})$/.exec(
-    url.pathname,
-  );
+  const templateItem = /^\/api\/templates\/([0-9a-f-]{36})$/.exec(url.pathname);
   if (method === "PATCH" && templateItem !== null) {
     const revision = expectedRevision(request, response);
     if (revision === undefined) return true;
@@ -250,9 +260,7 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
       sendError(
         response,
         current === undefined ? 404 : 400,
-        current === undefined
-          ? "TEMPLATE_NOT_FOUND"
-          : "INVALID_TEMPLATE",
+        current === undefined ? "TEMPLATE_NOT_FOUND" : "INVALID_TEMPLATE",
         current === undefined
           ? "Task template not found"
           : "Task template input is invalid",
@@ -317,13 +325,9 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
   // ── POST /api/template-sets/:id/instantiate ────────────────────────────
 
   const templateInstantiation =
-    /^\/api\/templates\/([0-9a-f-]{36})\/instantiate$/.exec(
-      url.pathname,
-    );
+    /^\/api\/templates\/([0-9a-f-]{36})\/instantiate$/.exec(url.pathname);
   const setInstantiation =
-    /^\/api\/template-sets\/([0-9a-f-]{36})\/instantiate$/.exec(
-      url.pathname,
-    );
+    /^\/api\/template-sets\/([0-9a-f-]{36})\/instantiate$/.exec(url.pathname);
   if (
     method === "POST" &&
     (templateInstantiation !== null || setInstantiation !== null)
@@ -339,8 +343,7 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
     if (
       !parsed.success ||
       (headerKey !== undefined &&
-        (!headerKey.success ||
-          headerKey.data !== parsed.data.idempotencyKey))
+        (!headerKey.success || headerKey.data !== parsed.data.idempotencyKey))
     ) {
       sendError(
         response,
@@ -350,15 +353,13 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
       );
       return true;
     }
-    const sourceId =
-      templateInstantiation?.[1] ?? setInstantiation?.[1] ?? "";
+    const sourceId = templateInstantiation?.[1] ?? setInstantiation?.[1] ?? "";
     const requestHash = createHash("sha256")
       .update(
         JSON.stringify({
           sourceId,
           destinationProjectId: parsed.data.destinationProjectId,
-          sourceKind:
-            templateInstantiation === null ? "set" : "template",
+          sourceKind: templateInstantiation === null ? "set" : "template",
         }),
       )
       .digest("hex");
@@ -420,9 +421,7 @@ export const handleTemplates: RouteHandler = async (request, response, url, ctx)
     const sets = database.listTemplateSets(session.owner.id);
     sendJson(response, 200, {
       sets: sets.map(templateSetResponse),
-      members: sets.flatMap((set) =>
-        database.listTemplateSetMembers(set.id),
-      ),
+      members: sets.flatMap((set) => database.listTemplateSetMembers(set.id)),
     });
     return true;
   }

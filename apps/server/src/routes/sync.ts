@@ -1,9 +1,35 @@
 import { randomUUID, createHash, randomBytes } from "node:crypto";
-import type { ClientRegistrationResponse, SyncRoundResponse, SyncSnapshotResponse } from "@suite/contracts";
-import { clientRegistrationRequestSchema, clientAuthenticationHeadersSchema, syncRoundRequestSchema } from "@suite/contracts";
+import type {
+  ClientRegistrationResponse,
+  SyncRoundResponse,
+  SyncSnapshotResponse,
+} from "@suite/contracts";
+import {
+  clientRegistrationRequestSchema,
+  clientAuthenticationHeadersSchema,
+  syncRoundRequestSchema,
+} from "@suite/contracts";
 import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
-import { cursorFor, parseCursor, sendEmpty, taskResponse, projectResponse, tagResponse, subtaskResponse, templateResponse, templateBlueprintResponse, templateSetResponse, choicePoolResponse, choicePoolItemResponse, choicePoolHistoryResponse, planningPlaceholderResponse, planningResolutionResponse, activeFromRecord, activeResponse } from "./shared.ts";
+import {
+  cursorFor,
+  parseCursor,
+  sendEmpty,
+  taskResponse,
+  projectResponse,
+  tagResponse,
+  subtaskResponse,
+  templateResponse,
+  templateBlueprintResponse,
+  templateSetResponse,
+  choicePoolResponse,
+  choicePoolItemResponse,
+  choicePoolHistoryResponse,
+  planningPlaceholderResponse,
+  planningResolutionResponse,
+  activeFromRecord,
+  activeResponse,
+} from "./shared.ts";
 
 export const handleSync: RouteHandler = async (request, response, url, ctx) => {
   const { stores: database, auth } = ctx;
@@ -31,12 +57,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       await readJson(request),
     );
     if (!parsed.success) {
-      sendError(
-        response,
-        400,
-        "INVALID_CLIENT",
-        "Client input is invalid",
-      );
+      sendError(response, 400, "INVALID_CLIENT", "Client input is invalid");
       return true;
     }
     const now = new Date().toISOString();
@@ -73,34 +94,25 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
   if (method === "GET" && url.pathname === "/api/clients") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     // Credentials are deliberately never returned from this inventory.
     const clients = database
       .listSyncClients(session.owner.id)
-      .map(
-        ({ id, ownerId, label, createdAt, lastSeenAt, revokedAt }) => ({
-          id,
-          ownerId,
-          label,
-          createdAt,
-          lastSeenAt,
-          revokedAt,
-        }),
-      );
+      .map(({ id, ownerId, label, createdAt, lastSeenAt, revokedAt }) => ({
+        id,
+        ownerId,
+        label,
+        createdAt,
+        lastSeenAt,
+        revokedAt,
+      }));
     sendJson(response, 200, { clients });
     return true;
   }
 
-  const revokeMatch = /^\/api\/clients\/([0-9a-f-]{36})$/.exec(
-    url.pathname,
-  );
+  const revokeMatch = /^\/api\/clients\/([0-9a-f-]{36})$/.exec(url.pathname);
   if (method === "DELETE" && revokeMatch !== null) {
     const session = auth.authenticate(request, true);
     if (
@@ -165,12 +177,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       clientCredential: request.headers["x-suite-client-credential"],
     });
     if (!headers.success) {
-      sendError(
-        response,
-        401,
-        "CLIENT_AUTH_REQUIRED",
-        "Client proof required",
-      );
+      sendError(response, 401, "CLIENT_AUTH_REQUIRED", "Client proof required");
       return true;
     }
     const client = database.authenticateSyncClient(
@@ -206,8 +213,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                 title: versions.title ?? task.revision,
                 notes: versions.notes ?? task.revision,
                 status: versions.status ?? task.revision,
-                estimateMinutes:
-                  versions.estimateMinutes ?? task.revision,
+                estimateMinutes: versions.estimateMinutes ?? task.revision,
                 projectId: versions.projectId ?? task.revision,
                 tagIds: versions.tagIds ?? task.revision,
               };
@@ -244,20 +250,18 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             members: [...database.listTemplateSetMembers(set.id)],
           },
         })),
-        ...database
-          .listChoicePools(session.owner.id, true)
-          .map((pool) => ({
-            entityKind: "choice_pool" as const,
-            value: {
-              pool: choicePoolResponse(pool),
-              items: database
-                .listChoicePoolItems(pool.id, true)
-                .map(choicePoolItemResponse),
-              history: database
-                .listChoicePoolHistory(pool.id)
-                .map(choicePoolHistoryResponse),
-            },
-          })),
+        ...database.listChoicePools(session.owner.id, true).map((pool) => ({
+          entityKind: "choice_pool" as const,
+          value: {
+            pool: choicePoolResponse(pool),
+            items: database
+              .listChoicePoolItems(pool.id, true)
+              .map(choicePoolItemResponse),
+            history: database
+              .listChoicePoolHistory(pool.id)
+              .map(choicePoolHistoryResponse),
+          },
+        })),
         ...database
           .listPlanningPlaceholders(session.owner.id)
           .map((placeholder) => ({
@@ -265,10 +269,9 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             value: {
               placeholder: planningPlaceholderResponse(placeholder),
               resolution: (() => {
-                const resolution =
-                  database.getPlanningPlaceholderResolution(
-                    placeholder.id,
-                  );
+                const resolution = database.getPlanningPlaceholderResolution(
+                  placeholder.id,
+                );
                 return resolution === undefined
                   ? null
                   : planningResolutionResponse(resolution);
@@ -296,9 +299,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       sendJson(response, 200, body);
       return true;
     }
-    const parsed = syncRoundRequestSchema.safeParse(
-      await readJson(request),
-    );
+    const parsed = syncRoundRequestSchema.safeParse(await readJson(request));
     if (!parsed.success) {
       sendError(
         response,
@@ -435,9 +436,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       };
     });
     const cursor =
-      parsed.data.cursor === null
-        ? undefined
-        : parseCursor(parsed.data.cursor);
+      parsed.data.cursor === null ? undefined : parseCursor(parsed.data.cursor);
     const page =
       cursor === undefined && parsed.data.cursor !== null
         ? {
@@ -447,8 +446,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
           }
         : database.pageSyncChanges(
             session.owner.id,
-            cursor?.epoch ??
-              database.getSyncState(session.owner.id).epoch,
+            cursor?.epoch ?? database.getSyncState(session.owner.id).epoch,
             cursor?.sequence ?? 0,
             parsed.data.pullLimit,
           );
@@ -496,11 +494,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             : undefined;
         const template =
           change.entityType === "template"
-            ? database.getTaskTemplate(
-                session.owner.id,
-                change.entityId,
-                true,
-              )
+            ? database.getTaskTemplate(session.owner.id, change.entityId, true)
             : undefined;
         const templateSet =
           change.entityType === "template_set"
@@ -510,18 +504,11 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             : undefined;
         const choicePool =
           change.entityType === "choice_pool"
-            ? database.getChoicePool(
-                session.owner.id,
-                change.entityId,
-                true,
-              )
+            ? database.getChoicePool(session.owner.id, change.entityId, true)
             : undefined;
         const planningPlaceholder =
           change.entityType === "planning_placeholder"
-            ? database.getPlanningPlaceholder(
-                session.owner.id,
-                change.entityId,
-              )
+            ? database.getPlanningPlaceholder(session.owner.id, change.entityId)
             : undefined;
         return {
           sequence: change.sequence,
@@ -586,9 +573,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                               .listTemplateSubtaskBlueprints(template.id)
                               .map(templateBlueprintResponse),
                             poolSlots: [
-                              ...database.listTemplatePoolSlots(
-                                template.id,
-                              ),
+                              ...database.listTemplatePoolSlots(template.id),
                             ],
                           },
                         }
@@ -610,10 +595,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                               value: {
                                 pool: choicePoolResponse(choicePool),
                                 items: database
-                                  .listChoicePoolItems(
-                                    choicePool.id,
-                                    true,
-                                  )
+                                  .listChoicePoolItems(choicePool.id, true)
                                   .map(choicePoolItemResponse),
                                 history: database
                                   .listChoicePoolHistory(choicePool.id)
@@ -622,8 +604,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                             }
                           : planningPlaceholder !== undefined
                             ? {
-                                entityKind:
-                                  "planning_placeholder" as const,
+                                entityKind: "planning_placeholder" as const,
                                 value: {
                                   placeholder:
                                     planningPlaceholderResponse(
@@ -636,9 +617,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                                       );
                                     return resolution === undefined
                                       ? null
-                                      : planningResolutionResponse(
-                                          resolution,
-                                        );
+                                      : planningResolutionResponse(resolution);
                                   })(),
                                 },
                               }

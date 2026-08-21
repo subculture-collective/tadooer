@@ -241,7 +241,9 @@ button,
   padding: 0.5rem 0.875rem;
   cursor: pointer;
   line-height: 1.4;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
@@ -349,7 +351,9 @@ button:disabled,
   cursor: pointer;
   width: 100%;
   text-align: left;
-  transition: background-color 0.1s ease, color 0.1s ease;
+  transition:
+    background-color 0.1s ease,
+    color 0.1s ease;
 }
 
 .sidebar-nav a:hover,
@@ -400,9 +404,15 @@ button[aria-current="page"] .nav-icon {
   flex-shrink: 0;
 }
 
-.status-dot.online { background: var(--color-success); }
-.status-dot.offline { background: var(--color-warning); }
-.status-dot.error { background: var(--color-danger); }
+.status-dot.online {
+  background: var(--color-success);
+}
+.status-dot.offline {
+  background: var(--color-warning);
+}
+.status-dot.error {
+  background: var(--color-danger);
+}
 
 /* ── Top Bar ───────────────────────────────────────────────────── */
 
@@ -976,7 +986,8 @@ details.form-details[open] summary {
 
 /* ── Responsive ────────────────────────────────────────────────── */
 
-@media (max-width: 64rem) { /* 1024px */
+@media (max-width: 64rem) {
+  /* 1024px */
   .workspace {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto 1fr;
@@ -1017,7 +1028,8 @@ details.form-details[open] summary {
   }
 }
 
-@media (max-width: 40rem) { /* 640px */
+@media (max-width: 40rem) {
+  /* 640px */
   .form-grid-2,
   .form-grid-3,
   .form-grid-4 {
@@ -1070,4 +1082,111 @@ details.form-details[open] summary {
 
 .spacer {
   flex: 1;
+}
+/* Phase 13: one calm, readable daily queue in source/keyboard order. */
+.today-page {
+  max-width: 72rem;
+  margin-inline: auto;
+}
+.today-header,
+.today-capabilities,
+.today-section,
+.today-completed {
+  margin-bottom: 1.25rem;
+}
+.today-capabilities {
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+.today-layout {
+  display: grid;
+  gap: 1rem;
+}
+.today-section {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+}
+.today-section h2,
+.today-completed h2 {
+  margin-top: 0;
+}
+.today-section ul,
+.today-completed ul {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.today-task-row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+.today-task-meta {
+  color: var(--color-text-secondary);
+  margin: 0.25rem 0 0;
+}
+.today-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.today-task-actions button,
+.today-task-actions summary {
+  min-height: 44px;
+}
+.today-page button,
+.today-page summary {
+  min-height: 44px;
+}
+.today-overdue {
+  border-inline-start: 4px solid var(--color-error);
+}
+.today-completed {
+  color: var(--color-text-secondary);
+}
+.today-completed .today-task-row {
+  opacity: 0.8;
+}
+.time-block {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.time-block .field {
+  min-width: 10rem;
+}
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+@media (max-width: 48rem) {
+  .today-task-row {
+    flex-direction: column;
+  }
+  .today-task-actions {
+    width: 100%;
+  }
+  .time-block {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

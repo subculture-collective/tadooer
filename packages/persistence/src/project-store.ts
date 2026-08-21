@@ -194,10 +194,7 @@ export class SqliteProjectStore implements ProjectStore {
     return result.changes === 1 ? this.#project(ownerId, id) : undefined;
   }
 
-  getProject(
-    ownerId: string,
-    projectId: string,
-  ): ProjectRecord | undefined {
+  getProject(ownerId: string, projectId: string): ProjectRecord | undefined {
     return this.#project(ownerId, projectId);
   }
 
@@ -212,9 +209,7 @@ export class SqliteProjectStore implements ProjectStore {
         "UPDATE projects SET title=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=?",
       )
       .run(title, now, ownerId, projectId);
-    return result.changes === 1
-      ? this.#project(ownerId, projectId)
-      : undefined;
+    return result.changes === 1 ? this.#project(ownerId, projectId) : undefined;
   }
 
   // -----------------------------------------------------------------------
@@ -272,9 +267,10 @@ export class SqliteProjectStore implements ProjectStore {
             readonly estimate_minutes: number | null;
           }
         | undefined;
-      const task = taskRow === undefined
-        ? undefined
-        : this.#withTaskTags(this.#taskFromRow(taskRow));
+      const task =
+        taskRow === undefined
+          ? undefined
+          : this.#withTaskTags(this.#taskFromRow(taskRow));
       if (task === undefined) throw new Error("Assigned task disappeared");
       this.#database
         .prepare(

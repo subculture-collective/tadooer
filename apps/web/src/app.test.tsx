@@ -59,6 +59,14 @@ describe("App", () => {
             },
           ],
           recovery: [],
+          planningPreferences: {
+            workingDays: [1, 2, 3, 4, 5],
+            workdayStart: "09:00",
+            workdayEnd: "17:00",
+            breakStart: "12:00",
+            breakEnd: "12:30",
+            timeZone: "America/Chicago",
+          },
           planner: {
             window: {
               from: "2026-08-06T00:00:00.000Z",
@@ -123,21 +131,59 @@ describe("App", () => {
               createdAt: "2026-08-06T12:00:00.000Z",
               updatedAt: "2026-08-06T12:00:00.000Z",
               deletedAt: null,
+              plannedStart: "2026-08-10T12:00:00.000Z",
+              estimateMinutes: 30,
+              completedAt: null,
+              projectId: null,
+              tagIds: [],
+            },
+            {
+              id: "c01a1234-c04d-4bd8-a814-254b007154ba",
+              title: "Offline inbox task",
+              notes: "Queued in IndexedDB",
+              status: "open",
+              revision: 1,
+              createdAt: "2026-08-06T12:00:00.000Z",
+              updatedAt: "2026-08-06T12:00:00.000Z",
+              deletedAt: null,
+              plannedStart: null,
+              estimateMinutes: null,
+              completedAt: null,
+              projectId: null,
+              tagIds: [],
             },
           ],
           recovery: [],
           conflictCount: 1,
           message: "Working from this browser\u2019s durable task cache.",
+          planningPreferences: {
+            workingDays: [1, 2, 3, 4, 5],
+            workdayStart: "09:00",
+            workdayEnd: "17:00",
+            breakStart: "12:00",
+            breakEnd: "12:30",
+            timeZone: "America/Chicago",
+          },
         }}
       />,
     );
-    expect(markup).toContain("Limited workspace");
+    expect(markup).toContain("Today");
     expect(markup).toContain("Durable offline task");
+    expect(markup).toContain("Offline inbox task");
+    expect(markup).toContain("Overdue");
+    expect(markup).toContain("Planning");
+    expect(markup).toContain(
+      "Offline. Tasks can be captured, completed, and reopened.",
+    );
+    expect(markup).toContain("Reconnect to start focus");
+    expect(markup).toContain("Reconnect to change calendar blocks");
+    expect(markup).toContain('aria-label="Complete “Durable offline task”"');
+    expect(markup).toContain("disabled");
     expect(markup).toContain("Visible sync conflicts: 1");
     expect(markup).toContain("Sync now");
     expect(markup).toContain("Export redacted sync diagnostics");
     expect(markup).toContain("Capture a task");
-    expect(markup).toContain("Limited workspace");
+    expect(markup).not.toContain("Limited workspace");
   });
 
   it("renders each authenticated deep link as a distinct workspace view", () => {

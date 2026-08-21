@@ -71,9 +71,7 @@ export interface OwnerStore {
 // ---------------------------------------------------------------------------
 
 export interface SessionStore {
-  insertSession(
-    record: SessionRecord & { readonly issuedAt: string },
-  ): void;
+  insertSession(record: SessionRecord & { readonly issuedAt: string }): void;
   getSession(tokenHash: string): SessionRecord | undefined;
   updateCsrf(tokenHash: string, csrfHash: string): void;
   revokeSession(tokenHash: string, revokedAt: string): boolean;
@@ -141,17 +139,9 @@ export interface NotificationDeliveryStore {
     taskId: string,
   ): { readonly pendingCount: number; readonly failedCount: number };
 
-  markDeliveryFailed(
-    ownerId: string,
-    deliveryId: string,
-    now: string,
-  ): void;
+  markDeliveryFailed(ownerId: string, deliveryId: string, now: string): void;
 
-  cancelPendingDeliveries(
-    ownerId: string,
-    taskId: string,
-    now: string,
-  ): void;
+  cancelPendingDeliveries(ownerId: string, taskId: string, now: string): void;
 
   insertDelivery(record: NotificationDeliveryRecord): void;
 
@@ -335,10 +325,7 @@ export interface CalendarProjectionStore {
     taskId: string,
   ): readonly TaskCalendarBlockRecord[];
 
-  deleteTaskCalendarBlock(
-    ownerId: string,
-    blockId: string,
-  ): void;
+  deleteTaskCalendarBlock(ownerId: string, blockId: string): void;
 
   listPublishedCalendarRaw(
     ownerId: string,
@@ -355,19 +342,19 @@ export interface TaskFieldSyncResult {
   readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
   readonly task?: TaskRecord;
   readonly fields?: readonly string[];
-};
+}
 
 /** Task create sync result. */
 export interface TaskCreateSyncResult {
   readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
   readonly task?: TaskRecord;
-};
+}
 
 /** Task deletion/restore sync result. */
 export interface TaskDeletionSyncResult {
   readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
   readonly task?: TaskRecord;
-};
+}
 
 export interface SyncStore {
   registerSyncClient(
@@ -383,11 +370,7 @@ export interface SyncStore {
 
   listSyncClients(ownerId: string): readonly SyncClientRecord[];
 
-  revokeSyncClient(
-    ownerId: string,
-    clientId: string,
-    now: string,
-  ): boolean;
+  revokeSyncClient(ownerId: string, clientId: string, now: string): boolean;
 
   appendSyncChange(
     ownerId: string,
@@ -499,11 +482,7 @@ export interface AutomationTokenStore {
   createToken(record: AutomationTokenRecord): void;
   listTokens(ownerId: string): readonly AutomationTokenRecord[];
   getTokenByPrefix(prefix: string): AutomationTokenRecord | undefined;
-  deleteToken(
-    ownerId: string,
-    tokenId: string,
-    now: string,
-  ): boolean;
+  deleteToken(ownerId: string, tokenId: string, now: string): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -512,12 +491,11 @@ export interface AutomationTokenStore {
 
 export interface AutomationPreviewStore {
   insertPreview(record: AutomationPreviewRecord): void;
-  getPreview(ownerId: string, previewId: string): AutomationPreviewRecord | undefined;
-  consumePreview(
+  getPreview(
     ownerId: string,
     previewId: string,
-    now: string,
-  ): boolean;
+  ): AutomationPreviewRecord | undefined;
+  consumePreview(ownerId: string, previewId: string, now: string): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -545,9 +523,7 @@ export interface TemplateStore {
     },
   ): TaskTemplateRecord;
 
-  listTemplates(
-    ownerId: string,
-  ): readonly TaskTemplateRecord[];
+  listTemplates(ownerId: string): readonly TaskTemplateRecord[];
 
   getTemplate(
     ownerId: string,
@@ -600,10 +576,7 @@ export interface TemplateStore {
     includeArchived?: boolean,
   ): readonly TemplateSetRecord[];
 
-  getTemplateSet(
-    ownerId: string,
-    setId: string,
-  ): TemplateSetRecord | undefined;
+  getTemplateSet(ownerId: string, setId: string): TemplateSetRecord | undefined;
 
   instantiateTemplateIdempotently(
     ownerId: string,
@@ -621,9 +594,7 @@ export interface TemplateStore {
 // ---------------------------------------------------------------------------
 
 export interface ChoicePoolStore {
-  createChoicePool(
-    record: ChoicePoolRecord,
-  ): ChoicePoolRecord;
+  createChoicePool(record: ChoicePoolRecord): ChoicePoolRecord;
 
   listChoicePools(
     ownerId: string,
@@ -644,14 +615,15 @@ export interface ChoicePoolStore {
       readonly policy: ChoicePoolRecord["policy"];
       readonly pickCount: number;
       readonly cooldownSeconds: number | null;
-      readonly items: readonly { readonly id?: string; readonly title: string }[];
+      readonly items: readonly {
+        readonly id?: string;
+        readonly title: string;
+      }[];
     },
     now: string,
   ): ChoicePoolRecord | undefined;
 
-  createChoicePoolItem(
-    record: ChoicePoolItemRecord,
-  ): void;
+  createChoicePoolItem(record: ChoicePoolItemRecord): void;
 
   listChoicePoolItems(
     poolId: string,
@@ -665,9 +637,7 @@ export interface ChoicePoolStore {
     now: string,
   ): ChoicePoolHistoryRecord | undefined;
 
-  getChoicePoolHistory(
-    poolId: string,
-  ): readonly ChoicePoolHistoryRecord[];
+  getChoicePoolHistory(poolId: string): readonly ChoicePoolHistoryRecord[];
 
   createPlanningPlaceholder(
     record: PlanningPlaceholderRecord,
@@ -699,9 +669,7 @@ export interface ChoicePoolStore {
     record: TemplatePoolSlotRecord,
   ): TemplatePoolSlotRecord | undefined;
 
-  listTemplatePoolSlots(
-    templateId: string,
-  ): readonly TemplatePoolSlotRecord[];
+  listTemplatePoolSlots(templateId: string): readonly TemplatePoolSlotRecord[];
 }
 
 // ---------------------------------------------------------------------------
@@ -723,20 +691,18 @@ export interface CalendarImportStore {
       href: string;
     }[];
     readonly createdAt: string;
-  }): { readonly job: CalendarImportJobRecord; readonly replayed: boolean } | undefined;
+  }):
+    | { readonly job: CalendarImportJobRecord; readonly replayed: boolean }
+    | undefined;
 
   getImportJob(
     ownerId: string,
     jobId: string,
   ): CalendarImportJobRecord | undefined;
 
-  createImportItem(
-    record: CalendarImportItemRecord,
-  ): void;
+  createImportItem(record: CalendarImportItemRecord): void;
 
-  listImportItems(
-    jobId: string,
-  ): readonly CalendarImportItemRecord[];
+  listImportItems(jobId: string): readonly CalendarImportItemRecord[];
 
   applyImportItem(
     ownerId: string,
@@ -755,14 +721,8 @@ export interface CalendarFeedStore {
   getCalendarFeedCapability(
     feedId: string,
   ): CalendarFeedCapabilityRecord | undefined;
-  listCalendarFeeds(
-    ownerId: string,
-  ): readonly CalendarFeedCapabilityRecord[];
-  revokeCalendarFeed(
-    ownerId: string,
-    feedId: string,
-    now: string,
-  ): boolean;
+  listCalendarFeeds(ownerId: string): readonly CalendarFeedCapabilityRecord[];
+  revokeCalendarFeed(ownerId: string, feedId: string, now: string): boolean;
 }
 
 // ---------------------------------------------------------------------------

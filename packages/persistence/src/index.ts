@@ -1101,8 +1101,12 @@ export class SuiteDatabase {
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.credentials = new SqliteCredentialStore(this.#database);
-    this.calendarProjections = new SqliteCalendarProjectionStore(this.#database);
-    this.planningPreferences = new SqlitePlanningPreferencesStore(this.#database);
+    this.calendarProjections = new SqliteCalendarProjectionStore(
+      this.#database,
+    );
+    this.planningPreferences = new SqlitePlanningPreferencesStore(
+      this.#database,
+    );
   }
 
   static open(path: string): SuiteDatabase {
@@ -1357,7 +1361,12 @@ export class SuiteDatabase {
     connectorId: string,
     now: string,
   ): CalendarProviderRecord {
-    return this.calendarProjections.ensureCalendarProvider(ownerId, kind, connectorId, now);
+    return this.calendarProjections.ensureCalendarProvider(
+      ownerId,
+      kind,
+      connectorId,
+      now,
+    );
   }
 
   putCalendarCollections(
@@ -1365,7 +1374,11 @@ export class SuiteDatabase {
     collections: readonly Omit<CalendarCollectionRecord, "id" | "providerId">[],
     discoveredAt: string,
   ): readonly CalendarCollectionRecord[] {
-    return this.calendarProjections.putCalendarCollections(providerId, collections, discoveredAt);
+    return this.calendarProjections.putCalendarCollections(
+      providerId,
+      collections,
+      discoveredAt,
+    );
   }
 
   getOwnedCalendar(
@@ -1380,7 +1393,9 @@ export class SuiteDatabase {
     kind?: CalendarProviderRecord["kind"],
   ): readonly OwnedCalendarRecord[] {
     const all = this.calendarProjections.listOwnedCalendars(ownerId);
-    return kind === undefined ? all : all.filter((c: any) => c.kind === kind);
+    return kind === undefined
+      ? all
+      : all.filter((calendar: OwnedCalendarRecord) => calendar.kind === kind);
   }
 
   pruneGoogleCalendars(
@@ -1388,7 +1403,11 @@ export class SuiteDatabase {
     providerId: string,
     activeExternalCalendarIds: readonly string[],
   ): void {
-    this.calendarProjections.pruneGoogleCalendars(ownerId, providerId, activeExternalCalendarIds);
+    this.calendarProjections.pruneGoogleCalendars(
+      ownerId,
+      providerId,
+      activeExternalCalendarIds,
+    );
   }
 
   createCalendarImportPreview(input: {
@@ -1530,7 +1549,10 @@ export class SuiteDatabase {
     calendarId: string,
   ): readonly string[] {
     if (this.getOwnedCalendar(ownerId, calendarId) === undefined) return [];
-    return this.calendarProjections.listPublishedCalendarRaw(ownerId, calendarId);
+    return this.calendarProjections.listPublishedCalendarRaw(
+      ownerId,
+      calendarId,
+    );
   }
 
   createCalendarFeedCapability(record: CalendarFeedCapabilityRecord): void {
@@ -1717,7 +1739,13 @@ export class SuiteDatabase {
     errorCode: string,
     now: string,
   ): void {
-    this.calendarProjections.markGoogleCalendarSyncFailure(ownerId, calendarId, state, errorCode, now);
+    this.calendarProjections.markGoogleCalendarSyncFailure(
+      ownerId,
+      calendarId,
+      state,
+      errorCode,
+      now,
+    );
   }
 
   disconnectGoogle(ownerId: string): boolean {
@@ -1748,9 +1776,13 @@ export class SuiteDatabase {
   putPlanningPreferences(
     ownerId: string,
     preferences: PlanningPreferencesRecord,
-    _now: string,
+    now: string,
   ): PlanningPreferencesRecord {
-    return this.planningPreferences.upsertPlanningPreferences(ownerId, preferences);
+    void now;
+    return this.planningPreferences.upsertPlanningPreferences(
+      ownerId,
+      preferences,
+    );
   }
 
   getNotificationPreferences(ownerId: string): NotificationPreferencesRecord {
@@ -2022,7 +2054,13 @@ export class SuiteDatabase {
       "ownerId" | "providerKind" | "providerDisplayLabel" | "calendarName"
     >[],
   ): void {
-    this.calendarProjections.replaceCalendarEventWindow(ownerId, calendarId, from, to, events);
+    this.calendarProjections.replaceCalendarEventWindow(
+      ownerId,
+      calendarId,
+      from,
+      to,
+      events,
+    );
   }
 
   listCalendarEvents(
@@ -2116,7 +2154,12 @@ export class SuiteDatabase {
     state: "conflict" | "needs_reconciliation",
     now: string,
   ): void {
-    this.calendarProjections.markTaskCalendarBlockState(ownerId, taskId, state, now);
+    this.calendarProjections.markTaskCalendarBlockState(
+      ownerId,
+      taskId,
+      state,
+      now,
+    );
   }
 
   reserveCalendarWrite(input: {
@@ -2332,7 +2375,11 @@ export class SuiteDatabase {
     idempotencyKey: string,
     now: string,
   ): void {
-    this.calendarProjections.markCalendarWriteConflict(ownerId, idempotencyKey, now);
+    this.calendarProjections.markCalendarWriteConflict(
+      ownerId,
+      idempotencyKey,
+      now,
+    );
   }
 
   getCalendarWriteOperation(
@@ -2411,7 +2458,6 @@ export class SuiteDatabase {
         };
   }
 
-
   #notificationDeliveryFromRow(
     row: Record<string, string | number | null>,
   ): NotificationDeliveryRecord {
@@ -2433,7 +2479,6 @@ export class SuiteDatabase {
       deliveredAt: row.delivered_at === null ? null : String(row.delivered_at),
     };
   }
-
 
   createTaskIdempotently(
     ownerId: string,
