@@ -514,12 +514,15 @@ elapsed days. Super Productivity is not changed automatically.
 
 **Status:** Implementation and local qualification completed on 2026-08-21.
 Focused automated coverage, the repository gate, and authenticated local-browser
-validation are green. The browser pass covered capture; schedule, move, and
-remove; row-scoped focus; complete/reopen; offline action boundaries; a cold
-offline reload using cached preferences; and desktop, tablet, mobile, and 200%
-zoom layouts. This is local evidence only, not production or soak evidence.
-Phase 9, 11, and 12 production acceptance remains the active **Now** work; this
-selection does not waive the seven-day soak or stable `1.0.0` promotion gate.
+validation are green. Production now runs candidate `0.13.0-phase13`, source
+revision `c262a46015bcb80226249315419ec354d353015c`, at immutable registry digest
+`sha256:e628a354f6a9dfda93d1b323b8a127ad23d683acb78f8ffbaa19b65137f62b2c`.
+Post-deploy public build/readiness, migration, security-boundary, login-render,
+and connector-projection checks passed. The production browser was not signed
+in, so the authenticated Today workflow remains qualified by the local
+server-backed browser pass rather than a post-deploy production interaction.
+This deployment does not start or complete the Phase 12 seven-day soak and does
+not promote stable `1.0.0`.
 
 ### Owner outcome
 
@@ -572,6 +575,12 @@ than being queued or simulated.
   and screenshot capture. The browser console had no warning or error entries.
 - Existing task sync, planner/reminder, Time Block, Active Session, and full
   repository verification gates remain green.
+- Before production deployment, the NUC created and checksum-verified a coherent
+  Suite backup. Post-deploy checks confirmed the exact Phase 13 image revision,
+  healthy migration 14, preserved owner and Baïkal/Google provider records,
+  10,540 Google event projections, expected `421` unknown-Host and `403`
+  hostile-Origin responses, a public sign-in surface, and a clean browser
+  console. Authenticated production Today actions were not exercised.
 
 Implementation details and task order are recorded in
 `docs/superpowers/plans/2026-08-14-actionable-today-queue.md`.
