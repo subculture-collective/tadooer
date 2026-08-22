@@ -197,6 +197,15 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       );
       return true;
     }
+    if (request.headers["x-suite-sync-version"] !== "2") {
+      sendError(
+        response,
+        426,
+        "SYNC_PROTOCOL_UPGRADE_REQUIRED",
+        "Sync protocol version 2 is required",
+      );
+      return true;
+    }
     if (method === "GET") {
       const snapshot = database.fullSyncSnapshot(session.owner.id);
       const allSnapshots = [

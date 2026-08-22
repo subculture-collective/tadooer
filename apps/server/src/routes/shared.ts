@@ -135,6 +135,12 @@ export const taskResponse = (task: TaskRecord): Task => ({
   completedAt: task.completedAt,
   deletedAt: task.deletedAt,
   plannedStart: task.plannedStart,
+  deadline:
+    task.deadlineDate == null
+      ? task.deadlineAt == null
+        ? null
+        : { kind: "instant", value: task.deadlineAt }
+      : { kind: "date", value: task.deadlineDate },
   estimateMinutes: task.estimateMinutes,
   projectId: task.projectId ?? null,
   tagIds: [...(task.tagIds ?? [])],

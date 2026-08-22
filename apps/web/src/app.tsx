@@ -69,6 +69,7 @@ import {
   createTemplatePoolSlot,
   recordChoicePoolCompletion,
   patchSubtask,
+  reorderSubtasks,
   login,
   logout,
   putTaskTimeBlock,
@@ -90,6 +91,16 @@ import { TasksPage } from "./pages/TasksPage.tsx";
 import { ReusePage } from "./pages/ReusePage.tsx";
 import { ConnectionsPage } from "./pages/ConnectionsPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { InboxPage } from "./pages/InboxPage.tsx";
+import { PlannerPage } from "./pages/PlannerPage.tsx";
+import { moveChecklistItem } from "./checklist-order.ts";
+import {
+  routeFromPath,
+  workspaceRoutes,
+  type WorkspaceRoute,
+} from "./app/routes.ts";
+import { AppShell } from "./components/shell/AppShell.tsx";
+import { CommandBar } from "./components/command-bar/CommandBar.tsx";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -130,19 +141,6 @@ export interface AppProps {
   readonly initialState?: AppState;
   readonly initialPath?: string;
 }
-
-const workspaceRoutes = [
-  "today",
-  "tasks",
-  "reuse",
-  "connections",
-  "settings",
-] as const;
-type WorkspaceRoute = (typeof workspaceRoutes)[number];
-const routeFromPath = (path: string): WorkspaceRoute => {
-  const candidate = path.replace(/^\//, "").split("/")[0];
-  return workspaceRoutes.find((route) => route === candidate) ?? "today";
-};
 
 const messageFor = (error: unknown): string =>
   error instanceof ApiRequestError || error instanceof Error
@@ -238,6 +236,21 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     if (typeof history !== "undefined") history.pushState({}, "", `/${next}`);
     setRoute(next);
   };
+
+  const loadPlanner = useCallback(
+    async ({ from, to }: { readonly from: string; readonly to: string }) => {
+      if (state.kind !== "authenticated") return;
+      try {
+        const planner = await getPlanner(from, to);
+        setState((current) =>
+          current.kind === "authenticated" ? { ...current, planner } : current,
+        );
+      } catch (error: unknown) {
+        setFormError(messageFor(error));
+      }
+    },
+    [state.kind],
+  );
 
   const visibleTasks =
     state.kind === "authenticated"
@@ -1046,25 +1059,36 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           ),
         }));
       } else {
-        const updated = await patchSubtask(
-          subtask.id,
-          subtask.revision,
-          action === "toggle"
-            ? { completed: !subtask.completed }
-            : {
-                position: Math.max(
-                  0,
-                  subtask.position + (action === "up" ? -1 : 1),
-                ),
-              },
-          state.session.csrfToken,
-        );
-        setSubtasks((current) => ({
-          ...current,
-          [subtask.taskId]: (current[subtask.taskId] ?? [])
-            .map((item) => (item.id === updated.id ? updated : item))
-            .sort((left, right) => left.position - right.position),
-        }));
+        if (action === "toggle") {
+          const updated = await patchSubtask(
+            subtask.id,
+            subtask.revision,
+            { completed: !subtask.completed },
+            state.session.csrfToken,
+          );
+          setSubtasks((current) => ({
+            ...current,
+            [subtask.taskId]: (current[subtask.taskId] ?? []).map((item) =>
+              item.id === updated.id ? updated : item,
+            ),
+          }));
+        } else {
+          const reordered = moveChecklistItem(
+            subtasks[subtask.taskId] ?? [],
+            subtask.id,
+            action,
+          );
+          if (reordered === undefined) return;
+          const updated = await reorderSubtasks(
+            subtask.taskId,
+            reordered.map(({ id, revision }) => ({ id, revision })),
+            state.session.csrfToken,
+          );
+          setSubtasks((current) => ({
+            ...current,
+            [subtask.taskId]: updated,
+          }));
+        }
       }
     } catch (error: unknown) {
       setFormError(messageFor(error));
@@ -2011,210 +2035,170 @@ export const App = ({ initialState, initialPath }: AppProps) => {
 
   /* ── Workspace ── */
   return (
-    <div className="workspace">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <span className="brand-dot" />
-          Productivity Suite
-        </div>
-        <nav className="sidebar-nav" aria-label="Workspace views">
-          {workspaceRoutes.map((item) => (
-            <a
-              key={item}
-              href={`/${item}`}
-              aria-current={route === item ? "page" : undefined}
-              onClick={(event) => {
-                event.preventDefault();
-                navigate(item);
-              }}
-            >
-              <span className="nav-icon">
-                {item === "today"
-                  ? "\u2600"
-                  : item === "tasks"
-                    ? "\u2261"
-                    : item === "reuse"
-                      ? "\u21BB"
-                      : item === "connections"
-                        ? "\u26A1"
-                        : "\u2699"}
-              </span>
-              {item === "reuse"
-                ? "Reuse"
-                : item.charAt(0).toUpperCase() + item.slice(1)}
-            </a>
-          ))}
-        </nav>
-        <div className="sidebar-status">
-          <div className="status-row">
-            <span
-              className={`status-dot ${state.syncStatus === "online" ? "online" : state.syncStatus === "syncing" ? "online" : "offline"}`}
-            />
-            Task sync: {state.syncStatus ?? "offline"}
-          </div>
-          {state.conflictCount !== undefined && state.conflictCount > 0 && (
-            <div className="status-row">
-              <span className="status-dot error" />
-              Conflicts: {state.conflictCount}
-            </div>
-          )}
-          <div className="status-row" style={{ fontSize: "var(--text-2xs)" }}>
-            {state.baikal.connected ? "Baikal verified" : "Baikal disconnected"}
-          </div>
-        </div>
-      </aside>
-
-      <header className="topbar">
-        <span className="topbar-breadcrumb">
-          {route === "reuse"
-            ? "Reuse"
-            : route.charAt(0).toUpperCase() + route.slice(1)}
-        </span>
-        <div className="topbar-actions">
-          {formError !== null && (
-            <span
-              className="message message-error"
-              style={{ padding: "0.25rem 0.5rem", fontSize: "var(--text-xs)" }}
-            >
-              {formError}
-            </span>
-          )}
-          <button
-            className="btn-ghost"
-            type="button"
-            onClick={() => void signOut()}
-            style={{ fontSize: "var(--text-xs)" }}
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      <main className="main">
-        {route === "today" && (
-          <TodayPage
-            dayPlan={state.dayPlan}
-            planningPreferences={state.planningPreferences}
-            tasks={state.tasks}
-            activeSession={state.activeSession ?? null}
-            clientId={state.client?.clientId ?? null}
-            syncStatus={state.syncStatus}
-            planner={state.planner}
-            baikalCalendars={state.baikal.calendars}
-            calendarActionsAvailable={networkOnline}
-            focusActionsAvailable={networkOnline && state.client !== undefined}
-            busy={busy}
-            onFocusCommand={(command) => void handleFocusCommand(command)}
-            onSubmitTask={submitTask}
-            onChangeTaskStatus={changeTaskStatus}
-            onSubmitTimeBlock={submitTimeBlock}
-            onRemoveTimeBlock={removeTimeBlock}
-            onViewTasks={() => navigate("tasks")}
-          />
-        )}
-        {route === "tasks" && (
-          <TasksPage
-            tasks={state.tasks}
-            visibleTasks={visibleTasks}
-            recovery={state.recovery}
-            projects={projects}
-            tags={tags}
-            subtasks={subtasks}
-            provenance={templateProvenance}
-            baikalCalendars={state.baikal.calendars}
-            taskQuery={taskQuery}
-            taskStatusFilter={taskStatusFilter}
-            taskProjectFilter={taskProjectFilter}
-            taskTagFilter={taskTagFilter}
-            busy={busy}
-            calendarActionsAvailable={networkOnline}
-            onTaskQueryChange={setTaskQuery}
-            onTaskStatusFilterChange={setTaskStatusFilter}
-            onTaskProjectFilterChange={setTaskProjectFilter}
-            onTaskTagFilterChange={setTaskTagFilter}
-            onSubmitOrganization={submitOrganization}
-            onSubmitTaskEdit={submitTaskEdit}
-            onSubmitTimeBlock={submitTimeBlock}
-            onRemoveTimeBlock={removeTimeBlock}
-            onSubmitTaskOrganization={submitTaskOrganization}
-            onSubmitSubtask={submitSubtask}
-            onChangeSubtask={changeSubtask}
-            onSaveTaskAsTemplate={saveTaskAsTemplate}
-            onChangeTaskStatus={changeTaskStatus}
-            onRemoveTask={removeTask}
-            onRecoverTask={recoverTask}
-          />
-        )}
-        {route === "reuse" && (
-          <ReusePage
-            templates={templates}
-            templateBlueprints={templateBlueprints}
-            templateSets={templateSets}
-            choicePools={choicePools}
-            choicePoolItems={choicePoolItems}
-            choicePoolHistory={choicePoolHistory}
-            planningPlaceholders={planningPlaceholders}
-            templatePoolSlots={templatePoolSlots}
-            tasks={state.tasks}
-            projects={projects
-              .filter((project) => project.archivedAt === null)
-              .map(({ id, title }) => ({ id, title }))}
-            tags={tags
-              .filter((tag) => tag.archivedAt === null)
-              .map(({ id, displayName }) => ({ id, displayName }))}
-            busy={busy}
-            onCreateTemplate={submitTemplateCreate}
-            onSearchTemplates={(query) => void refreshTemplateLibrary(query)}
-            onArchiveTemplate={archiveTemplate}
-            onEditTemplate={editTemplate}
-            onCreateTemplateSet={submitTemplateSetCreate}
-            onInstantiateTemplate={submitTemplateInstantiation}
-            onInstantiateTemplateSet={submitTemplateSetInstantiation}
-            onCreateChoicePool={submitChoicePool}
-            onCreatePlanningPlaceholder={submitPlanningPlaceholder}
-            onEditChoicePool={editChoicePool}
-            onAddTemplatePoolSlot={addTemplatePoolSlot}
-            onRecordChoicePoolCompletion={completeChoicePoolItem}
-            onSuggestPlaceholder={previewPlanningPlaceholder}
-            onResolvePlaceholder={submitPlaceholderResolution}
-          />
-        )}
-        {route === "connections" && (
-          <ConnectionsPage
-            baikal={state.baikal}
-            google={state.google}
-            planningPreferences={state.planningPreferences}
-            dayPlan={state.dayPlan}
-            csrfToken={state.session.csrfToken}
-            busy={busy}
-            onAuthorizeGoogle={authorizeGoogle}
-            onSyncGoogle={syncGoogleCalendar}
-            onDisconnectGoogle={removeGoogleCalendar}
-            onSavePlanningPreferences={savePlanningPreferences}
-          />
-        )}
-        {route === "settings" && (
-          <SettingsPage
-            google={state.google}
-            planningPreferences={state.planningPreferences}
-            dayPlan={state.dayPlan}
-            notificationPreferences={state.notificationPreferences}
-            notificationStatus={state.notificationStatus}
-            syncStatus={state.syncStatus}
-            clientId={state.client?.clientId ?? null}
-            plannerFreshness={state.planner?.freshness.state}
-            busy={busy}
-            onAuthorizeGoogle={authorizeGoogle}
-            onSyncGoogle={syncGoogleCalendar}
-            onDisconnectGoogle={removeGoogleCalendar}
-            onSavePlanningPreferences={savePlanningPreferences}
-            onSaveNotificationPreferences={saveNotificationPreferences}
-            onTestNotification={testNotification}
-            onSyncNow={syncNow}
-            onExportDiagnostics={exportDiagnostics}
-          />
-        )}
-      </main>
-    </div>
+    <AppShell
+      route={route}
+      onNavigate={navigate}
+      syncStatus={state.syncStatus}
+      conflictCount={state.conflictCount}
+      baikalConnected={state.baikal.connected}
+      formError={formError}
+      onSignOut={() => void signOut()}
+      commandTrigger={
+        <CommandBar
+          onNavigate={navigate}
+          onSyncNow={syncNow}
+          syncAvailable={networkOnline && state.client !== undefined}
+        />
+      }
+    >
+      {route === "today" && (
+        <TodayPage
+          dayPlan={state.dayPlan}
+          planningPreferences={state.planningPreferences}
+          tasks={state.tasks}
+          activeSession={state.activeSession ?? null}
+          clientId={state.client?.clientId ?? null}
+          syncStatus={state.syncStatus}
+          planner={state.planner}
+          baikalCalendars={state.baikal.calendars}
+          calendarActionsAvailable={networkOnline}
+          focusActionsAvailable={networkOnline && state.client !== undefined}
+          busy={busy}
+          onFocusCommand={(command) => void handleFocusCommand(command)}
+          onSubmitTask={submitTask}
+          onChangeTaskStatus={changeTaskStatus}
+          onSubmitTimeBlock={submitTimeBlock}
+          onRemoveTimeBlock={removeTimeBlock}
+          onViewTasks={() => navigate("tasks")}
+        />
+      )}
+      {route === "inbox" && (
+        <InboxPage
+          tasks={state.tasks}
+          activeSession={state.activeSession ?? null}
+          calendars={state.baikal.calendars}
+          busy={busy}
+          calendarActionsAvailable={networkOnline}
+          focusActionsAvailable={networkOnline && state.client !== undefined}
+          onSubmitTask={submitTask}
+          onStartFocus={(task) =>
+            void handleFocusCommand({ command: "start", taskId: task.id })
+          }
+          onChangeTaskStatus={changeTaskStatus}
+          onSubmitTimeBlock={submitTimeBlock}
+          onRemoveTimeBlock={removeTimeBlock}
+        />
+      )}
+      {route === "planner" && (
+        <PlannerPage
+          planner={state.planner}
+          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+          busy={busy}
+          onLoadPlanner={loadPlanner}
+        />
+      )}
+      {route === "tasks" && (
+        <TasksPage
+          tasks={state.tasks}
+          visibleTasks={visibleTasks}
+          recovery={state.recovery}
+          projects={projects}
+          tags={tags}
+          subtasks={subtasks}
+          provenance={templateProvenance}
+          baikalCalendars={state.baikal.calendars}
+          taskQuery={taskQuery}
+          taskStatusFilter={taskStatusFilter}
+          taskProjectFilter={taskProjectFilter}
+          taskTagFilter={taskTagFilter}
+          busy={busy}
+          calendarActionsAvailable={networkOnline}
+          onTaskQueryChange={setTaskQuery}
+          onTaskStatusFilterChange={setTaskStatusFilter}
+          onTaskProjectFilterChange={setTaskProjectFilter}
+          onTaskTagFilterChange={setTaskTagFilter}
+          onSubmitOrganization={submitOrganization}
+          onSubmitTaskEdit={submitTaskEdit}
+          onSubmitTimeBlock={submitTimeBlock}
+          onRemoveTimeBlock={removeTimeBlock}
+          onSubmitTaskOrganization={submitTaskOrganization}
+          onSubmitSubtask={submitSubtask}
+          onChangeSubtask={changeSubtask}
+          onSaveTaskAsTemplate={saveTaskAsTemplate}
+          onChangeTaskStatus={changeTaskStatus}
+          onRemoveTask={removeTask}
+          onRecoverTask={recoverTask}
+        />
+      )}
+      {route === "reuse" && (
+        <ReusePage
+          templates={templates}
+          templateBlueprints={templateBlueprints}
+          templateSets={templateSets}
+          choicePools={choicePools}
+          choicePoolItems={choicePoolItems}
+          choicePoolHistory={choicePoolHistory}
+          planningPlaceholders={planningPlaceholders}
+          templatePoolSlots={templatePoolSlots}
+          tasks={state.tasks}
+          projects={projects
+            .filter((project) => project.archivedAt === null)
+            .map(({ id, title }) => ({ id, title }))}
+          tags={tags
+            .filter((tag) => tag.archivedAt === null)
+            .map(({ id, displayName }) => ({ id, displayName }))}
+          busy={busy}
+          onCreateTemplate={submitTemplateCreate}
+          onSearchTemplates={(query) => void refreshTemplateLibrary(query)}
+          onArchiveTemplate={archiveTemplate}
+          onEditTemplate={editTemplate}
+          onCreateTemplateSet={submitTemplateSetCreate}
+          onInstantiateTemplate={submitTemplateInstantiation}
+          onInstantiateTemplateSet={submitTemplateSetInstantiation}
+          onCreateChoicePool={submitChoicePool}
+          onCreatePlanningPlaceholder={submitPlanningPlaceholder}
+          onEditChoicePool={editChoicePool}
+          onAddTemplatePoolSlot={addTemplatePoolSlot}
+          onRecordChoicePoolCompletion={completeChoicePoolItem}
+          onSuggestPlaceholder={previewPlanningPlaceholder}
+          onResolvePlaceholder={submitPlaceholderResolution}
+        />
+      )}
+      {route === "connections" && (
+        <ConnectionsPage
+          baikal={state.baikal}
+          google={state.google}
+          planningPreferences={state.planningPreferences}
+          dayPlan={state.dayPlan}
+          csrfToken={state.session.csrfToken}
+          busy={busy}
+          onAuthorizeGoogle={authorizeGoogle}
+          onSyncGoogle={syncGoogleCalendar}
+          onDisconnectGoogle={removeGoogleCalendar}
+          onSavePlanningPreferences={savePlanningPreferences}
+        />
+      )}
+      {route === "settings" && (
+        <SettingsPage
+          google={state.google}
+          planningPreferences={state.planningPreferences}
+          dayPlan={state.dayPlan}
+          notificationPreferences={state.notificationPreferences}
+          notificationStatus={state.notificationStatus}
+          syncStatus={state.syncStatus}
+          clientId={state.client?.clientId ?? null}
+          plannerFreshness={state.planner?.freshness.state}
+          busy={busy}
+          onAuthorizeGoogle={authorizeGoogle}
+          onSyncGoogle={syncGoogleCalendar}
+          onDisconnectGoogle={removeGoogleCalendar}
+          onSavePlanningPreferences={savePlanningPreferences}
+          onSaveNotificationPreferences={saveNotificationPreferences}
+          onTestNotification={testNotification}
+          onSyncNow={syncNow}
+          onExportDiagnostics={exportDiagnostics}
+        />
+      )}
+    </AppShell>
   );
 };

@@ -34,6 +34,8 @@ interface TaskRow {
   readonly deleted_at: string | null;
   readonly planned_start: string | null;
   readonly estimate_minutes: number | null;
+  readonly deadline_date: string | null;
+  readonly deadline_at: string | null;
 }
 
 export interface InstallMetadata {
@@ -107,6 +109,8 @@ export interface TaskRecord {
   readonly deletedAt: string | null;
   readonly plannedStart: string | null;
   readonly estimateMinutes: number | null;
+  readonly deadlineDate?: string | null;
+  readonly deadlineAt?: string | null;
   readonly projectId?: string | null;
   readonly tagIds?: readonly string[];
 }
@@ -116,6 +120,29 @@ export interface TaskPatch {
   readonly notes?: string;
   readonly plannedStart?: string | null;
   readonly estimateMinutes?: number | null;
+  readonly deadlineDate?: string | null;
+  readonly deadlineAt?: string | null;
+}
+
+export interface HabitRecord {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly title: string;
+  readonly cadence: unknown;
+  readonly startedOn: string;
+  readonly timeZone: string;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt: string | null;
+}
+
+export interface HabitOccurrenceRecord {
+  readonly id: string;
+  readonly habitId: string;
+  readonly periodKey: string;
+  readonly completedAt: string;
+  readonly createdAt: string;
 }
 
 export type ConditionalTaskResult =
@@ -1082,6 +1109,75 @@ const migrations: readonly Migration[] = [
         ON notification_deliveries(state,next_attempt_at,owner_id);
       CREATE INDEX notification_delivery_status
         ON notification_deliveries(owner_id,updated_at DESC,id);
+    `,
+  },
+  {
+    id: "0015_task_deadlines",
+    sql: `
+      ALTER TABLE tasks ADD COLUMN deadline_date TEXT;
+      ALTER TABLE tasks ADD COLUMN deadline_at TEXT;
+      CREATE INDEX tasks_deadline_date ON tasks(owner_id,deadline_date)
+        WHERE deadline_date IS NOT NULL;
+      CREATE INDEX tasks_deadline_at ON tasks(owner_id,deadline_at)
+        WHERE deadline_at IS NOT NULL;
+      CREATE TRIGGER tasks_deadline_insert_valid
+      BEFORE INSERT ON tasks
+      WHEN NEW.deadline_date IS NOT NULL AND NEW.deadline_at IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'task deadline must be a date or instant');
+      END;
+      CREATE TRIGGER tasks_deadline_update_valid
+      BEFORE UPDATE OF deadline_date, deadline_at ON tasks
+      WHEN NEW.deadline_date IS NOT NULL AND NEW.deadline_at IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'task deadline must be a date or instant');
+      END;
+    `,
+  },
+  {
+    id: "0016_habits",
+    sql: `
+      CREATE TABLE habits (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        cadence_json TEXT NOT NULL,
+        started_on TEXT NOT NULL,
+        time_zone TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK(revision > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived_at TEXT
+      ) STRICT;
+      CREATE TABLE habit_occurrences (
+        id TEXT PRIMARY KEY,
+        habit_id TEXT NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+        period_key TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(habit_id, period_key)
+      ) STRICT;
+      CREATE INDEX habit_owner_active ON habits(owner_id, archived_at, created_at DESC);
+      CREATE INDEX habit_occurrence_period ON habit_occurrences(habit_id, period_key);
+    `,
+  },
+  {
+    id: "0017_sync_v2_deadline_epoch_reset",
+    sql: `
+      CREATE TABLE task_field_versions_v2 (
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        field TEXT NOT NULL CHECK(field IN ('title','notes','status','deadline','estimateMinutes','projectId','tagIds')),
+        version INTEGER NOT NULL CHECK(version > 0), PRIMARY KEY(task_id, field)
+      ) STRICT;
+      INSERT INTO task_field_versions_v2 (task_id,field,version)
+        SELECT task_id,field,version FROM task_field_versions;
+      INSERT INTO task_field_versions_v2 (task_id,field,version)
+        SELECT id,'deadline',revision FROM tasks;
+      DROP TABLE task_field_versions;
+      ALTER TABLE task_field_versions_v2 RENAME TO task_field_versions;
+      DELETE FROM sync_changes;
+      UPDATE sync_owner_state
+        SET epoch=lower(hex(randomblob(16))),next_sequence=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
     `,
   },
 ];
@@ -2486,12 +2582,9 @@ export class SuiteDatabase {
     requestHash: string,
     task: Omit<
       TaskRecord,
-      | "ownerId"
-      | "completedAt"
-      | "deletedAt"
-      | "plannedStart"
-      | "estimateMinutes"
-    >,
+      "ownerId" | "completedAt" | "deletedAt" | "plannedStart" | "estimateMinutes"
+    > &
+      Partial<Pick<TaskRecord, "plannedStart" | "estimateMinutes">>,
   ): IdempotentTaskCreateResult {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -2521,16 +2614,18 @@ export class SuiteDatabase {
         ...task,
         completedAt: null,
         deletedAt: null,
-        plannedStart: null,
+        plannedStart: task.plannedStart ?? null,
         estimateMinutes: null,
-        projectId: null,
-        tagIds: [],
+        deadlineDate: task.deadlineDate ?? null,
+        deadlineAt: task.deadlineAt ?? null,
+        projectId: task.projectId ?? null,
+        tagIds: task.tagIds ?? [],
       };
       this.#database
         .prepare(
           `INSERT INTO tasks
-            (id, owner_id, title, notes, status, revision, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, owner_id, title, notes, status, revision, created_at, updated_at, planned_start, project_id, deadline_date, deadline_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           created.id,
@@ -2541,6 +2636,10 @@ export class SuiteDatabase {
           created.revision,
           created.createdAt,
           created.updatedAt,
+          created.plannedStart,
+          created.projectId ?? null,
+          created.deadlineDate ?? null,
+          created.deadlineAt ?? null,
         );
       const initialFieldVersion = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id, field, version) VALUES (?, ?, 1)",
@@ -2554,6 +2653,10 @@ export class SuiteDatabase {
         "tagIds",
       ])
         initialFieldVersion.run(created.id, field);
+      const insertTag = this.#database.prepare(
+        "INSERT INTO task_tags (task_id, tag_id) VALUES (?, ?)",
+      );
+      for (const tagId of created.tagIds ?? []) insertTag.run(created.id, tagId);
       this.#database
         .prepare(
           `INSERT INTO idempotency_records
@@ -2587,7 +2690,7 @@ export class SuiteDatabase {
     const rows = this.#database
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
-                completed_at, deleted_at, planned_start, estimate_minutes
+                completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
          FROM tasks WHERE owner_id = ? AND deleted_at IS NULL
          ORDER BY created_at DESC, id DESC`,
       )
@@ -2608,11 +2711,77 @@ export class SuiteDatabase {
     return rows.map((row) => this.#withTaskTags(this.#taskFromRow(row)));
   }
 
+  createHabit(record: HabitRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO habits
+          (id,owner_id,title,cadence_json,started_on,time_zone,revision,created_at,updated_at,archived_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        record.id,
+        record.ownerId,
+        record.title,
+        JSON.stringify(record.cadence),
+        record.startedOn,
+        record.timeZone,
+        record.revision,
+        record.createdAt,
+        record.updatedAt,
+        record.archivedAt,
+      );
+  }
+
+  listHabits(ownerId: string): readonly HabitRecord[] {
+    const rows = this.#database
+      .prepare(
+        "SELECT * FROM habits WHERE owner_id=? ORDER BY archived_at IS NOT NULL,created_at DESC,id DESC",
+      )
+      .all(ownerId) as unknown as readonly Record<string, string | number | null>[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      ownerId: String(row.owner_id),
+      title: String(row.title),
+      cadence: JSON.parse(String(row.cadence_json)) as unknown,
+      startedOn: String(row.started_on),
+      timeZone: String(row.time_zone),
+      revision: Number(row.revision),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      archivedAt: row.archived_at === null ? null : String(row.archived_at),
+    }));
+  }
+
+  recordHabitOccurrence(record: HabitOccurrenceRecord): boolean {
+    return (
+      this.#database
+        .prepare(
+          `INSERT INTO habit_occurrences (id,habit_id,period_key,completed_at,created_at)
+           VALUES (?,?,?,?,?) ON CONFLICT(habit_id,period_key) DO NOTHING`,
+        )
+        .run(record.id, record.habitId, record.periodKey, record.completedAt, record.createdAt)
+        .changes === 1
+    );
+  }
+
+  listHabitOccurrences(habitId: string): readonly HabitOccurrenceRecord[] {
+    const rows = this.#database
+      .prepare("SELECT * FROM habit_occurrences WHERE habit_id=? ORDER BY period_key,id")
+      .all(habitId) as unknown as readonly Record<string, string>[];
+    return rows.map((row) => ({
+      id: String(row.id),
+      habitId: String(row.habit_id),
+      periodKey: String(row.period_key),
+      completedAt: String(row.completed_at),
+      createdAt: String(row.created_at),
+    }));
+  }
+
   listDeletedTasks(ownerId: string): readonly TaskRecord[] {
     const rows = this.#database
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
-                completed_at, deleted_at, planned_start, estimate_minutes
+                completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
          FROM tasks WHERE owner_id = ? AND deleted_at IS NOT NULL
          ORDER BY deleted_at DESC, id DESC`,
       )
@@ -2628,7 +2797,7 @@ export class SuiteDatabase {
     const row = this.#database
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
-                completed_at, deleted_at, planned_start, estimate_minutes
+                completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
          FROM tasks WHERE owner_id = ? AND id = ?
            AND (? = 1 OR deleted_at IS NULL)`,
       )
@@ -2661,6 +2830,10 @@ export class SuiteDatabase {
         ...(patch.estimateMinutes === undefined
           ? {}
           : { estimateMinutes: patch.estimateMinutes }),
+        ...(patch.deadlineDate === undefined
+          ? {}
+          : { deadlineDate: patch.deadlineDate }),
+        ...(patch.deadlineAt === undefined ? {} : { deadlineAt: patch.deadlineAt }),
       }),
       now,
     );
@@ -3675,6 +3848,52 @@ export class SuiteDatabase {
     return this.listSubtasks(ownerId, String(current.task_id)).find(
       (item) => item.id === id,
     );
+  }
+  reorderSubtasks(
+    ownerId: string,
+    taskId: string,
+    items: readonly { readonly id: string; readonly revision: number }[],
+    now: string,
+  ): readonly SubtaskRecord[] | undefined {
+    const current = this.listSubtasks(ownerId, taskId);
+    const currentById = new Map(current.map((item) => [item.id, item]));
+    if (
+      items.length !== current.length ||
+      new Set(items.map(({ id }) => id)).size !== items.length ||
+      items.some(
+        ({ id, revision }) => currentById.get(id)?.revision !== revision,
+      )
+    )
+      return undefined;
+
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const update = this.#database.prepare(
+        "UPDATE subtasks SET position=?,revision=revision+1,updated_at=? WHERE owner_id=? AND task_id=? AND id=? AND revision=?",
+      );
+      for (const [position, item] of items.entries()) {
+        if (
+          update.run(position, now, ownerId, taskId, item.id, item.revision)
+            .changes !== 1
+        ) {
+          this.#database.exec("ROLLBACK;");
+          return undefined;
+        }
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "subtask",
+          item.id,
+          "upsert",
+          item.revision + 1,
+          now,
+        );
+      }
+      this.#database.exec("COMMIT;");
+      return this.listSubtasks(ownerId, taskId);
+    } catch (error: unknown) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
   }
   deleteSubtask(
     ownerId: string,
@@ -4918,9 +5137,9 @@ export class SuiteDatabase {
       const changed = this.#database
         .prepare(
           `UPDATE tasks SET title = ?, notes = ?, status = ?, revision = ?,
-             updated_at = ?, completed_at = ?, deleted_at = ?,
-             planned_start = ?, estimate_minutes = ?
-           WHERE owner_id = ? AND id = ? AND revision = ?`,
+              updated_at = ?, completed_at = ?, deleted_at = ?,
+              planned_start = ?, estimate_minutes = ?, deadline_date = ?, deadline_at = ?
+            WHERE owner_id = ? AND id = ? AND revision = ?`,
         )
         .run(
           next.title,
@@ -4932,6 +5151,8 @@ export class SuiteDatabase {
           next.deletedAt,
           next.plannedStart,
           next.estimateMinutes,
+          next.deadlineDate ?? null,
+          next.deadlineAt ?? null,
           ownerId,
           taskId,
           expectedRevision,
@@ -4969,7 +5190,7 @@ export class SuiteDatabase {
     const row = this.#database
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
-                completed_at, deleted_at, planned_start, estimate_minutes
+                completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
          FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL`,
       )
       .get(ownerId, taskId) as unknown as
@@ -5006,6 +5227,8 @@ export class SuiteDatabase {
     readonly deleted_at: string | null;
     readonly planned_start: string | null;
     readonly estimate_minutes: number | null;
+    readonly deadline_date?: string | null;
+    readonly deadline_at?: string | null;
   }): TaskRecord {
     return {
       id: row.id,
@@ -5020,6 +5243,8 @@ export class SuiteDatabase {
       deletedAt: row.deleted_at,
       plannedStart: row.planned_start,
       estimateMinutes: row.estimate_minutes,
+      deadlineDate: "deadline_date" in row ? row.deadline_date : null,
+      deadlineAt: "deadline_at" in row ? row.deadline_at : null,
     };
   }
 

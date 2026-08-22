@@ -270,7 +270,7 @@ export const TasksPage = ({
               <div>
                 <strong>Checklist</strong>
                 <ul>
-                  {(subtasks[task.id] ?? []).map((subtask) => (
+                  {(subtasks[task.id] ?? []).map((subtask, index, items) => (
                     <li key={subtask.id}>
                       {subtask.completed ? "✓" : "○"} {subtask.title}
                       <button
@@ -282,14 +282,14 @@ export const TasksPage = ({
                       </button>
                       <button
                         type="button"
-                        disabled={busy || subtask.position === 0}
+                        disabled={busy || index === 0}
                         onClick={() => void onChangeSubtask(subtask, "up")}
                       >
                         Move up
                       </button>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || index === items.length - 1}
                         onClick={() => void onChangeSubtask(subtask, "down")}
                       >
                         Move down

@@ -21,11 +21,14 @@ export const handleSubtasks: RouteHandler = async (
   const taskSubtasksMatch = /^\/api\/tasks\/([0-9a-f-]{36})\/subtasks$/.exec(
     url.pathname,
   );
-  if (taskSubtasksMatch !== null && (method === "GET" || method === "POST")) {
-    const session = auth.authenticate(request, method === "POST");
+  if (
+    taskSubtasksMatch !== null &&
+    (method === "GET" || method === "POST" || method === "PUT")
+  ) {
+    const session = auth.authenticate(request, method !== "GET");
     if (
       session === undefined ||
-      (method === "POST" &&
+      (method !== "GET" &&
         (!sameOrigin(request) ||
           !auth.csrfMatches(
             session,
@@ -49,6 +52,59 @@ export const handleSubtasks: RouteHandler = async (
         subtasks: database
           .listSubtasks(session.owner.id, taskId)
           .map(subtaskResponse),
+      });
+      return true;
+    }
+    if (method === "PUT") {
+      const input = (await readJson(request)) as {
+        items?: unknown;
+      };
+      if (
+        !Array.isArray(input.items) ||
+        input.items.length === 0 ||
+        input.items.length > 200 ||
+        input.items.some(
+          (item) =>
+            typeof item !== "object" ||
+            item === null ||
+            typeof (item as { id?: unknown }).id !== "string" ||
+            !Number.isInteger((item as { revision?: unknown }).revision) ||
+            Number((item as { revision?: unknown }).revision) <= 0,
+        )
+      ) {
+        sendError(
+          response,
+          400,
+          "INVALID_SUBTASK_ORDER",
+          "Checklist order is invalid",
+        );
+        return true;
+      }
+      const items = input.items as readonly {
+        readonly id: string;
+        readonly revision: number;
+      }[];
+      if (new Set(items.map(({ id }) => id)).size !== items.length) {
+        sendError(
+          response,
+          400,
+          "INVALID_SUBTASK_ORDER",
+          "Checklist order contains duplicates",
+        );
+        return true;
+      }
+      const subtasks = database.reorderSubtasks(
+        session.owner.id,
+        taskId,
+        items,
+        new Date().toISOString(),
+      );
+      if (subtasks === undefined) {
+        sendError(response, 412, "SUBTASK_ORDER_CONFLICT", "Checklist changed");
+        return true;
+      }
+      sendJson(response, 200, {
+        subtasks: subtasks.map(subtaskResponse),
       });
       return true;
     }

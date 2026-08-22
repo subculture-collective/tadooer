@@ -6,7 +6,10 @@ import {
   type Task,
 } from "@suite/contracts";
 import { buildTodayQueue } from "@suite/domain";
-import { TimeBlockForm } from "./time-block-form.tsx";
+import {
+  TaskListItem,
+  type TaskListItemState,
+} from "./components/tasks/TaskListItem.tsx";
 
 export interface TodayQueueProps {
   readonly at: string;
@@ -29,18 +32,6 @@ export interface TodayQueueProps {
   readonly onRemoveTimeBlock: (task: Task) => Promise<void>;
   readonly onViewTasks: () => void;
 }
-
-const isNonterminal = (session: ActiveSession | null): boolean =>
-  session !== null &&
-  session.state !== "completed" &&
-  session.state !== "expired";
-
-const taskTime = (value: string, timeZone: string): string =>
-  new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
 
 export const TodayQueue = ({
   at,
@@ -117,80 +108,26 @@ export const TodayQueue = ({
       return next;
     });
   };
-  const row = (
-    task: Task,
-    state: "overdue" | "scheduled" | "planning" | "completed",
-  ) => {
-    const focusRunning =
-      isNonterminal(activeSession) && activeSession?.taskId === task.id;
-    const focusBlocked =
-      isNonterminal(activeSession) && activeSession?.taskId !== task.id;
-    const scheduleLabel =
-      task.plannedStart == null
-        ? `Schedule “${task.title}”`
-        : `Change schedule for “${task.title}”`;
+  const row = (task: Task, state: TaskListItemState) => {
     return (
-      <li key={task.id} className="today-task-row">
-        <div>
-          <strong>{task.title}</strong>
-          <p className="today-task-meta">
-            {state === "overdue"
-              ? "Overdue"
-              : state === "planning" || state === "completed"
-                ? "No time set"
-                : taskTime(
-                    task.plannedStart ?? at,
-                    preferences?.timeZone ?? "UTC",
-                  )}
-            {task.estimateMinutes == null
-              ? ""
-              : ` · ${String(task.estimateMinutes)} min`}
-          </p>
-        </div>
-        <div className="today-task-actions">
-          <button
-            type="button"
-            disabled={busy}
-            aria-label={`${task.status === "completed" ? "Reopen" : "Complete"} “${task.title}”`}
-            onClick={() =>
-              void changeStatus(
-                task,
-                task.status === "completed" ? "reopen" : "complete",
-              )
-            }
-          >
-            {task.status === "completed" ? "Reopen" : "Complete"}
-          </button>
-          {state === "completed" ? null : focusRunning ? (
-            <span>Focus running</span>
-          ) : (
-            <button
-              type="button"
-              disabled={busy || !focusActionsAvailable || focusBlocked}
-              aria-label={`Start focus on “${task.title}”`}
-              onClick={() => onStartFocus(task)}
-            >
-              Start focus
-            </button>
-          )}
-          {state !== "completed" && !focusActionsAvailable ? (
-            <span className="hint">Reconnect to start focus.</span>
-          ) : null}
-          {state === "completed" ? null : (
-            <details>
-              <summary>{scheduleLabel}</summary>
-              <TimeBlockForm
-                task={task}
-                calendars={calendars}
-                busy={busy}
-                available={calendarActionsAvailable}
-                onSubmit={onSubmitTimeBlock}
-                onRemove={onRemoveTimeBlock}
-              />
-            </details>
-          )}
-        </div>
-      </li>
+      <TaskListItem
+        key={task.id}
+        task={task}
+        state={state}
+        at={at}
+        timeZone={preferences?.timeZone ?? "UTC"}
+        activeSession={activeSession}
+        calendars={calendars}
+        busy={busy}
+        calendarActionsAvailable={calendarActionsAvailable}
+        focusActionsAvailable={focusActionsAvailable}
+        onStartFocus={onStartFocus}
+        onChangeTaskStatus={async (taskToChange, action) => {
+          await changeStatus(taskToChange, action);
+        }}
+        onSubmitTimeBlock={onSubmitTimeBlock}
+        onRemoveTimeBlock={onRemoveTimeBlock}
+      />
     );
   };
   const section = (

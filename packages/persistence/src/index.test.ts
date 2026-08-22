@@ -7,6 +7,51 @@ import { withTemporaryDirectory } from "@suite/test-support";
 import { SuiteDatabase } from "./index.ts";
 
 describe("SuiteDatabase", () => {
+  it("stores one immutable completion per habit period", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      database.createOwner({
+        id: "habit-owner",
+        username: "habit-owner",
+        displayName: "Habit owner",
+        passwordHash: "hash",
+        createdAt: "2026-08-21T00:00:00.000Z",
+      });
+      database.createHabit({
+        id: "habit-1",
+        ownerId: "habit-owner",
+        title: "Walk",
+        cadence: { kind: "daily" },
+        startedOn: "2026-08-21",
+        timeZone: "UTC",
+        revision: 1,
+        createdAt: "2026-08-21T00:00:00.000Z",
+        updatedAt: "2026-08-21T00:00:00.000Z",
+        archivedAt: null,
+      });
+      expect(
+        database.recordHabitOccurrence({
+          id: "occurrence-1",
+          habitId: "habit-1",
+          periodKey: "2026-08-21",
+          completedAt: "2026-08-21T12:00:00.000Z",
+          createdAt: "2026-08-21T12:00:00.000Z",
+        }),
+      ).toBe(true);
+      expect(
+        database.recordHabitOccurrence({
+          id: "occurrence-2",
+          habitId: "habit-1",
+          periodKey: "2026-08-21",
+          completedAt: "2026-08-21T13:00:00.000Z",
+          createdAt: "2026-08-21T13:00:00.000Z",
+        }),
+      ).toBe(false);
+      expect(database.listHabitOccurrences("habit-1")).toHaveLength(1);
+      database.close();
+    });
+  });
+
   it("upgrades a Phase 0A database without changing its installation identity", async () => {
     await withTemporaryDirectory((directory) => {
       const path = join(directory, "suite.sqlite");
@@ -48,8 +93,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 14,
-        expectedMigrationCount: 14,
+        appliedMigrationCount: 17,
+        expectedMigrationCount: 17,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -68,8 +113,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(14);
-      expect(reopenedState.expectedMigrationCount).toBe(14);
+      expect(reopenedState.appliedMigrationCount).toBe(17);
+      expect(reopenedState.expectedMigrationCount).toBe(17);
     });
   });
 
@@ -686,12 +731,20 @@ describe("SuiteDatabase", () => {
           title: "Plan Phase 1",
           plannedStart: "2026-08-06T14:00:00.000Z",
           estimateMinutes: 45,
+          deadlineDate: "2026-08-07",
+          deadlineAt: null,
         },
         "2026-08-06T00:01:00.000Z",
       );
       expect(patched).toMatchObject({
         kind: "updated",
-        task: { title: "Plan Phase 1", revision: 2, estimateMinutes: 45 },
+        task: {
+          title: "Plan Phase 1",
+          revision: 2,
+          estimateMinutes: 45,
+          deadlineDate: "2026-08-07",
+          deadlineAt: null,
+        },
       });
       expect(
         database.patchTask(

@@ -236,6 +236,9 @@ describe("App", () => {
     const tasks = renderToStaticMarkup(
       <App initialState={state} initialPath="/tasks" />,
     );
+    const inbox = renderToStaticMarkup(
+      <App initialState={state} initialPath="/inbox" />,
+    );
     const reuse = renderToStaticMarkup(
       <App initialState={state} initialPath="/reuse" />,
     );
@@ -248,6 +251,9 @@ describe("App", () => {
     expect(tasks).toContain("Route-backed task");
     expect(tasks).toContain("Filter tasks");
     expect(tasks).not.toContain("Template Library");
+    expect(inbox).toContain("Inbox");
+    expect(inbox).toContain("To clarify");
+    expect(inbox).toContain("Route-backed task");
     expect(reuse).toContain("Template Library");
     expect(reuse).toContain("Choice Pools");
     expect(connections).toContain("Discovered calendars");

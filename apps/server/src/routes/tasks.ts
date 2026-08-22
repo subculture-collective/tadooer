@@ -101,6 +101,18 @@ export const handleTasks: RouteHandler = async (
         revision: 1,
         createdAt: now,
         updatedAt: now,
+        ...(parsed.data.plannedStart === undefined
+          ? {}
+          : { plannedStart: parsed.data.plannedStart }),
+        ...(parsed.data.projectId === undefined
+          ? {}
+          : { projectId: parsed.data.projectId }),
+        ...(parsed.data.tagIds === undefined ? {} : { tagIds: parsed.data.tagIds }),
+        ...(parsed.data.deadline?.kind === "date"
+          ? { deadlineDate: parsed.data.deadline.value, deadlineAt: null }
+          : parsed.data.deadline?.kind === "instant"
+            ? { deadlineDate: null, deadlineAt: parsed.data.deadline.value }
+            : {}),
       },
     );
     if (result.kind === "conflict") {
@@ -198,6 +210,13 @@ export const handleTasks: RouteHandler = async (
             ...(parsed.data.estimateMinutes === undefined
               ? {}
               : { estimateMinutes: parsed.data.estimateMinutes }),
+            ...(parsed.data.deadline === undefined
+              ? {}
+              : parsed.data.deadline === null
+                ? { deadlineDate: null, deadlineAt: null }
+                : parsed.data.deadline.kind === "date"
+                  ? { deadlineDate: parsed.data.deadline.value, deadlineAt: null }
+                  : { deadlineDate: null, deadlineAt: parsed.data.deadline.value }),
           },
           new Date().toISOString(),
         ),

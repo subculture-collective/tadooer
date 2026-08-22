@@ -7,9 +7,9 @@ import type {
   PlannerResponse,
   Task,
 } from "@suite/contracts";
-import { Field } from "../field.tsx";
 import { FocusPanel, type FocusPanelCommand } from "../focus-panel.tsx";
 import { TodayQueue } from "../today-queue.tsx";
+import { TaskCaptureForm } from "../components/tasks/TaskCaptureForm.tsx";
 
 export interface TodayPageProps {
   readonly dayPlan: DayPlanResponse | undefined;
@@ -44,6 +44,17 @@ const calmStateLabel: Readonly<Record<DayPlanResponse["state"], string>> = {
   unavailable: "Unavailable right now",
   finished_for_today: "Finished for today",
 };
+
+export const updateHiddenCalendarIds = (
+  current: readonly string[],
+  calendarId: string,
+  checked: boolean,
+): readonly string[] =>
+  checked
+    ? current.filter((id) => id !== calendarId)
+    : current.includes(calendarId)
+      ? current
+      : [...current, calendarId];
 
 export const TodayPage = (props: TodayPageProps) => {
   const {
@@ -105,19 +116,7 @@ export const TodayPage = (props: TodayPageProps) => {
             ? "Syncing local tasks."
             : "Task sync is available."}
       </p>
-      <form
-        className="task-capture"
-        onSubmit={(event) => void onSubmitTask(event)}
-      >
-        <h2>Capture a task</h2>
-        <Field label="What needs doing?" name="title" autoComplete="off" />
-        <Field label="Notes" name="notes" autoComplete="off" required={false} />
-        <label className="field">
-          <span>Estimate minutes</span>
-          <input name="estimateMinutes" type="number" min="1" max="720" />
-        </label>
-        <button disabled={busy}>{busy ? "Capturing…" : "Capture task"}</button>
-      </form>
+      <TaskCaptureForm busy={busy} onSubmit={onSubmitTask} />
       <FocusPanel
         tasks={tasks}
         activeSession={activeSession}
@@ -174,13 +173,12 @@ export const TodayPage = (props: TodayPageProps) => {
                   <input
                     type="checkbox"
                     checked={!hiddenCalendarIds.includes(calendarId)}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
                       setHiddenCalendarIds((current) =>
-                        event.currentTarget.checked
-                          ? current.filter((id) => id !== calendarId)
-                          : [...current, calendarId],
-                      )
-                    }
+                        updateHiddenCalendarIds(current, calendarId, checked),
+                      );
+                    }}
                   />
                   {source.providerDisplayLabel} · {source.calendarName}
                 </label>

@@ -466,6 +466,7 @@ describe("Phase 5 reusable work HTTP integration", () => {
               Cookie: cookie,
               "X-Suite-Client-Id": client.client.id,
               "X-Suite-Client-Credential": client.clientCredential,
+              "X-Suite-Sync-Version": "2",
             },
           },
         );

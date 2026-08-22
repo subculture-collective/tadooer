@@ -32,6 +32,7 @@ import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
 import { handleAutomation } from "./routes/automation.ts";
 import { handleNotifications } from "./routes/notifications.ts";
+import { handleHabits } from "./routes/habits.ts";
 import { handleStatic } from "./routes/static.ts";
 
 export interface RunningSuiteServer {
@@ -228,6 +229,7 @@ export const startSuiteServer = async (
     handleCalendar,
     handleAutomation,
     handleNotifications,
+    handleHabits,
     handleTasks,
     handlePlanner,
     handleProjects,
