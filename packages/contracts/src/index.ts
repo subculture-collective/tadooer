@@ -1464,6 +1464,7 @@ export const automationTokenListResponseSchema = z
   .strict();
 
 export const automationOperationSchema = z.enum([
+  "subtasks.mutate",
   "projects.mutate",
   "tags.mutate",
   "tasks.assign_project",
@@ -1587,9 +1588,29 @@ export const automationSetTagsInputSchema = z
   })
   .strict();
 
+export const automationChecklistInputSchema = z
+  .object({
+    expectedTaskRevision: revisionSchema,
+    command: checklistCommandSchema,
+  })
+  .strict();
+export const checklistResourceInputSchema = z
+  .object({ taskId: entityIdSchema })
+  .strict();
+export const checklistResourceSchema = z
+  .object({ taskId: entityIdSchema, subtasks: z.array(subtaskSchema) })
+  .strict();
+export const checklistMutationResponseSchema = checklistResourceSchema
+  .extend({ deletedIds: z.array(entityIdSchema).max(1) })
+  .strict();
+
 export const automationPreviewCommandSchema = z.discriminatedUnion(
   "operation",
   [
+    z.object({
+      operation: z.literal("subtasks.mutate"),
+      input: automationChecklistInputSchema,
+    }),
     z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
@@ -1682,6 +1703,11 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
 const automationToolInputSchema = (
   operation: z.infer<typeof automationOperationSchema>,
 ): z.ZodType => {
+  if (operation === "subtasks.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationChecklistInputSchema,
+    });
   if (operation === "projects.mutate")
     return z.object({
       operation: z.literal(operation),
@@ -1776,6 +1802,7 @@ export const automationAffectedEntitySchema = z
     entityKind: z.enum([
       "habit",
       "task",
+      "subtask",
       "calendar",
       "active_session",
       "template",
@@ -1795,6 +1822,7 @@ export const automationBaseRevisionSchema = z
     entityKind: z.enum([
       "habit",
       "task",
+      "subtask",
       "active_session",
       "template",
       "template_set",
@@ -1815,8 +1843,8 @@ export const automationPreviewSchema = z
     operation: automationOperationSchema,
     inputHash: z.string().regex(/^[a-f0-9]{64}$/),
     summary: z.string().trim().min(1).max(1_000),
-    affected: z.array(automationAffectedEntitySchema).max(125),
-    baseRevisions: z.array(automationBaseRevisionSchema).max(125),
+    affected: z.array(automationAffectedEntitySchema).max(201),
+    baseRevisions: z.array(automationBaseRevisionSchema).max(201),
     expiresAt: z.iso.datetime(),
     requiresConfirmation: z.literal(true),
   })
@@ -1843,6 +1871,7 @@ export const habitMutationResponseSchema = z
   .strict();
 
 export const automationExecutionResultSchema = z.union([
+  checklistMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   habitMutationResponseSchema,
@@ -1897,6 +1926,18 @@ export interface AutomationCatalogEntry {
 // This is the only automation catalog. HTTP handlers and the stdio adapter must
 // import it instead of maintaining parallel operation lists.
 export const automationCatalog = [
+  {
+    id: "subtasks.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/subtasks",
+    mcpName: "suite.subtasks.list",
+    mcpUri: "suite://v1/subtasks",
+    inputSchema: checklistResourceInputSchema,
+    outputSchema: checklistResourceSchema,
+  },
+
   {
     id: "habits.list",
     kind: "resource",
@@ -2017,7 +2058,7 @@ export const automationCatalog = [
           ? "tags:write"
           : id === "habits.mutate"
             ? "habits:write"
-            : id.startsWith("tasks.")
+            : id.startsWith("tasks.") || id === "subtasks.mutate"
               ? "tasks:write"
               : id === "schedule.create_time_block"
                 ? "schedule:write"

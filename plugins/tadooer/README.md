@@ -36,7 +36,8 @@ Load the copied plugin through your client's local plugin support. For Claude Co
 | Instantiate templates/sets, resolve placeholders, mutate habits              | Preview, then confirm                             |
 | Task editing, completion, and reopening                                      | Preview, revision check, then atomic confirmation |
 | Task deletion and restoration                                                | Preview, revision check, then atomic confirmation |
-| Project/tag mutation                                                         | Not yet exposed                                   |
+| Project/tag lifecycle and task assignment | Preview, revision check, then atomic confirmation |
+| Checklist read/create/edit/reorder/delete | Task scopes, concrete preview, atomic confirmation |
 | Full hierarchy, recurrence, worklog migration                                | Not yet implemented                               |
 | Google–Baikal two-way hub                                                    | Not yet implemented                               |
 | Hosted MCP with scoped OAuth                                                 | Not yet implemented                               |
