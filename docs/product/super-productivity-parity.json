@@ -1,0 +1,693 @@
+{
+  "version": 1,
+  "source": {
+    "version": "18.16.0",
+    "commit": "a4d74ea3215be7d07b41ff38eebc3ebffca9ebc8",
+    "crossModelVersion": 4.5,
+    "installedVersion": "18.16.0",
+    "installedAsarSha256": "200cd4e96904061f37c6f0f31a227b37d05175295e28b65b27159eeebcaba1d6",
+    "installedCommitVerified": false,
+    "mcpCommit": "6dde7f75f1f79a064b7d59346259d55076a35eb4",
+    "mcpProtocolVersion": "2.0",
+    "mcpCatalogSha256": "679a55712ac5be4cf943647143beaaab49818f232c8934b793d5f409bb004b20",
+    "files": {
+      "src/app/op-log/model/model-config.ts": "a09bd683bb9d0f4cffd58a3de6333df3cb5b752d566c0d6996686b6bb0823c84",
+      "src/app/features/tasks/task.model.ts": "c3da640b0f55eda8ead96dc187587548a69bdbb124a5dd6be6246865c39f35df",
+      "src/app/features/task-repeat-cfg/task-repeat-cfg.model.ts": "6ede99afb3617d220351791d74c0b517f7c31a58602a34ed5f76f980670d0ef1",
+      "src/app/features/project/project.model.ts": "212113d4270c383d54db02f89858e121940054b6997197096938485c2e3dd2f4",
+      "packages/plugin-api/src/types.ts": "49564c887f0d416cbc6bdd467dc835218b40ccbba85d8b941c7ff02b5378da81"
+    }
+  },
+  "sourceFeatureDirectories": [
+    "add-tasks-for-tomorrow",
+    "android",
+    "archive",
+    "before-finish-day",
+    "boards",
+    "bottom-panel",
+    "calendar-integration",
+    "config",
+    "dialog-please-rate",
+    "finish-day-before-close",
+    "focus-mode",
+    "history",
+    "idle",
+    "ios",
+    "issue",
+    "issue-panel",
+    "markdown-checklist",
+    "menu-tree",
+    "metric",
+    "mobile",
+    "note",
+    "onboarding",
+    "panels",
+    "plainspace",
+    "planner",
+    "project",
+    "reminder",
+    "right-panel",
+    "schedule",
+    "section",
+    "shepherd",
+    "simple-counter",
+    "tag",
+    "take-a-break",
+    "task-repeat-cfg",
+    "task-view-customizer",
+    "tasks",
+    "time-tracking",
+    "tracking-reminder",
+    "ui-helper",
+    "user-profile",
+    "work-context",
+    "work-view",
+    "worklog"
+  ],
+  "exportSections": [
+    "archiveOld",
+    "archiveYoung",
+    "boards",
+    "globalConfig",
+    "issueProvider",
+    "menuTree",
+    "metric",
+    "note",
+    "planner",
+    "pluginMetadata",
+    "pluginUserData",
+    "project",
+    "reminders",
+    "section",
+    "simpleCounter",
+    "tag",
+    "task",
+    "taskRepeatCfg",
+    "timeTracking"
+  ],
+  "rows": [
+    {
+      "id": "core-tasks",
+      "sourceFeatures": [
+        "tasks"
+      ],
+      "exportSections": [
+        "task"
+      ],
+      "issue": 47,
+      "status": "partial",
+      "mapping": "Core titles/notes/timestamps/dates/estimates map transactionally; unsupported metadata blocks apply. Source IDs remain provenance, not destination IDs.",
+      "acceptance": "Review/apply/replay imported tasks; original timestamps and notes match, changed source cannot overwrite destination edits.",
+      "offlineSync": "Core task outbox exists; plannedStart remains calendar-authoritative.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "hierarchy",
+      "sourceFeatures": [
+        "tasks"
+      ],
+      "exportSections": [
+        "task"
+      ],
+      "issue": 27,
+      "status": "missing",
+      "mapping": "Source children are full tasks, not checklist-only records.",
+      "acceptance": "Preserve ordered parent/child identity and all child fields; test move/reorder/cycles and parent/leaf totals.",
+      "offlineSync": "Define structural conflict and replay rules before enabling offline hierarchy writes.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "projects",
+      "sourceFeatures": [
+        "project"
+      ],
+      "exportSections": [
+        "project",
+        "menuTree"
+      ],
+      "issue": 28,
+      "status": "partial",
+      "mapping": "Basic project identity/title exists; completion, backlog, notes, folders/order need parity.",
+      "acceptance": "Preserve project lifecycle and task/backlog/note ordering with missing historical references.",
+      "offlineSync": "Current organization snapshots exist; new fields need explicit versioning.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "tags",
+      "sourceFeatures": [
+        "tag"
+      ],
+      "exportSections": [
+        "tag"
+      ],
+      "issue": 28,
+      "status": "partial",
+      "mapping": "Basic tags/assignment exist; virtual Today and source context/config are not ordinary imported tags.",
+      "acceptance": "Distinguish virtual views, archived tags and task membership; verify case/identity behavior.",
+      "offlineSync": "Preserve conflict-safe task assignment and original source references.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "planning",
+      "sourceFeatures": [
+        "planner",
+        "schedule",
+        "add-tasks-for-tomorrow",
+        "before-finish-day",
+        "finish-day-before-close"
+      ],
+      "exportSections": [
+        "planner",
+        "task"
+      ],
+      "issue": 29,
+      "status": "partial",
+      "mapping": "Today queue and timed blocks exist; date-only planning, source ordering, daily rituals, schedule hygiene and automatic planning need explicit parity.",
+      "acceptance": "Exercise plan-today/order/reschedule/clear/finish-day and date-only workflows with imported data, including DST.",
+      "offlineSync": "Do not queue provider writes as ordinary task updates; design local planning fields separately.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "history",
+      "sourceFeatures": [
+        "archive",
+        "history"
+      ],
+      "exportSections": [
+        "archiveYoung",
+        "archiveOld"
+      ],
+      "issue": 38,
+      "status": "missing",
+      "mapping": "Both stores inventoried; archived task apply blocked. Preserve unknown historical project/tag/repeat identity and blank-title dispositions.",
+      "acceptance": "Reconcile raw 4,721 archive records, every excluded record and original lifecycle timestamps.",
+      "offlineSync": "Historical identity and restore must survive sync reset and replay.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "time",
+      "sourceFeatures": [
+        "time-tracking",
+        "worklog"
+      ],
+      "exportSections": [
+        "timeTracking",
+        "task",
+        "archiveYoung",
+        "archiveOld"
+      ],
+      "issue": 41,
+      "status": "partial",
+      "mapping": "Active interval tracking exists; source daily history, correction and reporting remain unqualified.",
+      "acceptance": "Reconcile leaf/parent totals and two old-archive mismatches, test manual corrections and imported reports.",
+      "offlineSync": "Immutable facts/corrections must not create duplicate intervals across clients.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "recurrence",
+      "sourceFeatures": [
+        "task-repeat-cfg"
+      ],
+      "exportSections": [
+        "taskRepeatCfg",
+        "task"
+      ],
+      "issue": 42,
+      "status": "missing",
+      "mapping": "Source has daily/weekly/monthly/yearly, completion-based generation, inherited child templates and deleted instances; habits do not substitute.",
+      "acceptance": "Exercise wait-for-completion, repeat-from-completion, pause, missed work, monthly-last-day/week and child templates.",
+      "offlineSync": "Server-owned occurrence generation with durable identities and replay.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "notes",
+      "sourceFeatures": [
+        "note",
+        "markdown-checklist",
+        "plainspace"
+      ],
+      "exportSections": [
+        "note",
+        "task",
+        "project"
+      ],
+      "issue": 28,
+      "status": "partial",
+      "mapping": "Task notes exist; standalone/project notes and markdown/checklist/space workflows require mapping.",
+      "acceptance": "Preserve associations, order, formatting and links through import and editing.",
+      "offlineSync": "Specify note revision/conflict rules; never silently overwrite independent edits.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "linked-issues",
+      "sourceFeatures": [
+        "issue",
+        "issue-panel"
+      ],
+      "exportSections": [
+        "issueProvider",
+        "task"
+      ],
+      "issue": 30,
+      "status": "missing",
+      "mapping": "Issue identity/provider fields and attachments currently block full import; provider credentials are excluded.",
+      "acceptance": "Recover linked issues and supported attachments; preserve missing/external references and require fresh authorization.",
+      "offlineSync": "External provider operations need durable outcomes; offline links are read-only until qualified.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "reminders",
+      "sourceFeatures": [
+        "reminder"
+      ],
+      "exportSections": [
+        "reminders",
+        "task"
+      ],
+      "issue": 29,
+      "status": "partial",
+      "mapping": "ntfy scheduled reminders exist; source task/deadline reminder timing needs parity.",
+      "acceptance": "Preserve six source task reminders plus deadline rules, timezone semantics, suppression and non-duplication.",
+      "offlineSync": "Server delivery ledger remains authority; offline drafts cannot imply sent reminders.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "boards",
+      "sourceFeatures": [
+        "boards",
+        "section",
+        "task-view-customizer",
+        "menu-tree"
+      ],
+      "exportSections": [
+        "boards",
+        "section",
+        "menuTree"
+      ],
+      "issue": 63,
+      "status": "missing",
+      "mapping": "Source board/section/task-view state has no qualified Tadooer mapping.",
+      "acceptance": "Preserve board/section/order and view semantics; test moved/archived references.",
+      "offlineSync": "Define structural sync and competing reorder rules.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "counters",
+      "sourceFeatures": [
+        "simple-counter",
+        "metric",
+        "history"
+      ],
+      "exportSections": [
+        "simpleCounter",
+        "metric"
+      ],
+      "issue": 64,
+      "status": "missing",
+      "mapping": "Source counters and metric history are not equivalent to habit streaks.",
+      "acceptance": "Reconcile counts/units/history, then exercise increment/decrement/edit/delete with provenance.",
+      "offlineSync": "Define idempotent increments and concurrent edit policy.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "focus",
+      "sourceFeatures": [
+        "focus-mode",
+        "idle",
+        "take-a-break",
+        "tracking-reminder"
+      ],
+      "exportSections": [
+        "globalConfig",
+        "timeTracking"
+      ],
+      "issue": 65,
+      "status": "partial",
+      "mapping": "Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.",
+      "acceptance": "Exercise focus modes, idle-time allocation, breaks and tracking reminders without duplicate worklog intervals.",
+      "offlineSync": "Retain lease/controller semantics; offline focus remains an explicit unsupported boundary until designed.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "plugins",
+      "sourceFeatures": [],
+      "exportSections": [
+        "pluginUserData",
+        "pluginMetadata"
+      ],
+      "issue": 66,
+      "status": "missing",
+      "mapping": "Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.",
+      "acceptance": "Map plugin capabilities and installed metadata to permissioned equivalents or an explicit extension contract.",
+      "offlineSync": "Plugin state must follow the same ownership and synchronization rules as app state.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "preferences",
+      "sourceFeatures": [
+        "config",
+        "user-profile",
+        "work-context",
+        "work-view",
+        "ui-helper",
+        "onboarding",
+        "shepherd",
+        "panels",
+        "bottom-panel",
+        "right-panel"
+      ],
+      "exportSections": [
+        "globalConfig"
+      ],
+      "issue": 67,
+      "status": "partial",
+      "mapping": "Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.",
+      "acceptance": "Qualify keyboard/navigation/contextual views, onboarding and accessible responsive states; report excluded settings.",
+      "offlineSync": "Separate durable preferences from transient selection/panel/runtime state.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "calendar",
+      "sourceFeatures": [
+        "calendar-integration"
+      ],
+      "exportSections": [
+        "globalConfig",
+        "issueProvider"
+      ],
+      "issue": 50,
+      "status": "partial",
+      "mapping": "Google/Baikal federation exists; plugin calendars and opt-in canonical bridge need qualification.",
+      "acceptance": "Complete mapped provider journeys, recurrence/conflicts/revocation and original source calendar linkage.",
+      "offlineSync": "Server-owned provider sync; no closed-browser claim until scheduler qualification.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "platforms",
+      "sourceFeatures": [
+        "android",
+        "ios",
+        "mobile"
+      ],
+      "exportSections": [
+        "globalConfig"
+      ],
+      "issue": 24,
+      "status": "decision-gated",
+      "mapping": "PWA and Linux packaging exist; platform-specific native delivery requires explicit platform design.",
+      "acceptance": "Record exact supported workflows and physical-device gaps without claiming native mobile parity.",
+      "offlineSync": "Platform credential/offline/background behavior remains separately gated.",
+      "assistantIssue": 32
+    },
+    {
+      "id": "presentation",
+      "sourceFeatures": [
+        "dialog-please-rate"
+      ],
+      "exportSections": [],
+      "issue": 52,
+      "status": "decision-gated",
+      "mapping": "Store-rating prompts and engagement presentation are not migrated data; decide relevant product outcomes under post-parity discovery.",
+      "acceptance": "Record an explicit disposition; do not count omitted source presentation as delivered workflow parity.",
+      "offlineSync": "No new synced entity is implied.",
+      "assistantIssue": 32
+    }
+  ],
+  "mcpActions": [
+    {
+      "action": "task.create",
+      "tool": "create_task",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.list",
+      "tool": "get_tasks",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.createWithSubtasks",
+      "tool": "create_task_with_subtasks",
+      "row": "hierarchy"
+    },
+    {
+      "action": "task.listArchived",
+      "tool": "get_archived_tasks",
+      "row": "history"
+    },
+    {
+      "action": "task.listCurrentContext",
+      "tool": "get_current_context_tasks",
+      "row": "planning"
+    },
+    {
+      "action": "task.get",
+      "tool": "get_task",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.update",
+      "tool": "update_task",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.setRecurrence",
+      "tool": "set_task_recurrence",
+      "row": "recurrence"
+    },
+    {
+      "action": "task.updateRecurrence",
+      "tool": "update_task_recurrence",
+      "row": "recurrence"
+    },
+    {
+      "action": "task.deleteRecurrence",
+      "tool": "delete_task_recurrence",
+      "row": "recurrence"
+    },
+    {
+      "action": "task.complete",
+      "tool": "complete_task",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.uncomplete",
+      "tool": "uncomplete_task",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.archive",
+      "tool": "archive_task",
+      "row": "history"
+    },
+    {
+      "action": "task.restore",
+      "tool": "restore_task",
+      "row": "history"
+    },
+    {
+      "action": "task.delete",
+      "tool": "delete_task",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.addTime",
+      "tool": "add_time_to_task",
+      "row": "time"
+    },
+    {
+      "action": "task.start",
+      "tool": "start_task",
+      "row": "focus"
+    },
+    {
+      "action": "task.stop",
+      "tool": "stop_task",
+      "row": "focus"
+    },
+    {
+      "action": "task.current",
+      "tool": "get_current_task",
+      "row": "focus"
+    },
+    {
+      "action": "task.worklog",
+      "tool": "get_worklog",
+      "row": "time"
+    },
+    {
+      "action": "task.bulkComplete",
+      "tool": "bulk_complete_tasks",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.bulkUpdate",
+      "tool": "bulk_update_tasks",
+      "row": "core-tasks"
+    },
+    {
+      "action": "task.bulkReschedule",
+      "tool": "bulk_reschedule_tasks",
+      "row": "planning"
+    },
+    {
+      "action": "task.clearScheduleForDay",
+      "tool": "clear_schedule_for_day",
+      "row": "planning"
+    },
+    {
+      "action": "task.scheduleHealth",
+      "tool": "get_schedule_health",
+      "row": "planning"
+    },
+    {
+      "action": "task.scheduleRange",
+      "tool": "get_schedule_range",
+      "row": "planning"
+    },
+    {
+      "action": "task.findStaleSchedule",
+      "tool": "find_stale_schedule",
+      "row": "planning"
+    },
+    {
+      "action": "task.findUnscheduledActive",
+      "tool": "find_unscheduled_active_tasks",
+      "row": "planning"
+    },
+    {
+      "action": "task.makePlannedAt",
+      "tool": "make_planned_at",
+      "row": "planning"
+    },
+    {
+      "action": "task.autoSchedule",
+      "tool": "auto_schedule_tasks",
+      "row": "planning"
+    },
+    {
+      "action": "task.compactNotes",
+      "tool": "compact_task_notes",
+      "row": "notes"
+    },
+    {
+      "action": "task.planToday",
+      "tool": "plan_tasks_for_today",
+      "row": "planning"
+    },
+    {
+      "action": "task.addTag",
+      "tool": "add_tag_to_task",
+      "row": "tags"
+    },
+    {
+      "action": "task.removeTag",
+      "tool": "remove_tag_from_task",
+      "row": "tags"
+    },
+    {
+      "action": "task.moveToProject",
+      "tool": "move_task_to_project",
+      "row": "projects"
+    },
+    {
+      "action": "task.reorder",
+      "tool": "reorder_task",
+      "row": "planning"
+    },
+    {
+      "action": "task.reorderTasks",
+      "tool": "reorder_tasks",
+      "row": "planning"
+    },
+    {
+      "action": "project.list",
+      "tool": "get_projects",
+      "row": "projects"
+    },
+    {
+      "action": "project.create",
+      "tool": "create_project",
+      "row": "projects"
+    },
+    {
+      "action": "project.update",
+      "tool": "update_project",
+      "row": "projects"
+    },
+    {
+      "action": "tag.list",
+      "tool": "get_tags",
+      "row": "tags"
+    },
+    {
+      "action": "tag.create",
+      "tool": "create_tag",
+      "row": "tags"
+    },
+    {
+      "action": "tag.update",
+      "tool": "update_tag",
+      "row": "tags"
+    },
+    {
+      "action": "notification.show",
+      "tool": "show_notification",
+      "row": "reminders"
+    },
+    {
+      "action": "notification.notify",
+      "tool": "notify_user",
+      "row": "reminders"
+    },
+    {
+      "action": "counter.list",
+      "tool": "get_counters",
+      "row": "counters"
+    },
+    {
+      "action": "counter.get",
+      "tool": "get_counter",
+      "row": "counters"
+    },
+    {
+      "action": "counter.set",
+      "tool": "set_counter",
+      "row": "counters"
+    },
+    {
+      "action": "counter.increment",
+      "tool": "increment_counter",
+      "row": "counters"
+    },
+    {
+      "action": "counter.decrement",
+      "tool": "decrement_counter",
+      "row": "counters"
+    },
+    {
+      "action": "counter.delete",
+      "tool": "delete_counter",
+      "row": "counters"
+    },
+    {
+      "action": "bridge.health",
+      "tool": "bridge_health",
+      "row": "plugins"
+    },
+    {
+      "action": "bridge.checkConnection",
+      "tool": "check_connection",
+      "row": "plugins"
+    },
+    {
+      "action": "bridge.debugDirectories",
+      "tool": "debug_directories",
+      "row": "plugins"
+    },
+    {
+      "action": "bridge.capabilities",
+      "tool": "bridge_capabilities",
+      "row": "plugins"
+    }
+  ]
+}
