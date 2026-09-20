@@ -86,7 +86,8 @@ are not evidence that the user's real history was migrated.
 - Verification: 203 tests, four builds, owner/CSRF rejection, no task writes, and
   browser upload of the pinned upstream overdue fixture (one project, one tag,
   five repeat configurations). Synthetic tests cover hierarchical and archived
-  tasks. The owner actual export has not been imported or qualified.
+  tasks. At that checkpoint, the owner actual export had not been imported or qualified;
+  see the later real-backup qualification below.
 - Live Super Productivity MCP health and capabilities responded successfully;
   plugin 0.1.0/protocol 2.0 includes recurrence, archive, worklog, bulk scheduling,
   project/tag mutations, and counters. These extend the initial parity inventory.
@@ -181,3 +182,19 @@ qualification. This is not a blocker for import, parity, or MCP implementation.
   backup with its matching application version; never delete migration history to
   force an older binary to accept the new database. The disposable browser DB/key
   checkpoint is `/tmp/tadooer-sprint14/before-import-migration`.
+
+## Real backup qualification — September 20
+
+- Located the running Super Productivity installation's local automatic backup
+  and ran the current importer directly against it, read-only. See the
+  [sanitized qualification report](../../discovery/2026-09-20-real-super-productivity-backup.md)
+  for the exact fingerprint, inventory, issue counts, and next implementation work.
+- Raw inventory: 4,827 tasks, including 4,721 archived records; 49 projects,
+  21 tags, and 51 repeat configurations. Six blank-title old archive records are
+  excluded from preview totals. All unresolved-reference findings are in the old
+  archive; they do not establish a problem with active source data.
+- Apply correctly remains blocked by parity and integrity findings. No actual
+  owner records were imported, no source data was modified, and production was
+  unchanged. Full migration and live client qualification remain outstanding.
+- This backup is only 2,447 bytes below the 4 MiB limit. Address bounded upload
+  capacity before qualifying a newer export; do not trim history to pass.
