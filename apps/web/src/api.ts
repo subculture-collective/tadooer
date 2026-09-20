@@ -1,3 +1,4 @@
+import { superProductivityPreviewSchema } from "@suite/contracts";
 import {
   apiErrorSchema,
   activeSessionCommandResponseSchema,
@@ -975,3 +976,10 @@ export const revokeCalendarFeed = (id: string, csrfToken: string) =>
     method: "DELETE",
     headers: { "X-CSRF-Token": csrfToken },
   });
+
+export const previewTaskImport = (rawJson: string, csrfToken: string) =>
+  request(
+    "/api/imports/super-productivity/preview",
+    superProductivityPreviewSchema,
+    { method: "POST", headers: { "X-CSRF-Token": csrfToken }, body: rawJson },
+  );

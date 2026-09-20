@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+export * from "./super-productivity.ts";
 
 export type ImportSourceKind = "ics" | "google_ics";
 

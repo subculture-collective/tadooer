@@ -2066,3 +2066,46 @@ export const isHabitSyncOperation = (
 
 export type Habit = z.infer<typeof habitSchema>;
 export type HabitOccurrence = z.infer<typeof habitOccurrenceSchema>;
+
+export const superProductivityPreviewSchema = z.object({
+  source: z.literal("super_productivity"),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  canApply: z.literal(false),
+  totals: z.object({
+    tasks: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    archived: z.number().int().nonnegative(),
+    childTasks: z.number().int().nonnegative(),
+    projects: z.number().int().nonnegative(),
+    tags: z.number().int().nonnegative(),
+    repeatConfigurations: z.number().int().nonnegative(),
+    trackedMilliseconds: z.number().nonnegative(),
+  }),
+  tasks: z.array(
+    z.object({
+      sourceId: z.string(),
+      title: z.string(),
+      completed: z.boolean(),
+      archived: z.boolean(),
+      parentId: z.string().nullable(),
+      projectId: z.string().nullable(),
+      repeatConfigId: z.string().nullable(),
+      estimateMilliseconds: z.number().nonnegative(),
+      trackedMilliseconds: z.number().nonnegative(),
+      scheduledAt: z.iso.datetime().nullable(),
+      scheduledDay: z.string().nullable(),
+      deadlineAt: z.iso.datetime().nullable(),
+      deadlineDay: z.string().nullable(),
+    }),
+  ),
+  issues: z.array(
+    z.object({
+      code: z.string(),
+      sourceId: z.string().nullable(),
+      detail: z.string(),
+    }),
+  ),
+});
+export type SuperProductivityPreview = z.infer<
+  typeof superProductivityPreviewSchema
+>;

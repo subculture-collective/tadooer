@@ -72,3 +72,21 @@ Source evidence: Super Productivity `packages/plugin-api/src/types.ts`,
 `src/app/op-log/model/model-config.ts`. Reconcile the installed/exported version
 before declaring migration complete. Source inspection and a synthetic fixture
 are not evidence that the user's real history was migrated.
+
+## Execution evidence
+
+- Reliability slices committed and verified; see Sprint 14 for exact checks.
+- Super Productivity preview delivered in Connections and the authenticated
+  `/api/imports/super-productivity/preview` endpoint. It explicitly cannot apply
+  data yet. Initial upload limit is 4 MiB; larger exports must be retained intact.
+- Parser inventories live/young/old tasks, projects, tags, repeat configurations,
+  dates, and leaf-task time. Reports duplicate IDs, broken references, invalid
+  dates, mismatched time totals, and known parity gaps. Source configuration and
+  credentials are not echoed.
+- Verification: 203 tests, four builds, owner/CSRF rejection, no task writes, and
+  browser upload of the pinned upstream overdue fixture (one project, one tag,
+  five repeat configurations). Synthetic tests cover hierarchical and archived
+  tasks. The owner actual export has not been imported or qualified.
+- Live Super Productivity MCP health and capabilities responded successfully;
+  plugin 0.1.0/protocol 2.0 includes recurrence, archive, worklog, bulk scheduling,
+  project/tag mutations, and counters. These extend the initial parity inventory.
