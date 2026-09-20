@@ -1,5 +1,8 @@
 import { useState } from "react";
-import type { SuperProductivityPreview } from "@suite/contracts";
+import {
+  superProductivityImportLimits as limits,
+  type SuperProductivityPreview,
+} from "@suite/contracts";
 import { applyTaskImport, previewTaskImport } from "../api.ts";
 
 export const SuperProductivityImport = ({
@@ -22,9 +25,9 @@ export const SuperProductivityImport = ({
     setReport(null);
     setError(null);
     if (file === undefined) return;
-    if (file.size > 4 * 1024 * 1024) {
+    if (file.size > limits.bytes) {
       setError(
-        "This preview supports exports up to 4 MiB. Keep your full export; do not remove history to fit the limit.",
+        `This preview supports exports up to ${limits.label}. Keep your full export; do not remove history to fit the limit.`,
       );
       return;
     }
@@ -87,7 +90,8 @@ export const SuperProductivityImport = ({
       </label>
       <p className="hint">
         The file stays in this browser until you preview it. Preview sends it to
-        your Tadooer server. Keep the original backup.
+        your Tadooer server. Limit: {limits.label},{" "}
+        {limits.records.toLocaleString()} records. Keep the original backup.
       </p>
       <button
         type="button"

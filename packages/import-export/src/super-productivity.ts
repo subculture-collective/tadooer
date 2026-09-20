@@ -1,3 +1,4 @@
+import { superProductivityImportLimits as limits } from "@suite/contracts/import-limits";
 import { createHash } from "node:crypto";
 
 type ObjectValue = Readonly<Record<string, unknown>>;
@@ -46,8 +47,8 @@ export interface SuperProductivityPreview {
 export const previewSuperProductivity = (
   raw: string,
 ): SuperProductivityPreview => {
-  if (Buffer.byteLength(raw, "utf8") > 4 * 1024 * 1024)
-    throw new Error("Export exceeds the initial 4 MiB preview limit");
+  if (Buffer.byteLength(raw, "utf8") > limits.bytes)
+    throw new Error(`Export exceeds the ${limits.label} import limit`);
   const parsed: unknown = JSON.parse(raw);
   const envelope = object(parsed);
   const data = object(envelope?.data) ?? envelope;
@@ -58,8 +59,11 @@ export const previewSuperProductivity = (
   const issues: { code: string; sourceId: string | null; detail: string }[] =
     [];
   const issue = (code: string, sourceId: string | null, detail: string) => {
+    if (issues.length >= limits.issues)
+      throw new Error("Export exceeds the import diagnostic budget");
     issues.push({ code, sourceId, detail });
   };
+  let recordCount = 0;
   const entities = (value: unknown, label: string): ObjectValue => {
     if (value === undefined) return {};
     const state = object(value);
@@ -72,6 +76,9 @@ export const previewSuperProductivity = (
       );
       return {};
     }
+    recordCount += Math.max(Object.keys(records).length, state.ids.length);
+    if (recordCount > limits.records)
+      throw new Error("Export exceeds the 50,000 record import limit");
     const ids = state.ids as unknown[];
     const seen = new Set<string>();
     for (const id of ids) {
