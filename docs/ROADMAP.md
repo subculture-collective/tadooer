@@ -1,22 +1,15 @@
 # Productivity Suite Roadmap
 
-**Status:** Approved 2026-08-05. Phase order is dependency order rather than a
-calendar-date commitment; movement between phases follows the feature
-prioritization policy and recorded exit evidence.
+**Status:** Initial phase framework approved August 5; product scope amended by
+the September 20 interview. Dependency order is not a calendar commitment.
 
-## Current release checkpoint — September 20, 2026
+## Current checkpoint
 
-Production runs candidate `0.14.1-calendar`, application revision `a6983dc`,
-with 19 migrations. Deadline/offline sync, habits, structured capture, and
-calendar session recovery/full resync are deployed and verified. Google resync
-has been verified in the owner account; all 16 calendars are fresh. Monitoring
-now flows from the NUC agent to Dozor, with seven evaluated Tadooer alerts.
-
-The new seven-day soak is active from `2026-09-20T12:55:39.883Z`, pinned to
-`sha256:68438591510360e82e84d98e83d2825bce5134004a884a26e55c75403080548f`.
-No stable qualification is claimed. Older checkpoints below are historical.
-[Sprint 14](superpowers/plans/2026-09-20-sprint-14-daily-use-reliability.md)
-tracks the next development work separately from the frozen production candidate.
+See [STATUS.md](STATUS.md) for the single current source, publication, deployment
+and qualification checkpoint, and [roadmap issue #15](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/15)
+for all implementation and acceptance issues. The numbered phases below preserve
+historical scope and evidence; their original exclusions do not cancel the
+September parity, assistant and opt-in calendar-hub decisions.
 
 ## Strategy
 
@@ -421,7 +414,7 @@ read-only calendar feed, and use provenance-aware import adapters.
 - Revocable read-only iCalendar capability feed
 - Source adapter framework for later Super Productivity, Apple Reminders, Google
   Tasks, and other products
-- One-way mirror only after a demonstrated client limitation and separate review
+- Historical Phase 7 scope covered one-time migration and publication. The separately approved opt-in Google/Baikal bridge follows ADR 0017 and issues #35–#50.
 
 ### Exit evidence
 
@@ -479,8 +472,9 @@ content-free alerts, coherent SQLite/key backup, encrypted Restic inclusion,
 isolated restore, immutable rollback, and forward recovery have passed. A clean
 production database was used and Super Productivity remains available.
 
-Interactive owner creation plus explicit Baïkal and Google authorization remain
-acceptance evidence before this phase is marked complete. The production Google
+The original Phase 9 owner/provider acceptance prerequisites were subsequently
+recorded as exercised in the September deployment checkpoint; see STATUS.md.
+This historical paragraph is not a current list of missing setup steps. The Google
 client must use exactly
 `https://tadooer.subcult.tv/api/connectors/google/callback`.
 
@@ -513,8 +507,8 @@ Lead and at-start reminders follow calendar freshness, working hours, breaks,
 busy intervals, task completion, and active-focus suppression. Detailed content
 is limited to task title, localized planned time, and a Suite deep link. Notes,
 event titles, provider/account data, connector secrets, and automation tokens
-are excluded. Live authenticated ntfy delivery remains production acceptance
-evidence before the phase is operationally complete.
+are excluded. Live authenticated ntfy evidence must be read from the relevant candidate and
+soak record (#21); source tests alone do not complete that acceptance gate.
 
 ## Phase 12: Seven-day soak and stable release
 
@@ -526,17 +520,17 @@ recovery, authentication and non-duplication checks, and confirmation that
 Super Productivity stayed available. P0/P1 or any failed required observation
 blocks qualification.
 
-The current production soak started September 20, 2026 after owner/provider
+The recorded September production soak started September 20, 2026 after owner/provider
 setup and deployment verification. The August ledger and a failed September
-collector run are preserved separately. Current-window health and backup
-evidence is collected automatically; explicit workflow observations and human
+collector run are preserved separately. The collector is designed to gather current-window health and backup
+evidence automatically; its latest success must be verified from the ledger, and explicit workflow observations and human
 sign-off remain required. Super Productivity is not changed automatically.
 
 ## Phase 13: Actionable Today Queue
 
 **Status:** Implementation and local qualification completed on 2026-08-21.
 Focused automated coverage, the repository gate, and authenticated local-browser
-validation are green. Production now runs candidate `0.13.0-phase13`, source
+validation passed at that checkpoint. The August 21 deployment ran candidate `0.13.0-phase13`, source
 revision `c262a46015bcb80226249315419ec354d353015c`, at immutable registry digest
 `sha256:e628a354f6a9dfda93d1b323b8a127ad23d683acb78f8ffbaa19b65137f62b2c`.
 Post-deploy public build/readiness, migration, security-boundary, login-render,
@@ -607,12 +601,18 @@ than being queued or simulated.
 Implementation details and task order are recorded in
 `docs/superpowers/plans/2026-08-14-actionable-today-queue.md`.
 
-## Explicit non-roadmap commitments
+## Current scope boundaries
 
-The following do not enter a phase without a new decision and evidence:
+Full Super Productivity feature parity is approved and tracked by #17/#31 and
+their child issues. Time reports, metrics and habits are not categorically
+excluded. Implementation keeps new contracts and migration provenance instead
+of copying Angular storage or NgRx internals.
 
-- Full Super Productivity parity
-- Native CalDAV/CardDAV server replacement for Baikal
-- Default bidirectional calendar mirroring
-- Team management, reporting, streaks, or engagement loops
-- Project Templates if Template Sets plus explicit destination solve the need
+The Google-first Baikal hub is opt-in; implicit mirroring remains disabled.
+Bundled and existing external Baikal deployments are in scope. Replacing Baikal
+with a native CalDAV/CardDAV server is not approved.
+
+Mobile, PostgreSQL, multi-user sharing, project templates beyond current reusable
+work, and post-parity differentiation retain their explicit decision/entry gates
+in the issue roadmap. Subscription-backed embedded assistants remain conditional;
+local client plugins/MCP do not depend on that qualification.

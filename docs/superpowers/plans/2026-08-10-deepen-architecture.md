@@ -1,5 +1,12 @@
 # Deepen Architecture — Modularity Refactor
 
+> Historical proposal, reconciled September 20, 2026. Do not execute unchecked
+> steps as a backlog. See [the code-by-code audit](../../product/legacy-plan-reconciliation.md)
+> for implemented units and residual issues #74–#76, and [the current checkpoint](../../STATUS.md)
+> for release evidence. Original proposed commands and checkbox states are retained
+> as history; file-length targets and example signatures are not current gates.
+
+
 > **For agentic workers:** Execute this plan phase-by-phase. Each phase's tasks are independent and can be dispatched in parallel. Review each phase's result before continuing. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Transform 6 monolithic modules (server.ts 6884L, app.tsx 2560L, persistence/index.ts 6477L, contracts/index.ts 1872L, web/api.ts 951L, web/local-store.ts 797L) into focused bounded-context modules, and establish a living domain glossary.

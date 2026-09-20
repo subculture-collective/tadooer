@@ -1,5 +1,12 @@
 # Frontend Workspace Foundation Implementation Plan
 
+> Historical proposal, reconciled September 20, 2026. Do not execute unchecked
+> steps as a backlog. See [the code-by-code audit](../../product/legacy-plan-reconciliation.md)
+> for implemented units and residual issues #74–#76, and [the current checkpoint](../../STATUS.md)
+> for release evidence. Original proposed commands and checkbox states are retained
+> as history; file-length targets and example signatures are not current gates.
+
+
 > **For agentic workers:** Execute this plan task-by-task. Recommended path:
 > dispatch a fresh subagent per task, review each result with `review-quality`,
 > then continue. Steps use checkbox (`- [ ]`) syntax for tracking.

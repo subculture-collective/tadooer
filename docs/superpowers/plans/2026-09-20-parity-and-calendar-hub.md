@@ -4,6 +4,26 @@ Status: executing after the September 20 requirements interview. Product decisio
 are in [the interview record](../../discovery/2026-09-20-parity-assistants-calendar-hub.md).
 Development remains isolated from the active production soak.
 
+## Current checkpoint
+
+Use [STATUS.md](../../STATUS.md) for current implementation/publication/release
+boundaries. Source and capability inventories are now explicit:
+[Super Productivity parity](../../product/super-productivity-parity.md) and
+[assistant capabilities](../../product/assistant-capabilities.md). The ordered
+units below retain dependency intent; the execution evidence is chronological.
+
+- #17 inventory is implemented in PR #69 with installed 18.16.0 version/hash;
+  exact installed build commit remains unproven.
+- #18 capacity is now 16 MiB, 50,000 records and 100,000 diagnostics (PR #54,
+  carried to main through integration PR #68). Real preview still blocks apply
+  on unsupported history; capacity is not migration qualification.
+- #19 capability inventory and #20 calendar authority contract are implemented;
+  neither proves full assistant parity or enables mirroring.
+- #55 organization and #56 checklist assistant operations are implemented in
+  PRs #70–#73 with 34 catalog tools and built-runtime checks. #57–#60 remain.
+- All real-data cutover, live client/provider, candidate delivery and soak gates
+  remain separate issues in [roadmap #15](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/15).
+
 ## Ordered units
 
 1. Finish [Sprint 14 reliability](2026-09-20-sprint-14-daily-use-reliability.md):
@@ -54,17 +74,17 @@ routine roadmap work. A later candidate receives its own deployment and evidence
 
 ## Initial parity findings
 
-| Source capability | Tadooer baseline | Required next proof/work |
-| --- | --- | --- |
-| Tasks, projects, tags, notes | Present | Export mapping and functional import |
-| Structured capture and deadlines | Present | Preserve source scheduling/deadline distinction |
-| Subtasks | Checklist-style records | Preserve full source child-task metadata and hierarchy |
-| Focus/break timer | Present | Time-history import and manual correction/reporting |
-| Completed tasks | Present | Both archive stores, original timestamps, retention |
-| Repeat tasks | Habits/templates are separate concepts | Implement task recurrence; do not substitute habits |
-| Project notes/backlog/folders | Not established as parity | Inventory and map explicitly |
-| Calendar context | Google/Baikal federation | Qualified two-way Google bridge |
-| Assistant workflows | Shared catalog and local stdio | Full UI capability coverage, packaging, hosted auth |
+| Source capability                | Tadooer baseline                       | Required next proof/work                               |
+| -------------------------------- | -------------------------------------- | ------------------------------------------------------ |
+| Tasks, projects, tags, notes     | Present                                | Export mapping and functional import                   |
+| Structured capture and deadlines | Present                                | Preserve source scheduling/deadline distinction        |
+| Subtasks                         | Checklist-style records                | Preserve full source child-task metadata and hierarchy |
+| Focus/break timer                | Present                                | Time-history import and manual correction/reporting    |
+| Completed tasks                  | Present                                | Both archive stores, original timestamps, retention    |
+| Repeat tasks                     | Habits/templates are separate concepts | Implement task recurrence; do not substitute habits    |
+| Project notes/backlog/folders    | Not established as parity              | Inventory and map explicitly                           |
+| Calendar context                 | Google/Baikal federation               | Qualified two-way Google bridge                        |
+| Assistant workflows              | Shared catalog and local stdio         | Full UI capability coverage, packaging, hosted auth    |
 
 Source evidence: Super Productivity `packages/plugin-api/src/types.ts`,
 `src/app/features/tasks/task.model.ts`,
@@ -73,12 +93,12 @@ Source evidence: Super Productivity `packages/plugin-api/src/types.ts`,
 before declaring migration complete. Source inspection and a synthetic fixture
 are not evidence that the user's real history was migrated.
 
-## Execution evidence
+## Historical execution evidence
 
 - Reliability slices committed and verified; see Sprint 14 for exact checks.
 - Super Productivity preview delivered in Connections and the authenticated
-  `/api/imports/super-productivity/preview` endpoint. It explicitly cannot apply
-  data yet. Initial upload limit is 4 MiB; larger exports must be retained intact.
+  `/api/imports/super-productivity/preview` endpoint. At this initial checkpoint it could not apply
+  data. The original 4 MiB limit is historical; current capacity is linked above.
 - Parser inventories live/young/old tasks, projects, tags, repeat configurations,
   dates, and leaf-task time. Reports duplicate IDs, broken references, invalid
   dates, mismatched time totals, and known parity gaps. Source configuration and
@@ -152,8 +172,8 @@ qualification. This is not a blocker for import, parity, or MCP implementation.
 
 ## Core import apply path — September 20
 
-- Claude client access and Gitea availability are explicitly deferred by the owner;
-  continue local development and commits without waiting for either service.
+- At this checkpoint Claude client access and a temporary Gitea outage were deferred
+  by the owner. Current work uses stacked Gitea PRs; Claude qualification remains deferred.
 - Core exports can now be reviewed and applied from Connections. Supported fields:
   task/project/tag identities and titles, task notes, exact scheduled instants,
   date/instant deadlines, whole-minute estimates within the existing task range,
@@ -196,5 +216,6 @@ qualification. This is not a blocker for import, parity, or MCP implementation.
 - Apply correctly remains blocked by parity and integrity findings. No actual
   owner records were imported, no source data was modified, and production was
   unchanged. Full migration and live client qualification remain outstanding.
-- This backup is only 2,447 bytes below the 4 MiB limit. Address bounded upload
-  capacity before qualifying a newer export; do not trim history to pass.
+- At this historical checkpoint the backup was only 2,447 bytes below the old
+  4 MiB limit. #18 subsequently raised bounded capacity; preserve history intact
+  and use the current capacity report rather than trimming the export.
