@@ -1397,6 +1397,7 @@ export const syncDiagnosticManifestSchema = z
 // raw token secrets and preview input are never returned in inventories, audit
 // records, or diagnostic exports.
 export const automationTokenScopeSchema = z.enum([
+  "notifications:read",
   "tasks:read",
   "tasks:write",
   "schedule:read",
@@ -1925,7 +1926,54 @@ export interface AutomationCatalogEntry {
 
 // This is the only automation catalog. HTTP handlers and the stdio adapter must
 // import it instead of maintaining parallel operation lists.
+export const dayPlanInputSchema = z.object({ at: z.iso.datetime() }).strict();
+
 export const automationCatalog = [
+  {
+    id: "planning.day_plan",
+    kind: "resource",
+    scopes: ["schedule:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/day-plan",
+    mcpName: "suite.planning.day_plan",
+    mcpUri: "suite://v1/day-plan",
+    inputSchema: dayPlanInputSchema,
+    outputSchema: dayPlanResponseSchema,
+  },
+  {
+    id: "planning.preferences",
+    kind: "resource",
+    scopes: ["schedule:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/planning-preferences",
+    mcpName: "suite.planning.preferences",
+    mcpUri: "suite://v1/planning-preferences",
+    inputSchema: z.object({}).strict(),
+    outputSchema: planningPreferencesSchema,
+  },
+  {
+    id: "notifications.preferences",
+    kind: "resource",
+    scopes: ["notifications:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/notification-preferences",
+    mcpName: "suite.notifications.preferences",
+    mcpUri: "suite://v1/notification-preferences",
+    inputSchema: z.object({}).strict(),
+    outputSchema: notificationPreferencesSchema,
+  },
+  {
+    id: "notifications.status",
+    kind: "resource",
+    scopes: ["notifications:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/notification-status",
+    mcpName: "suite.notifications.status",
+    mcpUri: "suite://v1/notification-status",
+    inputSchema: z.object({}).strict(),
+    outputSchema: notificationStatusResponseSchema,
+  },
+
   {
     id: "subtasks.list",
     kind: "resource",

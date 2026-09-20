@@ -31,6 +31,7 @@ Load the copied plugin through your client's local plugin support. For Claude Co
 | Capability                                                                   | Status                                            |
 | ---------------------------------------------------------------------------- | ------------------------------------------------- |
 | Read tasks, projects, tags, schedules, focus, habits, templates, sets, pools | Tools and resources                               |
+| Day plan, planning preferences, notification preferences/status | Read only; scoped and redacted |
 | Create tasks and time blocks                                                 | Preview, then confirm                             |
 | Focus lifecycle and takeover                                                 | Preview, then confirm                             |
 | Instantiate templates/sets, resolve placeholders, mutate habits              | Preview, then confirm                             |

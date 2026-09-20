@@ -1,3 +1,4 @@
+import { readNotificationStatus } from "../notification-status.ts";
 import { notificationPreferencesSchema } from "@suite/contracts";
 import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
@@ -84,33 +85,7 @@ export const handleNotifications: RouteHandler = async (
       sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
-    const preferences = database.getNotificationPreferences(session.owner.id);
-    const status = database.getNotificationDeliveryStatus(session.owner.id);
-    const last = status.lastDelivery;
-    sendJson(response, 200, {
-      configured: notificationPublisher !== undefined,
-      enabled: preferences.enabled,
-      state:
-        notificationPublisher === undefined
-          ? "unavailable"
-          : status.failedCount > 0
-            ? "degraded"
-            : "ready",
-      pendingCount: status.pendingCount,
-      failedCount: status.failedCount,
-      lastDelivery:
-        last === null
-          ? null
-          : {
-              state:
-                last.state === "sending" || last.state === "retry"
-                  ? "pending"
-                  : last.state,
-              kind: last.kind,
-              occurredAt: last.updatedAt,
-              errorCode: last.errorCode,
-            },
-    });
+    sendJson(response, 200, readNotificationStatus(ctx, session.owner.id));
     return true;
   }
 
