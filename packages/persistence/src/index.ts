@@ -2260,7 +2260,8 @@ export class SuiteDatabase {
       )
       .run(id, ownerId, now, now, now, now, now);
     const delivery = this.getNotificationDelivery(id);
-    if (delivery === undefined) throw new Error("Queued notification is missing");
+    if (delivery === undefined)
+      throw new Error("Queued notification is missing");
     return delivery;
   }
 
