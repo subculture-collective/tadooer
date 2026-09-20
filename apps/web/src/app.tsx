@@ -1,3 +1,4 @@
+import { usePlannerLoader } from "./use-planner-loader.ts";
 import { googleProjectionFreshness } from "@suite/domain";
 import { createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
@@ -12,13 +13,7 @@ import {
 } from "@suite/contracts";
 import { HabitsPage } from "./pages/HabitsPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type SyntheticEvent,
-} from "react";
+import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
   ActiveSession,
   BaikalStatusResponse,
@@ -223,9 +218,6 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     ) : null;
   const [formError, setFormError] = useState<string | null>(null);
   const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
-  const plannerRequest = useRef(0);
-  const [plannerLoading, setPlannerLoading] = useState(false);
-  const [plannerError, setPlannerError] = useState<string | null>(null);
   const [localStore] = useState(() => new LocalStore());
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [tags, setTags] = useState<readonly Tag[]>([]);
@@ -298,26 +290,17 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     setRoute(next);
   };
 
-  const loadPlanner = useCallback(
-    async ({ from, to }: { readonly from: string; readonly to: string }) => {
-      if (state.kind !== "authenticated") return;
-      const request = ++plannerRequest.current;
-      setPlannerLoading(true);
-      setPlannerError(null);
-      try {
-        const planner = await getPlanner(from, to);
-        if (request !== plannerRequest.current) return;
-        setState((current) =>
-          current.kind === "authenticated" ? { ...current, planner } : current,
-        );
-      } catch (error: unknown) {
-        if (request === plannerRequest.current)
-          setPlannerError(messageFor(error));
-      } finally {
-        if (request === plannerRequest.current) setPlannerLoading(false);
-      }
-    },
-    [state.kind],
+  const publishPlanner = useCallback((planner: PlannerResponse) => {
+    setState((current) =>
+      current.kind === "authenticated" ? { ...current, planner } : current,
+    );
+  }, []);
+  const { loadPlanner, plannerLoading, plannerError } = usePlannerLoader(
+    state.kind === "authenticated" && sessionFailure === null
+      ? `${state.session.owner.id}:${state.session.csrfToken}`
+      : null,
+    publishPlanner,
+    messageFor,
   );
 
   const visibleTasks =
