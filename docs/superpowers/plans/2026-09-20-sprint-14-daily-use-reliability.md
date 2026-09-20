@@ -71,7 +71,15 @@ DST boundaries work, rapid navigation cannot display another period's results,
 and loading/failure states identify saved data. No scheduling or task dates
 change as a side effect of navigation.
 
-### 3. Calendar freshness and recovery feedback — queued
+### 3. Calendar freshness and recovery feedback — implemented and verified
+
+September 20 implementation: Google freshness ages after fifteen minutes on both
+server reads and a browser-local one-minute clock. Missing/future timestamps are
+not fresh; failures preserve saved projections. Connections shows per-calendar
+last successful sync in the planning timezone. Manual refresh remains explicit
+until the separately planned background bridge. Full verification: 196 tests and
+four builds. Disposable browser with synthetic Google status confirmed an old
+last-success timestamp overrides a stored fresh flag and displays the timezone.
 
 Audit the meaning of “current” against `lastSuccessfulSyncAt`, stored incremental
 cursors, disconnected/revoked state, and transient provider failures. Show when

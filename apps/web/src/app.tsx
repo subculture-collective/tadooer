@@ -1,3 +1,4 @@
+import { googleProjectionFreshness } from "@suite/domain";
 import { createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
 import {
@@ -188,6 +189,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     initialState ?? { kind: "loading" },
   );
   const [busy, setBusy] = useState(false);
+  const [freshnessNow, setFreshnessNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setFreshnessNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const [sessionFailure, setSessionFailure] = useState<SessionFailure | null>(
     null,
   );
@@ -2218,6 +2225,45 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     );
 
   /* ── Workspace ── */
+  const googleView =
+    state.google === undefined
+      ? undefined
+      : {
+          ...state.google,
+          freshness: state.google.freshness.map((item) => ({
+            ...item,
+            ...googleProjectionFreshness(
+              item.state,
+              item.lastSuccessfulSyncAt,
+              new Date(Math.max(Date.now(), freshnessNow.getTime())),
+            ),
+          })),
+        };
+  const googleStale =
+    googleView?.freshness.some((item) => item.state !== "fresh") ?? false;
+  const plannerView =
+    state.planner !== null && googleStale
+      ? {
+          ...state.planner,
+          freshness: {
+            ...state.planner.freshness,
+            state: "stale" as const,
+            message: "Showing saved calendar events; Google needs a refresh",
+          },
+        }
+      : state.planner;
+  const dayPlanView =
+    state.dayPlan !== undefined && googleStale
+      ? {
+          ...state.dayPlan,
+          freshness: {
+            ...state.dayPlan.freshness,
+            state: "stale" as const,
+            message: "Showing saved calendar events; Google needs a refresh",
+          },
+        }
+      : state.dayPlan;
+
   return (
     <AppShell
       route={route}
@@ -2238,13 +2284,13 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       {recovery}
       {route === "today" && (
         <TodayPage
-          dayPlan={state.dayPlan}
+          dayPlan={dayPlanView}
           planningPreferences={state.planningPreferences}
           tasks={state.tasks}
           activeSession={state.activeSession ?? null}
           clientId={state.client?.clientId ?? null}
           syncStatus={state.syncStatus}
-          planner={state.planner}
+          planner={plannerView}
           baikalCalendars={state.baikal.calendars}
           calendarActionsAvailable={networkOnline}
           focusActionsAvailable={networkOnline && state.client !== undefined}
@@ -2276,7 +2322,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       )}
       {route === "planner" && (
         <PlannerPage
-          planner={state.planner}
+          planner={plannerView}
           timeZone={state.planningPreferences?.timeZone ?? "UTC"}
           busy={busy}
           onLoadPlanner={loadPlanner}
@@ -2364,9 +2410,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         <ConnectionsPage
           calendarMessage={calendarMessage}
           baikal={state.baikal}
-          google={state.google}
+          google={googleView}
           planningPreferences={state.planningPreferences}
-          dayPlan={state.dayPlan}
+          dayPlan={dayPlanView}
           csrfToken={state.session.csrfToken}
           busy={busy}
           onAuthorizeGoogle={authorizeGoogle}
@@ -2377,9 +2423,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       )}
       {route === "settings" && (
         <SettingsPage
-          google={state.google}
+          google={googleView}
           planningPreferences={state.planningPreferences}
-          dayPlan={state.dayPlan}
+          dayPlan={dayPlanView}
           notificationPreferences={state.notificationPreferences}
           notificationStatus={state.notificationStatus}
           syncStatus={state.syncStatus}

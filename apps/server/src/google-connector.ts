@@ -1,3 +1,4 @@
+import { googleProjectionFreshness } from "@suite/domain";
 import {
   constants,
   closeSync,
@@ -206,7 +207,7 @@ export class GoogleConnectorService {
     return ownerId;
   }
 
-  status(ownerId: string): GoogleConnectorStatusResponse {
+  status(ownerId: string, now = new Date()): GoogleConnectorStatusResponse {
     const connector = this.database.getGoogleConnector(ownerId);
     const calendars = this.database.listOwnedCalendars(ownerId, "google");
     const sync = this.database.listGoogleCalendarSync(ownerId);
@@ -238,14 +239,12 @@ export class GoogleConnectorService {
       ),
       freshness: sync.map((item) => ({
         calendarId: item.calendarId,
-        state: item.state,
+        ...googleProjectionFreshness(
+          item.state,
+          item.lastSuccessfulSyncAt,
+          now,
+        ),
         lastSuccessfulSyncAt: item.lastSuccessfulSyncAt,
-        message:
-          item.state === "fresh"
-            ? "Google projection is current"
-            : item.state === "stale"
-              ? "Showing the last safe Google projection"
-              : "Google projection is unavailable",
       })),
     };
   }
