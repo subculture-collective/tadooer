@@ -1,13 +1,15 @@
 # Feature Prioritization
 
-**Status:** Framework approved 2026-08-05. Current application refreshed
-2026-08-14 after the Phase 12 implementation checkpoint.
+**Status:** Framework approved August 5; current application reconciled September 20.
+See [the current checkpoint](../STATUS.md) and [roadmap #15](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/15).
 
 ## Goal
 
 Choose implementation order by the user journey, dependency graph, contract
-risk, and observable evidence—not by Super Productivity parity, novelty, or the
-ease of producing isolated UI.
+risk, and observable evidence within the approved Super Productivity parity,
+assistant-access and opt-in calendar-hub direction. Parity is a committed product
+outcome; the feature matrix defines its scope and the dependency graph defines
+implementation order.
 
 ## The product loop
 
@@ -29,8 +31,9 @@ The first complete product must let one owner:
 6. Observe and safely take over the active session from another device.
 7. Ask the MCP to read or preview the same state through explicit permissions.
 
-Anything that does not help complete or validate this loop is not first-slice
-work, even when it is desirable.
+This describes the original first-slice baseline. The September interview expands
+the approved scope to source feature parity; it does not remove authority,
+verification, or migration requirements.
 
 ## Ordering rules
 
@@ -118,43 +121,30 @@ No feature enters **Now** without:
 
 ## Current application
 
-The implementation roadmap has advanced through the Phase 12 qualification
-tooling. The active **Now** slice is operational qualification for `1.0.0`, not
-another unreviewed feature expansion. The selected post-1.0 **Next** wave is the
-Actionable Today Queue: a bounded daily workflow that composes existing task,
-calendar, focus, and offline contracts without adding a persisted priority or
-ranking model. This selection does not waive the active production acceptance
-and stable-promotion gates.
+Development proceeds alongside the pinned production soak. A development PR,
+local test, published image, deployment and stable qualification are separate
+states. The [current checkpoint](../STATUS.md) records those evidence boundaries;
+this table orders work without repeating deployment claims.
 
-| Feature or outcome                                                                                                                                                      | State               | Evidence or entry condition                                                                                                                 |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Core self-hosted loop: owner setup, task capture, Baïkal projection, calendar placement, persistence, and recovery                                                      | Delivered           | Completed through Phases 0–1                                                                                                                |
-| Local-first task sync, projects, tags, subtasks, estimates, and cross-device focus/break handoff                                                                        | Delivered           | Completed in Phase 2                                                                                                                        |
-| Google federation, calm daily planning, freshness, and reminder suppression rules                                                                                       | Delivered           | Completed and live-qualified in Phase 3                                                                                                     |
-| Scoped MCP/HTTP automation with preview, confirmation, audit, and retry safety                                                                                          | Delivered           | Completed in Phase 4                                                                                                                        |
-| Task Templates, Template Sets, independent instantiation, and provenance                                                                                                | Delivered           | Completed in Phase 5                                                                                                                        |
-| Choice Pools, policy history, suggestions, and Planning Placeholder resolution                                                                                          | Delivered           | Completed in Phase 6                                                                                                                        |
-| Provenance-aware calendar import, one-time migration, ICS export, and revocable read-only publication                                                                   | Delivered           | Completed in Phase 7                                                                                                                        |
-| Constrained Linux Electron packaging, immutable release channels, rollback, metrics, and production qualification tooling                                               | Delivered           | Completed in Phase 8                                                                                                                        |
-| Route-backed calm daily workspace, search, organization filters, time-zone correctness, and provider-aware calendar filtering                                           | Delivered           | Completed in Phase 10                                                                                                                       |
-| Durable ntfy reminder claims, retries, suppression, redaction, and browser settings                                                                                     | Delivered           | Source and disposable deployment qualification completed in Phase 11                                                                        |
-| Production owner creation plus explicit Baïkal and Google authorization                                                                                                 | Now                 | Required to close Phase 9 and start the production soak                                                                                     |
-| Live authenticated ntfy delivery acceptance                                                                                                                             | Now                 | Required to close the Phase 11 production acceptance gate                                                                                   |
-| Seven-day production soak and stable `1.0.0` promotion                                                                                                                  | Now                 | Starts only after production owner, calendars, and ntfy are configured; any failed required observation or P0/P1 restarts qualification     |
-| Actionable Today Queue: automatic overdue/today queue, separate unscheduled planning, inline capture/calendar/focus/completion actions, and explicit offline boundaries | Deployed candidate | Immutable Phase 13 candidate deployed 2026-08-21 after focused/full gates and local authenticated-browser qualification; public production checks passed, authenticated production interaction and the Phase 12 soak remain separate |
-| Super Productivity, Apple Reminders, Google Tasks, and other task-app source adapters                                                                                   | Candidate           | The common import contract exists, but source breadth needs a selected user outcome and representative fixtures                             |
-| Project Templates                                                                                                                                                       | Candidate           | Enter only if Template Sets plus explicit destination selection demonstrably fail the workflow                                              |
-| One-way provider mirrors                                                                                                                                                | Candidate           | Enter only after a demonstrated client limitation and a separate authority/reconciliation review                                            |
-| Hosted MCP transport                                                                                                                                                    | Candidate           | Requires a separate authentication, token-delivery, revocation, rate-limit, and deployment decision                                         |
-| User-configurable external CalDAV origins                                                                                                                               | Candidate           | Requires dedicated SSRF, DNS-rebinding, TLS, redirect, credential-isolation, and revocation contracts                                       |
-| Android/iOS delivery                                                                                                                                                    | Candidate           | Requires platform-specific offline/background behavior and credential-storage design                                                        |
-| PostgreSQL adapter                                                                                                                                                      | Candidate           | Enter only after measured SQLite concurrency, availability, or deployment limits                                                            |
-| Multi-user mode                                                                                                                                                         | Candidate           | Requires an owner-scoped authorization audit and explicit sharing/administration contracts                                                  |
-| Bidirectional provider mirrors                                                                                                                                          | Declined by default | Creates competing event authorities and conflict loops                                                                                      |
-| Full Super Productivity parity                                                                                                                                          | Declined            | Contradicts the Greenfield new-user scope                                                                                                   |
+| Feature or outcome                                            | State                              | Evidence or entry condition                                                                                                                             |
+| ------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core capture/planner/offline/focus/reusable-work product loop | Implemented baseline               | Historical phase evidence is retained in the roadmap; current candidate acceptance is separate.                                                         |
+| Reliability and owner browser acceptance                      | Now                                | #14/#16 verify authenticated journeys and the reliability stack.                                                                                        |
+| Pinned production soak                                        | Now, independent operational track | #21 requires natural health/backup/workflow observations; no routine feature deployment into the pinned run.                                            |
+| Full Super Productivity parity                                | Approved; implementing             | #17 reference matrix and #31 children define source coverage. Prioritize archive/hierarchy/history/recurrence and daily-use gaps by their dependencies. |
+| Super Productivity migration                                  | Now                                | #18 capacity, #38 archive mapping and capability gaps precede #47 full isolated reconciliation and #49 reviewed cutover. Preserve the source export.    |
+| Assistant plugin/MCP parity                                   | Now                                | #19 inventory, #32 missing operations and #33 consequential-action policy; actual clients #39 remain separately qualified.                              |
+| Opt-in Google/Baikal bidirectional hub                        | Approved; contract first           | #20/ADR 0017 precede #35/#36/#40/#45/#46/#48 and real provider qualification #50. Google is the first provider.                                         |
+| Hosted MCP                                                    | Next, dependency-bound             | Scoped OAuth #34 before transport #43; no shared owner credential at a public endpoint.                                                                 |
+| Embedded subscription-backed assistance                       | Conditional                        | #44 requires actual runtime/account support; otherwise retain plugin/MCP access. No implicit paid API fallback.                                         |
+| Other import adapters                                         | Later                              | #51 follows Super Productivity; each needs a representative source and reconciliation proof.                                                            |
+| Bundled or operator-configured external Baikal                | Approved                           | #35 preserves credential isolation and safe endpoint configuration; an arbitrary browser-supplied URL is not implied.                                   |
+| Mobile / PostgreSQL / multi-user                              | Decision-gated                     | #24/#25/#26 retain platform, measured-capacity and authorization/sharing prerequisites.                                                                 |
+| Architecture and visual cleanup                               | Bounded follow-on                  | #74–#76 replace stale unchecked implementation plans; preserve transaction and browser behavior.                                                        |
+| Post-parity differentiation                                   | Later                              | #52 follows the parity baseline and evidence of unmet workflow needs.                                                                                   |
 
 ## Review cadence
 
 Re-evaluate **Now** at the end of every vertical slice. Move features only when
-new evidence or a resolved dependency changes their position. Do not reorder the
-roadmap merely because a feature was recently discussed.
+new evidence or a resolved dependency changes their position. Record explicit user priority changes in the interview/issue roadmap, then
+reconcile dependencies and acceptance criteria before implementation.
