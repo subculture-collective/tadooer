@@ -17,6 +17,15 @@ export const TaskCaptureForm = ({ busy, onSubmit }: TaskCaptureFormProps) => (
       <span>Estimate minutes</span>
       <input name="estimateMinutes" type="number" min="1" max="720" />
     </label>
+    <label className="capture-option">
+      <input type="checkbox" name="structured" />
+      Use capture markers (online)
+    </label>
+    <p className="capture-help">
+      Use +"Project name", #tag, @tomorrow 09:00, or !Friday. Quote text or
+      escape a marker with a backslash to keep it literal. Dates use your
+      planning timezone.
+    </p>
     <button disabled={busy}>{busy ? "Capturing…" : "Capture task"}</button>
   </form>
 );

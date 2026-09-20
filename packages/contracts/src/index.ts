@@ -281,6 +281,8 @@ export const taskSchema = z.object({
 });
 
 export const createTaskRequestSchema = z.object({
+  structured: z.boolean().optional(),
+  estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   title: z.string().trim().min(1).max(240),
   notes: z.string().max(20_000).default(""),
   plannedStart: z.iso.datetime().nullable().optional(),

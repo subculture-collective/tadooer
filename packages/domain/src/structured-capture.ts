@@ -3,6 +3,7 @@ import * as chrono from "chrono-node";
 export interface StructuredCaptureContext {
   readonly at: Date;
   readonly timezoneOffsetMinutes: number;
+  readonly timeZone?: string;
 }
 
 export type CaptureDeadline =
@@ -24,7 +25,90 @@ export class StructuredCaptureError extends Error {
   }
 }
 
-const markerPattern = /(^|\s)([+#@!])/g;
+// Quotes protect markers; backslash escapes the next character in titles or values.
+const tokenize = (input: string): { marker: string; value: string }[] => {
+  let current = { marker: "", value: "" };
+  const segments = [current];
+  let quote: string | undefined;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index] ?? "";
+    if (char === "\\") {
+      const next = input[++index];
+      if (next === undefined)
+        throw new StructuredCaptureError("Trailing capture escape");
+      current.value += next;
+    } else if (quote !== undefined) {
+      if (char === quote) quote = undefined;
+      else current.value += char;
+    } else if (
+      (char === '"' || char === "'") &&
+      (current.value.length === 0 || /\s/.test(input[index - 1] ?? ""))
+    ) {
+      quote = char;
+    } else if (
+      "+#@!".includes(char) &&
+      (index === 0 || /\s/.test(input[index - 1] ?? ""))
+    ) {
+      current = { marker: char, value: "" };
+      segments.push(current);
+    } else current.value += char;
+  }
+  if (quote !== undefined)
+    throw new StructuredCaptureError("Unclosed capture quote");
+  return segments.map(({ marker, value }) => ({ marker, value: value.trim() }));
+};
+
+const civilTimestamp = (instant: number, timeZone: string): number => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(instant));
+  const get = (key: string) =>
+    Number(parts.find(({ type }) => type === key)?.value);
+  return Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+};
+
+const offsetAt = (instant: number, timeZone: string): number =>
+  (civilTimestamp(instant, timeZone) - Math.floor(instant / 1000) * 1000) /
+  60000;
+
+const zonedInstant = (
+  result: chrono.ParsedResult,
+  timeZone: string,
+): string => {
+  const local = Date.UTC(
+    result.start.get("year") ?? NaN,
+    (result.start.get("month") ?? NaN) - 1,
+    result.start.get("day") ?? NaN,
+    result.start.get("hour") ?? NaN,
+    result.start.get("minute") ?? 0,
+    result.start.get("second") ?? 0,
+  );
+  const offsets = new Set(
+    [-86400000, 0, 86400000].map((delta) => offsetAt(local + delta, timeZone)),
+  );
+  const candidates = [...offsets]
+    .map((offset) => local - offset * 60000)
+    .filter((instant) => civilTimestamp(instant, timeZone) === local);
+  if (candidates.length !== 1)
+    throw new StructuredCaptureError(
+      "This local time is skipped or repeated by daylight saving. Include an explicit UTC offset.",
+    );
+  return new Date(candidates[0] ?? NaN).toISOString();
+};
 
 const dateValue = (result: chrono.ParsedResult): string => {
   const year = result.start.get("year");
@@ -41,11 +125,20 @@ const parseDate = (
     value,
     {
       instant: context.at,
-      timezone: context.timezoneOffsetMinutes,
+      timezone:
+        context.timeZone === undefined
+          ? context.timezoneOffsetMinutes
+          : offsetAt(context.at.getTime(), context.timeZone),
     },
     { forwardDate: true },
   );
-  if (result === undefined || additional.length > 0) {
+  if (
+    result === undefined ||
+    additional.length > 0 ||
+    result.index !== 0 ||
+    result.text.trim() !== value.trim() ||
+    result.end != null
+  ) {
     throw new StructuredCaptureError(
       `Could not resolve time expression “${value}”`,
     );
@@ -53,7 +146,14 @@ const parseDate = (
   const hasExplicitTime =
     result.start.isCertain("hour") || result.start.isCertain("minute");
   return hasExplicitTime
-    ? { kind: "instant", value: result.start.date().toISOString() }
+    ? {
+        kind: "instant",
+        value:
+          context.timeZone !== undefined &&
+          !result.start.isCertain("timezoneOffset")
+            ? zonedInstant(result, context.timeZone)
+            : result.start.date().toISOString(),
+      }
     : { kind: "date", value: dateValue(result) };
 };
 
@@ -61,8 +161,8 @@ export const parseStructuredCapture = (
   input: string,
   context: StructuredCaptureContext,
 ): StructuredCapture => {
-  const matches = [...input.matchAll(markerPattern)];
-  const title = input.slice(0, matches[0]?.index ?? input.length).trim();
+  const [first, ...segments] = tokenize(input);
+  const title = first?.value ?? "";
   if (title.length === 0) {
     throw new StructuredCaptureError(
       "A task title is required before capture markers",
@@ -74,11 +174,7 @@ export const parseStructuredCapture = (
   let plannedStart: string | undefined;
   let deadline: CaptureDeadline | undefined;
 
-  for (const [index, match] of matches.entries()) {
-    const marker = match[2] ?? "";
-    const start = match.index + match[0].length;
-    const end = matches[index + 1]?.index ?? input.length;
-    const value = input.slice(start, end).trim();
+  for (const { marker, value } of segments) {
     if (value.length === 0) {
       throw new StructuredCaptureError(
         `Capture marker “${marker}” needs a value`,
@@ -112,4 +208,53 @@ export const parseStructuredCapture = (
   }
 
   return { title, projectName, tagNames, plannedStart, deadline };
+};
+
+export const resolveCaptureReferences = (
+  capture: StructuredCapture,
+  projects: readonly { id: string; title: string; archivedAt: string | null }[],
+  tags: readonly {
+    id: string;
+    displayName: string;
+    archivedAt: string | null;
+  }[],
+): { projectId?: string; tagIds: string[] } => {
+  const normalize = (value: string) =>
+    value.normalize("NFKC").toLowerCase().trim();
+  const resolve = (
+    name: string,
+    records: readonly { id: string; name: string; archivedAt: string | null }[],
+    kind: string,
+  ): string => {
+    const matches = records.filter(
+      (record) => normalize(record.name) === normalize(name),
+    );
+    if (matches.length !== 1 || matches[0]?.archivedAt !== null)
+      throw new StructuredCaptureError(
+        `${kind} “${name}” is unknown, archived, or ambiguous`,
+      );
+    return matches[0].id;
+  };
+  return {
+    ...(capture.projectName === undefined
+      ? {}
+      : {
+          projectId: resolve(
+            capture.projectName,
+            projects.map((project) => ({ ...project, name: project.title })),
+            "Project",
+          ),
+        }),
+    tagIds: [
+      ...new Set(
+        capture.tagNames.map((name) =>
+          resolve(
+            name,
+            tags.map((tag) => ({ ...tag, name: tag.displayName })),
+            "Tag",
+          ),
+        ),
+      ),
+    ],
+  };
 };

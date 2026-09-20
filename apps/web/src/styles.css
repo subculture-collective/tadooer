@@ -469,6 +469,8 @@ button[aria-current="page"] .nav-icon {
 /* ── Top Bar ───────────────────────────────────────────────────── */
 
 .topbar {
+  flex-wrap: wrap;
+  min-width: 0;
   grid-row: 1;
   grid-column: 2;
   display: flex;
@@ -1307,4 +1309,23 @@ select:focus-visible {
   display: grid;
   gap: 0.5rem;
   margin-block: 1rem;
+}
+
+.capture-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.capture-option input {
+  width: auto;
+}
+.capture-help {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.topbar > .message-error {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

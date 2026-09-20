@@ -89,7 +89,7 @@ export const HabitsPage = ({
       <form onSubmit={(event) => void create(event)}>
         <fieldset disabled={disabled} className="habit-create">
           <legend>Create a habit</legend>
-          <label>
+          <label className="field">
             Habit name
             <input
               name="title"
@@ -98,7 +98,7 @@ export const HabitsPage = ({
               placeholder="Take a walk"
             />
           </label>
-          <label>
+          <label className="field">
             Repeat
             <select
               value={cadence}
@@ -131,7 +131,7 @@ export const HabitsPage = ({
             </fieldset>
           )}
           {cadence === "custom" && (
-            <label>
+            <label className="field">
               Interval in days
               <input
                 name="intervalDays"
@@ -222,7 +222,7 @@ export const HabitsPage = ({
                       });
                     }}
                   >
-                    <label>
+                    <label className="field">
                       Rename {habit.title}
                       <input
                         name="title"

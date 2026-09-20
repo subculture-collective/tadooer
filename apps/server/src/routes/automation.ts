@@ -1,3 +1,5 @@
+import { StructuredCaptureError } from "@suite/domain";
+import { createCapturedTask, resolveTaskCapture } from "../task-capture.ts";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
@@ -424,7 +426,7 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
-    const command = parsed.data;
+    let command = parsed.data;
     const scope = automationScopeFor(command.operation);
     if (!token.scopes.includes(scope)) {
       database.appendAutomationAudit({
@@ -447,6 +449,23 @@ export const handleAutomation: RouteHandler = async (
         `Automation scope ${scope} is required`,
       );
       return true;
+    }
+    if (command.operation === "tasks.create") {
+      try {
+        command = {
+          ...command,
+          input: resolveTaskCapture(
+            database,
+            token.ownerId,
+            command.input,
+            new Date().toISOString(),
+          ),
+        };
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
     }
     const affected: {
       entityKind:
@@ -978,22 +997,23 @@ export const handleAutomation: RouteHandler = async (
       };
     } else if (command.operation === "tasks.create") {
       const now = new Date().toISOString();
-      const created = database.createTaskIdempotently(
-        token.ownerId,
-        internalKey,
-        createHash("sha256")
-          .update(JSON.stringify(command.input))
-          .digest("hex"),
-        {
-          id: randomUUID(),
-          title: command.input.title,
-          notes: command.input.notes,
-          status: "open",
-          revision: 1,
-          createdAt: now,
-          updatedAt: now,
-        },
-      );
+      let created;
+      try {
+        created = createCapturedTask(
+          database,
+          token.ownerId,
+          internalKey,
+          createHash("sha256")
+            .update(JSON.stringify(command.input))
+            .digest("hex"),
+          command.input,
+          now,
+        );
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
       if (created.kind === "conflict") {
         sendError(
           response,

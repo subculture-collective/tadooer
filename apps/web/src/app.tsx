@@ -1,3 +1,4 @@
+import { createTask } from "./api.ts";
 import {
   type HabitListResponse,
   type HabitCommand,
@@ -837,12 +838,36 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     setFormError(null);
     try {
       const estimate = Number(formValue(data, "estimateMinutes"));
-      await localStore.queueTaskCreate({
-        title: formValue(data, "title"),
-        notes: formValue(data, "notes"),
-        estimateMinutes:
-          Number.isInteger(estimate) && estimate > 0 ? estimate : null,
-      });
+      if (data.get("structured") === "on") {
+        if (state.kind !== "authenticated" || !navigator.onLine)
+          throw new Error(
+            "Connect to resolve capture markers. Plain tasks can still be captured offline.",
+          );
+        const input = {
+          title: formValue(data, "title"),
+          notes: formValue(data, "notes"),
+          structured: true,
+          estimateMinutes:
+            Number.isInteger(estimate) && estimate > 0 ? estimate : null,
+        };
+        const serialized = JSON.stringify(input);
+        const storageKey = `suite.capture.${state.session.owner.id}`;
+        const prior = sessionStorage.getItem(storageKey);
+        const key =
+          prior?.slice(37) === serialized
+            ? prior.slice(0, 36)
+            : crypto.randomUUID();
+        sessionStorage.setItem(storageKey, `${key}:${serialized}`);
+        await createTask(input, state.session.csrfToken, key);
+        sessionStorage.removeItem(storageKey);
+      } else {
+        await localStore.queueTaskCreate({
+          title: formValue(data, "title"),
+          notes: formValue(data, "notes"),
+          estimateMinutes:
+            Number.isInteger(estimate) && estimate > 0 ? estimate : null,
+        });
+      }
       await syncAfterLocalMutation();
       form.reset();
     } catch (error: unknown) {

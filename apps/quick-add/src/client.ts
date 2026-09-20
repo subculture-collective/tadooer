@@ -14,7 +14,7 @@ import type { QuickAddConfig } from "./config.ts";
 export const submitQuickAdd = async (
   config: Pick<
     QuickAddConfig,
-    "baseUrl" | "idempotencyKey" | "title" | "notes"
+    "baseUrl" | "idempotencyKey" | "title" | "notes" | "structured"
   >,
   token: string,
 ): Promise<AutomationConfirmationResponse> => {
@@ -31,7 +31,11 @@ export const submitQuickAdd = async (
     taskCreateEntry,
     {
       operation: "tasks.create" as const,
-      input: { title: config.title, notes: config.notes },
+      input: {
+        title: config.title,
+        notes: config.notes,
+        ...(config.structured === true ? { structured: true } : {}),
+      },
     },
     { headers: authHeaders },
   )) as { readonly preview: { readonly id: string } };

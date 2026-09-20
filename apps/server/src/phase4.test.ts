@@ -323,7 +323,11 @@ describe("Phase 4 automation HTTP integration", () => {
 
         const previewInput = {
           operation: "tasks.create",
-          input: { title: "Created by confirmed automation", notes: "" },
+          input: {
+            title: "Created by confirmed automation !December 31, 2027",
+            notes: "",
+            structured: true,
+          },
         };
         const previewResponse = await automationRequest(
           server,
@@ -367,7 +371,10 @@ describe("Phase 4 automation HTTP integration", () => {
           replayed: false,
           result: {
             replayed: false,
-            task: { title: "Created by confirmed automation" },
+            task: {
+              title: "Created by confirmed automation",
+              deadline: { kind: "date", value: "2027-12-31" },
+            },
           },
         });
         if (!("task" in firstResult.result)) {

@@ -137,13 +137,13 @@ changed by this increment.
 - Test: `packages/domain/src/structured-capture.test.ts`
 - Test: `apps/server/src/server.test.ts`
 
-- [ ] Define quoted/escaped token behavior; reject unknown, archived, and ambiguous project names; reject unknown tags.
-- [ ] Resolve project/tag names and parsed times before task insert; create task, assignments, planned start, and deadline in one transaction.
-- [ ] Reuse parser at web, HTTP, quick-add, and automation boundaries.
-- [ ] Do not implicitly create projects/tags.
-- [ ] Test parser ambiguity, natural date/instant deadline conversion, and no partial task after failed reference resolution.
-- [ ] Run: `pnpm test -- packages/domain/src/structured-capture.test.ts apps/server/src/server.test.ts`
-- [ ] Commit: `feat: resolve structured task capture`
+- [x] Define quoted/escaped token behavior; reject unknown, archived, and ambiguous project names; reject unknown tags.
+- [x] Resolve project/tag names and parsed times before task insert; create task, assignments, planned start, and deadline in one transaction.
+- [x] Reuse parser at web, HTTP, quick-add, and automation boundaries.
+- [x] Do not implicitly create projects/tags.
+- [x] Test parser ambiguity, natural date/instant deadline conversion, and no partial task after failed reference resolution.
+- [x] Run: `pnpm test -- packages/domain/src/structured-capture.test.ts apps/server/src/server.test.ts`
+- [x] Commit: `feat: resolve structured task capture`
 
 ### Task 6: Finish habits UI and automation
 
@@ -169,12 +169,12 @@ changed by this increment.
 **Files:**
 - Inspect: all changed files
 
-- [ ] Run `pnpm test`.
-- [ ] Run `pnpm typecheck`.
-- [ ] Run `rtk git diff --check`.
-- [ ] Exercise app flows: command capture, Inbox, Planner, deadline edit, offline reset/replay, habit completion, duplicate completion.
-- [ ] Review for sync epoch/data-loss regressions and mobile navigation/accessibility.
-- [ ] Commit any final focused corrections, then push.
+- [x] Run `pnpm test`.
+- [x] Run `pnpm typecheck`.
+- [x] Run `rtk git diff --check`.
+- [x] Exercise app flows: command capture, Inbox, Planner, deadline edit, offline reset/replay, habit completion, duplicate completion.
+- [x] Review for sync epoch/data-loss regressions and mobile navigation/accessibility.
+- [x] Commit final focused corrections locally. Remote push and deployment are outside the current commit authorization.
 
 ## Self-review
 
@@ -207,3 +207,31 @@ canonical completion. Recovery also recognizes a habit mutation already committe
 before an interrupted automation confirmation. Full gate: 181 tests in 55 files,
 format/lint/types and all builds passed. Browser qualification follows structured
 capture so the integrated workspace can be exercised together.
+
+### Structured capture and integrated verification — 2026-09-19
+
+Completed quoted/escaped marker parsing, exact date-expression consumption,
+owner-timezone conversion across DST, and explicit rejection of skipped/repeated
+local times without offsets. Shared server capture resolves existing project/tag
+names and commits all task fields and assignments atomically. Failed resolution
+leaves no task or change row; retries replay before re-resolving names/dates.
+Web capture is opt-in and online, plain capture retains its offline outbox, and
+quick-add uses `--structured`. Automation freezes resolved input at preview.
+The user-facing behavior and examples are in `docs/product/habits-and-capture.md`.
+
+Integrated browser qualification used an isolated SQLite database and disposable
+Baikal service. Passed owner setup/login/connect, daily/weekly/interval creation,
+canonical completion surviving reload with exactly one occurrence, rename,
+archive/restore, offline disabled controls, failed capture with zero tasks, then
+successful quoted-project/tag capture with a 25-minute estimate, planned start,
+and date deadline. Planner showed the persisted task at 09:00 America/Chicago.
+390-pixel browser checks and screenshots cover habits, planner, and error states.
+The error-state check exposed toolbar overflow and missing alert semantics; both
+were corrected and the final browser check passed. A tool interruption stopped
+the local server; it was restarted using the same disposable database and the
+flow was rechecked. Console failures correspond to intentional 400 validation
+responses and the interrupted server, with no unexplained application errors.
+
+Full final gate: 185 tests in 56 files, formatting, lint, workspace typechecks,
+and all four builds. `git diff --check` passed. Browser artifacts remain local in
+`output/playwright/`. No production data, deployment, or remote branch changed.

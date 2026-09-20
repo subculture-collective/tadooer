@@ -1,3 +1,5 @@
+import { StructuredCaptureError } from "@suite/domain";
+import { createCapturedTask } from "../task-capture.ts";
 import { randomUUID, createHash } from "node:crypto";
 import type {
   TaskListResponse,
@@ -89,34 +91,21 @@ export const handleTasks: RouteHandler = async (
       .update(JSON.stringify(parsed.data))
       .digest("hex");
     const now = new Date().toISOString();
-    const result = database.createTaskIdempotently(
-      session.owner.id,
-      parsedKey.data,
-      requestHash,
-      {
-        id: randomUUID(),
-        title: parsed.data.title,
-        notes: parsed.data.notes,
-        status: "open",
-        revision: 1,
-        createdAt: now,
-        updatedAt: now,
-        ...(parsed.data.plannedStart === undefined
-          ? {}
-          : { plannedStart: parsed.data.plannedStart }),
-        ...(parsed.data.projectId === undefined
-          ? {}
-          : { projectId: parsed.data.projectId }),
-        ...(parsed.data.tagIds === undefined
-          ? {}
-          : { tagIds: parsed.data.tagIds }),
-        ...(parsed.data.deadline?.kind === "date"
-          ? { deadlineDate: parsed.data.deadline.value, deadlineAt: null }
-          : parsed.data.deadline?.kind === "instant"
-            ? { deadlineDate: null, deadlineAt: parsed.data.deadline.value }
-            : {}),
-      },
-    );
+    let result;
+    try {
+      result = createCapturedTask(
+        database,
+        session.owner.id,
+        parsedKey.data,
+        requestHash,
+        parsed.data,
+        now,
+      );
+    } catch (error) {
+      if (!(error instanceof StructuredCaptureError)) throw error;
+      sendError(response, 400, "INVALID_TASK", error.message);
+      return true;
+    }
     if (result.kind === "conflict") {
       sendError(
         response,

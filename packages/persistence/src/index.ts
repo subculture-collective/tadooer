@@ -1,3 +1,4 @@
+import { StructuredCaptureError } from "@suite/domain";
 import { SqliteHabitStore } from "./habit-store.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -2630,6 +2631,17 @@ export class SuiteDatabase {
       | "estimateMinutes"
     > &
       Partial<Pick<TaskRecord, "plannedStart" | "estimateMinutes">>,
+    resolve?: () => Partial<
+      Pick<
+        TaskRecord,
+        | "title"
+        | "plannedStart"
+        | "deadlineDate"
+        | "deadlineAt"
+        | "projectId"
+        | "tagIds"
+      >
+    >,
   ): IdempotentTaskCreateResult {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -2654,13 +2666,40 @@ export class SuiteDatabase {
         return { kind: "replayed", task: replayed };
       }
 
+      task = { ...task, ...resolve?.() };
+      if (
+        task.projectId != null &&
+        this.#database
+          .prepare(
+            "SELECT 1 FROM projects WHERE id=? AND owner_id=? AND archived_at IS NULL",
+          )
+          .get(task.projectId, ownerId) === undefined
+      )
+        throw new StructuredCaptureError("Project is unknown or archived");
+      if (
+        (task.tagIds?.length ?? 0) > 25 ||
+        new Set(task.tagIds ?? []).size !== (task.tagIds?.length ?? 0)
+      )
+        throw new StructuredCaptureError(
+          "Task tags must be unique and limited to 25",
+        );
+      for (const tagId of task.tagIds ?? []) {
+        if (
+          this.#database
+            .prepare(
+              "SELECT 1 FROM tags WHERE id=? AND owner_id=? AND archived_at IS NULL",
+            )
+            .get(tagId, ownerId) === undefined
+        )
+          throw new StructuredCaptureError("Tag is unknown or archived");
+      }
       const created: TaskRecord = {
         ownerId,
         ...task,
         completedAt: null,
         deletedAt: null,
         plannedStart: task.plannedStart ?? null,
-        estimateMinutes: null,
+        estimateMinutes: task.estimateMinutes ?? null,
         deadlineDate: task.deadlineDate ?? null,
         deadlineAt: task.deadlineAt ?? null,
         projectId: task.projectId ?? null,
@@ -2669,8 +2708,8 @@ export class SuiteDatabase {
       this.#database
         .prepare(
           `INSERT INTO tasks
-            (id, owner_id, title, notes, status, revision, created_at, updated_at, planned_start, project_id, deadline_date, deadline_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, owner_id, title, notes, status, revision, created_at, updated_at, planned_start, project_id, deadline_date, deadline_at, estimate_minutes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           created.id,
@@ -2685,6 +2724,7 @@ export class SuiteDatabase {
           created.projectId ?? null,
           created.deadlineDate ?? null,
           created.deadlineAt ?? null,
+          created.estimateMinutes,
         );
       const initialFieldVersion = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id, field, version) VALUES (?, ?, 1)",

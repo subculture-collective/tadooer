@@ -11,10 +11,11 @@ export interface QuickAddConfig {
   readonly idempotencyKey: string;
   readonly title: string;
   readonly notes: string;
+  readonly structured?: boolean;
 }
 
 const usage =
-  "Usage: suite-quick-add --url <Suite URL> --token-file <mode-0600 file> --idempotency-key <stable key> [--notes <text>] <title>";
+  "Usage: suite-quick-add --url <Suite URL> --token-file <mode-0600 file> --idempotency-key <stable key> [--notes <text>] [--structured] <title>";
 
 const fail = (message: string): never => {
   throw new Error(`${message}\n${usage}`);
@@ -51,11 +52,16 @@ export const parseQuickAddConfig = (
   let tokenFile: string | undefined;
   let idempotencyKey: string | undefined;
   let notes = "";
+  let structured = false;
   const positional: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === undefined) continue;
+    if (argument === "--structured") {
+      structured = true;
+      continue;
+    }
     if (argument === "--help" || argument === "-h") throw new Error(usage);
     if (
       argument === "--url" ||
@@ -95,6 +101,7 @@ export const parseQuickAddConfig = (
     idempotencyKey,
     title: title.trim(),
     notes,
+    ...(structured ? { structured: true } : {}),
   };
 };
 
