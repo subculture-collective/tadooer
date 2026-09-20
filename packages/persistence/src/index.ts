@@ -3799,6 +3799,113 @@ export class SuiteDatabase {
     };
   }
 
+  /** Shared HTTP/assistant lifecycle boundary; safe inside confirmation transactions. */
+  mutateOrganization(
+    kind: "project" | "tag",
+    ownerId: string,
+    id: string,
+    expectedRevision: number | null,
+    fields: {
+      readonly title?: string | undefined;
+      readonly archived?: boolean | undefined;
+    },
+    now: string,
+  ): ProjectRecord | TagRecord | undefined {
+    const title = fields.title?.trim();
+    if (
+      (title !== undefined &&
+        (title.length === 0 ||
+          title.length > (kind === "project" ? 240 : 100))) ||
+      (fields.archived !== undefined && typeof fields.archived !== "boolean") ||
+      (title === undefined && fields.archived === undefined)
+    )
+      return undefined;
+    this.#database.exec("SAVEPOINT organization_mutation;");
+    try {
+      const current =
+        kind === "project"
+          ? this.#project(ownerId, id)
+          : this.#tag(ownerId, id);
+      if (
+        (expectedRevision === null &&
+          (current !== undefined ||
+            title === undefined ||
+            fields.archived !== undefined)) ||
+        (expectedRevision !== null && current?.revision !== expectedRevision)
+      ) {
+        this.#database.exec("RELEASE SAVEPOINT organization_mutation;");
+        return undefined;
+      }
+      if (expectedRevision === null) {
+        const record = {
+          id,
+          ownerId,
+          title: title ?? "",
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+        };
+        if (kind === "project") this.createProject(record);
+        else
+          this.createTag({
+            ...record,
+            normalizedName: record.title.normalize("NFKC").toLocaleLowerCase(),
+          });
+      } else {
+        if (current === undefined) throw new Error("Organization disappeared");
+        const nextTitle = title ?? current.title;
+        const archivedAt =
+          fields.archived === undefined
+            ? current.archivedAt
+            : fields.archived
+              ? (current.archivedAt ?? now)
+              : null;
+        if (kind === "project") {
+          this.#database
+            .prepare(
+              "UPDATE projects SET title=?, archived_at=?, revision=revision+1, updated_at=? WHERE owner_id=? AND id=? AND revision=?",
+            )
+            .run(nextTitle, archivedAt, now, ownerId, id, expectedRevision);
+        } else {
+          this.#database
+            .prepare(
+              "UPDATE tags SET display_name=?, normalized_name=?, archived_at=?, revision=revision+1, updated_at=? WHERE owner_id=? AND id=? AND revision=?",
+            )
+            .run(
+              nextTitle,
+              nextTitle.normalize("NFKC").toLocaleLowerCase(),
+              archivedAt,
+              now,
+              ownerId,
+              id,
+              expectedRevision,
+            );
+        }
+      }
+      const result =
+        kind === "project"
+          ? this.#project(ownerId, id)
+          : this.#tag(ownerId, id);
+      if (result === undefined) throw new Error("Organization result missing");
+      this.#appendSyncChangeInTransaction(
+        ownerId,
+        kind,
+        id,
+        "upsert",
+        result.revision,
+        now,
+      );
+      this.#database.exec("RELEASE SAVEPOINT organization_mutation;");
+      return result;
+    } catch (error) {
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT organization_mutation; RELEASE SAVEPOINT organization_mutation;",
+      );
+      throw error;
+    }
+  }
+
   createProject(record: ProjectRecord): void {
     this.#database
       .prepare(
@@ -3919,7 +4026,7 @@ export class SuiteDatabase {
     expectedRevision: number,
     now: string,
   ): TaskRecord | undefined {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    this.#database.exec("SAVEPOINT task_project;");
     try {
       const valid =
         projectId === null ||
@@ -3929,16 +4036,18 @@ export class SuiteDatabase {
           )
           .get(projectId, ownerId) !== undefined;
       if (!valid) {
-        this.#database.exec("ROLLBACK;");
+        this.#database.exec(
+          "ROLLBACK TO SAVEPOINT task_project; RELEASE SAVEPOINT task_project;",
+        );
         return undefined;
       }
       const changed = this.#database
         .prepare(
-          "UPDATE tasks SET project_id=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=?",
+          "UPDATE tasks SET project_id=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL",
         )
         .run(projectId, now, ownerId, taskId, expectedRevision).changes;
       if (changed !== 1) {
-        this.#database.exec("COMMIT;");
+        this.#database.exec("RELEASE SAVEPOINT task_project;");
         return undefined;
       }
       const task = this.getTask(ownerId, taskId);
@@ -3956,10 +4065,12 @@ export class SuiteDatabase {
         task.revision,
         now,
       );
-      this.#database.exec("COMMIT;");
+      this.#database.exec("RELEASE SAVEPOINT task_project;");
       return task;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT task_project; RELEASE SAVEPOINT task_project;",
+      );
       throw error;
     }
   }
@@ -3972,7 +4083,7 @@ export class SuiteDatabase {
   ): boolean {
     if (tagIds.length > 25 || new Set(tagIds).size !== tagIds.length)
       return false;
-    this.#database.exec("BEGIN IMMEDIATE;");
+    this.#database.exec("SAVEPOINT task_tags;");
     try {
       const current = this.getTask(ownerId, taskId);
       if (
@@ -3980,7 +4091,9 @@ export class SuiteDatabase {
         (expectedRevision !== undefined &&
           current.revision !== expectedRevision)
       ) {
-        this.#database.exec("ROLLBACK;");
+        this.#database.exec(
+          "ROLLBACK TO SAVEPOINT task_tags; RELEASE SAVEPOINT task_tags;",
+        );
         return false;
       }
       const valid = this.#database
@@ -3989,7 +4102,9 @@ export class SuiteDatabase {
         )
         .get(ownerId, ...tagIds) as unknown as { count: number };
       if (valid.count !== tagIds.length) {
-        this.#database.exec("ROLLBACK;");
+        this.#database.exec(
+          "ROLLBACK TO SAVEPOINT task_tags; RELEASE SAVEPOINT task_tags;",
+        );
         return false;
       }
       this.#database
@@ -4020,10 +4135,12 @@ export class SuiteDatabase {
         nextRevision,
         now,
       );
-      this.#database.exec("COMMIT;");
+      this.#database.exec("RELEASE SAVEPOINT task_tags;");
       return true;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT task_tags; RELEASE SAVEPOINT task_tags;",
+      );
       throw error;
     }
   }

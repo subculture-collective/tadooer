@@ -440,6 +440,56 @@ describe("Phase 2 HTTP integration", () => {
             )
           ).status,
         ).toBe(200);
+        for (const [path, revision] of [
+          [`/api/projects/${projectBody.project.id}`, 2],
+          [`/api/tags/${tagBody.tag.id}`, 1],
+        ] as const) {
+          for (const invalid of [
+            {},
+            { unknown: true },
+            { title: " " },
+            { archived: "false" },
+          ]) {
+            expect(
+              (await mutate(path, "PATCH", revision, invalid)).status,
+            ).toBe(400);
+          }
+          expect(
+            (await mutate(path, "PATCH", revision, { archived: true })).status,
+          ).toBe(200);
+          expect(
+            (await mutate(path, "PATCH", revision, { archived: false })).status,
+          ).toBe(412);
+          const restored = await mutate(path, "PATCH", revision + 1, {
+            archived: false,
+          });
+          expect(restored.status).toBe(200);
+          expect(restored.headers.get("etag")).toBe(
+            `"${String(revision + 2)}"`,
+          );
+          expect(
+            Object.values((await restored.json()) as Record<string, unknown>),
+          ).toEqual([
+            expect.objectContaining({
+              archivedAt: null,
+              revision: revision + 2,
+            }),
+          ]);
+          expect(
+            (
+              await fetch(`${server.baseUrl}${path}`, {
+                method: "PATCH",
+                headers: {
+                  Cookie: cookie,
+                  Origin: server.baseUrl,
+                  "Content-Type": "application/json",
+                  "If-Match": `"${String(revision + 2)}"`,
+                },
+                body: JSON.stringify({ title: "Denied" }),
+              })
+            ).status,
+          ).toBe(403);
+        }
         expect(
           (
             await mutate(`/api/tasks/${taskId}/project`, "PUT", 3, {
@@ -539,7 +589,7 @@ describe("Phase 2 HTTP integration", () => {
             await mutate(
               `/api/tags/${tagBody.tag.id}`,
               "PATCH",
-              tagBody.tag.revision,
+              tagBody.tag.revision + 2,
               { archived: true },
             )
           ).status,
