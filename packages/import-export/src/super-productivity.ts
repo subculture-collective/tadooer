@@ -97,19 +97,33 @@ export const previewSuperProductivity = (
   const projects = entities(data.project, "project");
   const tags = entities(data.tag, "tag");
   const repeats = entities(data.taskRepeatCfg, "taskRepeatCfg");
+  const archiveTasks = (name: "archiveYoung" | "archiveOld") => {
+    if (data[name] === undefined) return {};
+    const archive = object(data[name]);
+    if (archive?.task === undefined) {
+      issue(
+        "invalid_archive",
+        null,
+        `${name} must contain a task entity store; archived history cannot be inventoried`,
+      );
+      return {};
+    }
+    return entities(archive.task, `${name}.task`);
+  };
   const sources = [
     { records: entities(data.task, "task"), archived: false },
     {
-      records: entities(object(data.archiveYoung)?.task, "archiveYoung.task"),
+      records: archiveTasks("archiveYoung"),
       archived: true,
     },
     {
-      records: entities(object(data.archiveOld)?.task, "archiveOld.task"),
+      records: archiveTasks("archiveOld"),
       archived: true,
     },
   ];
   const tasks: SuperProductivityPreview["tasks"][number][] = [];
   const seen = new Set<string>();
+  const children = new Map<string, Set<string>>();
   const number = (value: unknown, id: string, name: string): number => {
     if (value === undefined || value === null) return 0;
     if (
@@ -200,13 +214,64 @@ export const previewSuperProductivity = (
           id,
           "Referenced repeat configuration is absent",
         );
+      for (const field of ["parentId", "projectId", "repeatCfgId"] as const)
+        if (
+          task[field] !== undefined &&
+          task[field] !== null &&
+          (typeof task[field] !== "string" || task[field] === "")
+        )
+          issue(
+            "invalid_reference",
+            id,
+            `${field} must be a nonempty source ID`,
+          );
+      for (const field of ["tagIds", "subTaskIds"] as const) {
+        if (task[field] === undefined) continue;
+        const refs = task[field];
+        if (
+          !Array.isArray(refs) ||
+          refs.some((ref) => typeof ref !== "string" || ref === "")
+        ) {
+          issue(
+            "invalid_reference_list",
+            id,
+            `${field} must contain source IDs`,
+          );
+          continue;
+        }
+        const unique = new Set<string>(refs as string[]);
+        if (unique.size !== refs.length)
+          issue("duplicate_reference", id, `${field} repeats an ID`);
+        if (field === "subTaskIds") children.set(id, unique);
+        else
+          for (const tagId of unique)
+            if (!Object.hasOwn(tags, tagId))
+              issue(
+                "missing_tag",
+                id,
+                "Referenced tag is absent from the export",
+              );
+      }
       const trackedMilliseconds = number(task.timeSpent, id, "timeSpent");
       const daily = object(task.timeSpentOnDay);
-      if (daily !== undefined) {
-        const total = Object.values(daily).reduce<number>(
-          (sum, entry) => sum + number(entry, id, "timeSpentOnDay"),
-          0,
+      if (task.timeSpentOnDay !== undefined && daily === undefined)
+        issue(
+          "invalid_time_history",
+          id,
+          "timeSpentOnDay must map calendar dates to milliseconds",
         );
+      if (daily !== undefined) {
+        let total = 0;
+        for (const [date, entry] of Object.entries(daily)) {
+          day(date, id, "timeSpentOnDay date");
+          total += number(entry, id, "timeSpentOnDay");
+        }
+        if (!Number.isSafeInteger(total))
+          issue(
+            "time_total_overflow",
+            id,
+            "Daily tracked time exceeds safe integer precision",
+          );
         if (total !== trackedMilliseconds)
           issue(
             "time_total_mismatch",
@@ -247,6 +312,53 @@ export const previewSuperProductivity = (
         task.sourceId,
         "Parent task is absent from all task stores",
       );
+  const byId = new Map(tasks.map((task) => [task.sourceId, task]));
+  for (const [parentId, refs] of children)
+    for (const childId of refs) {
+      const child = byId.get(childId);
+      if (child === undefined)
+        issue(
+          "missing_child",
+          parentId,
+          "Listed child is absent from all task stores",
+        );
+      else if (child.parentId !== parentId)
+        issue(
+          "hierarchy_mismatch",
+          childId,
+          "Child parentId disagrees with the parent's subTaskIds",
+        );
+    }
+  for (const task of tasks)
+    if (
+      task.parentId !== null &&
+      children.has(task.parentId) &&
+      !children.get(task.parentId)?.has(task.sourceId)
+    )
+      issue(
+        "hierarchy_mismatch",
+        task.sourceId,
+        "Parent subTaskIds omits this child",
+      );
+  // Iterative, linear graph walk: deep exports must not overflow the call stack.
+  const checked = new Set<string>();
+  for (const task of tasks) {
+    const path = new Set<string>();
+    let current: string | null = task.sourceId;
+    while (current !== null && byId.has(current) && !checked.has(current)) {
+      if (path.has(current)) {
+        issue(
+          "hierarchy_cycle",
+          current,
+          "Parent relationships contain a cycle; resolve it before importing",
+        );
+        break;
+      }
+      path.add(current);
+      current = byId.get(current)?.parentId ?? null;
+    }
+    for (const id of path) checked.add(id);
+  }
   if (tasks.some((task) => task.parentId !== null))
     issue(
       "hierarchy_parity_required",

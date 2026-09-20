@@ -102,3 +102,89 @@ describe("Super Productivity migration preview", () => {
     ).toBe("invalid_entity_store");
   });
 });
+
+it("reports malformed archives rather than silently treating them as empty", () => {
+  for (const archive of [null, [], "encrypted", {}, { task: null }]) {
+    const report = previewSuperProductivity(
+      JSON.stringify({ task: state({}), archiveOld: archive }),
+    );
+    expect(
+      report.issues.some(
+        ({ code }) =>
+          code === "invalid_archive" || code === "invalid_entity_store",
+      ),
+    ).toBe(true);
+  }
+});
+
+it("detects cycles, inconsistent child lists, missing tags, and malformed time history", () => {
+  const report = previewSuperProductivity(
+    JSON.stringify({
+      task: state({
+        a: {
+          id: "a",
+          title: "A",
+          parentId: "b",
+          subTaskIds: ["b", "missing", "b"],
+          tagIds: ["missing"],
+        },
+        b: { id: "b", title: "B", parentId: "a", subTaskIds: [] },
+        self: {
+          id: "self",
+          title: "Self",
+          parentId: "self",
+          timeSpentOnDay: [],
+        },
+        invalid: {
+          id: "invalid",
+          title: "Invalid",
+          parentId: 3,
+          subTaskIds: [3],
+          timeSpentOnDay: { "2026-02-30": 1 },
+        },
+      }),
+    }),
+  );
+  expect(report.issues.map(({ code }) => code)).toEqual(
+    expect.arrayContaining([
+      "hierarchy_cycle",
+      "hierarchy_mismatch",
+      "missing_child",
+      "missing_tag",
+      "duplicate_reference",
+      "invalid_time_history",
+      "invalid_reference",
+      "invalid_reference_list",
+      "invalid_date",
+    ]),
+  );
+  expect(
+    report.issues.filter(({ code }) => code === "hierarchy_cycle"),
+  ).toHaveLength(2);
+});
+
+it("walks deep parent chains without recursion and reports unsafe time totals", () => {
+  const tasks: Record<string, unknown> = {};
+  for (let i = 0; i < 10000; i++)
+    tasks[String(i)] = {
+      id: String(i),
+      title: "Task",
+      parentId: i === 9999 ? null : String(i + 1),
+    };
+  tasks.time = {
+    id: "time",
+    title: "Time",
+    timeSpent: Number.MAX_SAFE_INTEGER,
+    timeSpentOnDay: { "2026-09-19": Number.MAX_SAFE_INTEGER, "2026-09-20": 1 },
+  };
+  const report = previewSuperProductivity(
+    JSON.stringify({ task: state(tasks) }),
+  );
+  expect(report.totals.tasks).toBe(10001);
+  expect(report.issues.some(({ code }) => code === "hierarchy_cycle")).toBe(
+    false,
+  );
+  expect(report.issues.some(({ code }) => code === "time_total_overflow")).toBe(
+    true,
+  );
+});
