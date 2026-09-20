@@ -148,3 +148,36 @@ qualification. This is not a blocker for import, parity, or MCP implementation.
   verified access, canceled revocation without effects, then confirmed revocation
   and verified HTTP 401. The secret remained inside the browser test process.
   Local visual evidence: `output/playwright/assistant-access/connections.png`.
+
+## Core import apply path — September 20
+
+- Claude client access and Gitea availability are explicitly deferred by the owner;
+  continue local development and commits without waiting for either service.
+- Core exports can now be reviewed and applied from Connections. Supported fields:
+  task/project/tag identities and titles, task notes, exact scheduled instants,
+  date/instant deadlines, whole-minute estimates within the existing task range,
+  and original task creation/completion timestamps. Missing creation dates use the
+  import time; missing completion dates block completed-task import.
+- This is not full migration parity. Hierarchy, recurrence, archived tasks,
+  tracked time, day-only scheduling, virtual Today views, project backlogs,
+  completed projects, attachments, reminders, and project/tag notes
+  remain blockers. Source settings/integrations are excluded. Keep the original
+  export; the database retains an allowlist of source metadata, not the full file
+  or provider credentials. No implicit partial import is offered.
+- Migration 0020 adds owner-scoped source identities and metadata. Apply binds to
+  the reviewed export fingerprint and commits entity creation, mappings, and sync
+  changes together. Existing source identities are skipped, preserving local edits
+  and deletions. Changed source metadata or destination conflicts reject the whole
+  transaction. This is a one-time migration path, not ongoing task synchronization.
+- Verification: parser qualification, HTTP preview/hash/unsupported/replay tests,
+  persistence replay after restart, preservation of local edits/deletions, and
+  rollback after an injected mapping-write failure. Browser preview/apply/replay
+  created exactly two tasks, one project, and one tag; repeat apply created zero.
+  Imported tasks appeared in the task view; database readback preserved notes,
+  estimate, deadline, and original completion timestamp. Full verify: 213 tests,
+  all four builds. Production remains unchanged.
+- Compatibility: migration is additive, but a later deployment must back up the
+  database and credential key together. Rollback uses the paired pre-migration
+  backup with its matching application version; never delete migration history to
+  force an older binary to accept the new database. The disposable browser DB/key
+  checkpoint is `/tmp/tadooer-sprint14/before-import-migration`.

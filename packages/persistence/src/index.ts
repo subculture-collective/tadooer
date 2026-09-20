@@ -1208,6 +1208,16 @@ const migrations: readonly Migration[] = [
       response_json TEXT NOT NULL, PRIMARY KEY(owner_id,actor_id,operation_id)
     ) STRICT;`,
   },
+  {
+    id: "0020_task_import_identity",
+    sql: `CREATE TABLE task_import_sources (
+      owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+      source_kind TEXT NOT NULL, entity_kind TEXT NOT NULL,
+      source_id TEXT NOT NULL, target_id TEXT NOT NULL,
+      source_hash TEXT NOT NULL, source_json TEXT NOT NULL, imported_at TEXT NOT NULL,
+      PRIMARY KEY(owner_id,source_kind,entity_kind,source_id)
+    ) STRICT;`,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -2618,6 +2628,145 @@ export class SuiteDatabase {
     };
   }
 
+  importTaskRecords(
+    ownerId: string,
+    records: readonly {
+      kind: "project" | "tag" | "task";
+      sourceId: string;
+      sourceHash: string;
+      sourceJson: string;
+      title: string;
+      notes: string;
+      projectId: string | null;
+      tagIds: readonly string[];
+      plannedStart: string | null;
+      deadlineDate: string | null;
+      deadlineAt: string | null;
+      estimateMinutes: number | null;
+      completedAt: string | null;
+      createdAt: string | null;
+    }[],
+    now: string,
+  ): { created: number; existing: number } {
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const targets = new Map<string, string>();
+      let created = 0;
+      let existing = 0;
+      for (const record of records) {
+        const prior = this.#database
+          .prepare(
+            "SELECT target_id,source_hash FROM task_import_sources WHERE owner_id=? AND source_kind='super_productivity' AND entity_kind=? AND source_id=?",
+          )
+          .get(ownerId, record.kind, record.sourceId) as
+          { target_id: string; source_hash: string } | undefined;
+        if (prior !== undefined && prior.source_hash !== record.sourceHash)
+          throw new Error("IMPORT_SOURCE_CHANGED");
+        const id = prior?.target_id ?? randomUUID();
+        targets.set(`${record.kind}:${record.sourceId}`, id);
+        if (prior !== undefined) {
+          existing++;
+          continue;
+        }
+        const createdAt = record.createdAt ?? now;
+        if (record.kind === "project") {
+          this.createProject({
+            id,
+            ownerId,
+            title: record.title,
+            revision: 1,
+            createdAt,
+            updatedAt: now,
+            archivedAt: null,
+          });
+          this.#appendSyncChangeInTransaction(
+            ownerId,
+            "project",
+            id,
+            "upsert",
+            1,
+            now,
+          );
+        } else if (record.kind === "tag") {
+          this.createTag({
+            id,
+            ownerId,
+            title: record.title,
+            normalizedName: record.title.normalize("NFKC").toLocaleLowerCase(),
+            revision: 1,
+            createdAt,
+            updatedAt: now,
+            archivedAt: null,
+          });
+          this.#appendSyncChangeInTransaction(
+            ownerId,
+            "tag",
+            id,
+            "upsert",
+            1,
+            now,
+          );
+        } else {
+          const mapped = (kind: string, sourceId: string) => {
+            const value = targets.get(`${kind}:${sourceId}`);
+            if (value === undefined)
+              throw new Error("IMPORT_REFERENCE_MISSING");
+            return value;
+          };
+          const result = this.createTaskIdempotently(
+            ownerId,
+            `sp-import:${id}`,
+            record.sourceHash,
+            {
+              id,
+              title: record.title,
+              notes: record.notes,
+              status: record.completedAt === null ? "open" : "completed",
+              revision: 1,
+              createdAt,
+              updatedAt: now,
+              plannedStart: record.plannedStart,
+              deadlineDate: record.deadlineDate,
+              deadlineAt: record.deadlineAt,
+              estimateMinutes: record.estimateMinutes,
+              projectId:
+                record.projectId === null
+                  ? null
+                  : mapped("project", record.projectId),
+              tagIds: record.tagIds.map((sourceId) => mapped("tag", sourceId)),
+            },
+          );
+          if (result.kind !== "created")
+            throw new Error("IMPORT_CREATE_CONFLICT");
+          this.#database
+            .prepare(
+              "UPDATE tasks SET completed_at=? WHERE owner_id=? AND id=?",
+            )
+            .run(record.completedAt, ownerId, id);
+        }
+        this.#database
+          .prepare(
+            "INSERT INTO task_import_sources (owner_id,source_kind,entity_kind,source_id,target_id,source_hash,source_json,imported_at) VALUES (?,'super_productivity',?,?,?,?,?,?)",
+          )
+          .run(
+            ownerId,
+            record.kind,
+            record.sourceId,
+            id,
+            record.sourceHash,
+            record.sourceJson,
+            now,
+          );
+        created++;
+      }
+      this.#database.exec("COMMIT;");
+      return { created, existing };
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   createTaskIdempotently(
     ownerId: string,
     idempotencyKey: string,
@@ -2643,7 +2792,7 @@ export class SuiteDatabase {
       >
     >,
   ): IdempotentTaskCreateResult {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    this.#database.exec("SAVEPOINT create_task;");
     try {
       const prior = this.#database
         .prepare(
@@ -2656,13 +2805,13 @@ export class SuiteDatabase {
         | undefined;
       if (prior !== undefined) {
         if (prior.request_hash !== requestHash) {
-          this.#database.exec("COMMIT;");
+          this.#database.exec("RELEASE SAVEPOINT create_task;");
           return { kind: "conflict" };
         }
         const replayed = this.#findTask(ownerId, prior.resource_id);
         if (replayed === undefined)
           throw new Error("Idempotency record refers to a missing task");
-        this.#database.exec("COMMIT;");
+        this.#database.exec("RELEASE SAVEPOINT create_task;");
         return { kind: "replayed", task: replayed };
       }
 
@@ -2765,10 +2914,12 @@ export class SuiteDatabase {
         created.revision,
         created.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      this.#database.exec("RELEASE SAVEPOINT create_task;");
       return { kind: "created", task: created };
     } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT create_task; RELEASE SAVEPOINT create_task;",
+      );
       throw error;
     }
   }

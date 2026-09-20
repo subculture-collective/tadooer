@@ -73,9 +73,8 @@ it("requires owner authentication and CSRF for a non-mutating task import previe
         body,
       });
       expect(preview.status).toBe(200);
-      expect(
-        superProductivityPreviewSchema.parse(await preview.json()),
-      ).toMatchObject({ canApply: false, totals: { tasks: 1 } });
+      const report = superProductivityPreviewSchema.parse(await preview.json());
+      expect(report).toMatchObject({ canApply: true, totals: { tasks: 1 } });
       expect(
         (
           await fetch(path, {
@@ -91,6 +90,71 @@ it("requires owner authentication and CSRF for a non-mutating task import previe
       expect(taskListResponseSchema.parse(await tasks.json()).tasks).toEqual(
         [],
       );
+      const apply = (hash: string, payload = body) =>
+        fetch(path.replace(/preview$/, "apply"), {
+          method: "POST",
+          headers: { ...authenticated, "X-Import-Hash": hash },
+          body: payload,
+        });
+      expect(
+        (
+          await fetch(path.replace(/preview$/, "apply"), {
+            method: "POST",
+            headers,
+            body,
+          })
+        ).status,
+      ).toBe(401);
+      expect(
+        (
+          await fetch(path.replace(/preview$/, "apply"), {
+            method: "POST",
+            headers: {
+              ...headers,
+              Cookie: cookie,
+              "X-Import-Hash": report.inputHash,
+            },
+            body,
+          })
+        ).status,
+      ).toBe(403);
+      expect((await apply("wrong")).status).toBe(409);
+      const applied = await apply(report.inputHash);
+      expect(applied.status).toBe(200);
+      expect(await applied.json()).toEqual({ created: 1, existing: 0 });
+      expect(await (await apply(report.inputHash)).json()).toEqual({
+        created: 0,
+        existing: 1,
+      });
+      const unsupported = JSON.stringify({
+        task: {
+          ids: ["tracked"],
+          entities: {
+            tracked: { id: "tracked", title: "Tracked", timeSpent: 60000 },
+          },
+        },
+      });
+      const blockedPreview = superProductivityPreviewSchema.parse(
+        await (
+          await fetch(path, {
+            method: "POST",
+            headers: authenticated,
+            body: unsupported,
+          })
+        ).json(),
+      );
+      expect(blockedPreview.canApply).toBe(false);
+      expect((await apply(blockedPreview.inputHash, unsupported)).status).toBe(
+        422,
+      );
+      const after = taskListResponseSchema.parse(
+        await (
+          await fetch(`${server.baseUrl}/api/tasks`, {
+            headers: { Cookie: cookie },
+          })
+        ).json(),
+      );
+      expect(after.tasks).toHaveLength(1);
     } finally {
       await server.close();
     }

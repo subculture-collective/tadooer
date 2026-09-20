@@ -1,18 +1,24 @@
 import { useState } from "react";
 import type { SuperProductivityPreview } from "@suite/contracts";
-import { previewTaskImport } from "../api.ts";
+import { applyTaskImport, previewTaskImport } from "../api.ts";
 
 export const SuperProductivityImport = ({
   csrfToken,
+  onApplied,
 }: {
   readonly csrfToken: string;
+  readonly onApplied: () => Promise<void>;
 }) => {
   const [raw, setRaw] = useState<string | null>(null);
   const [report, setReport] = useState<SuperProductivityPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [approved, setApproved] = useState(false);
   const [busy, setBusy] = useState(false);
   const choose = async (file: File | undefined) => {
     setRaw(null);
+    setOutcome(null);
+    setApproved(false);
     setReport(null);
     setError(null);
     if (file === undefined) return;
@@ -44,12 +50,31 @@ export const SuperProductivityImport = ({
       setBusy(false);
     }
   };
+  const apply = async () => {
+    if (raw === null || report?.canApply !== true || !approved) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await applyTaskImport(raw, report.inputHash, csrfToken);
+      setOutcome(
+        `Import saved: ${String(result.created)} records created; ${String(result.existing)} previously imported records left unchanged.`,
+      );
+      setApproved(false);
+      await onApplied();
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <section aria-labelledby="sp-import-title">
-      <h3 id="sp-import-title">Super Productivity migration preview</h3>
+      <h3 id="sp-import-title">Super Productivity migration</h3>
       <p>
-        Inspect a JSON backup before moving your tasks. This preview does not
-        import or modify data.
+        Preview a JSON backup before importing core tasks, projects, tags,
+        notes, exact scheduled times, deadlines, estimates, and completion
+        dates. Preview changes nothing. Unsupported workflows block the entire
+        import.
       </p>
       <label>
         Super Productivity export{" "}
@@ -71,6 +96,7 @@ export const SuperProductivityImport = ({
       >
         {busy ? "Reading export…" : "Preview Super Productivity export"}
       </button>
+      {outcome !== null && <p role="status">{outcome}</p>}
       {error !== null && <p role="alert">{error}</p>}
       {report !== null && (
         <div aria-live="polite">
@@ -89,6 +115,13 @@ export const SuperProductivityImport = ({
             Parent totals may include child time.
           </p>
           <h4>Migration readiness</h4>
+          {report.canApply && (
+            <p>
+              This export is ready for the initial core-data import. Source
+              settings, integrations, and other application configuration are
+              not imported. Keep the original backup.
+            </p>
+          )}
           <ul>
             {report.issues.map((issue, index) => (
               <li key={`${issue.code}:${String(index)}`}>
@@ -113,6 +146,26 @@ export const SuperProductivityImport = ({
               ))}
             </ul>
           </details>
+          {report.canApply && (
+            <div>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={approved}
+                  disabled={busy}
+                  onChange={(event) => setApproved(event.currentTarget.checked)}
+                />{" "}
+                I reviewed the inventory and want to import these records.
+              </label>
+              <button
+                type="button"
+                disabled={busy || !approved}
+                onClick={() => void apply()}
+              >
+                Import reviewed records
+              </button>
+            </div>
+          )}
           <p className="hint">
             Source fingerprint: <code>{report.inputHash}</code>
           </p>

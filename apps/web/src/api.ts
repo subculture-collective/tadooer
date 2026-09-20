@@ -1,4 +1,5 @@
 import {
+  taskImportApplyResponseSchema,
   automationTokenListResponseSchema,
   createAutomationTokenRequestSchema,
   createAutomationTokenResponseSchema,
@@ -1006,3 +1007,18 @@ export const revokeAutomationToken = (id: string, csrfToken: string) =>
     method: "DELETE",
     headers: { "X-CSRF-Token": csrfToken },
   });
+
+export const applyTaskImport = (
+  rawJson: string,
+  inputHash: string,
+  csrfToken: string,
+) =>
+  request(
+    "/api/imports/super-productivity/apply",
+    taskImportApplyResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken, "X-Import-Hash": inputHash },
+      body: rawJson,
+    },
+  );

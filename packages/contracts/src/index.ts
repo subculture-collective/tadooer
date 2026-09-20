@@ -2143,7 +2143,7 @@ export type HabitOccurrence = z.infer<typeof habitOccurrenceSchema>;
 export const superProductivityPreviewSchema = z.object({
   source: z.literal("super_productivity"),
   inputHash: z.string().regex(/^[a-f0-9]{64}$/),
-  canApply: z.literal(false),
+  canApply: z.boolean(),
   totals: z.object({
     tasks: z.number().int().nonnegative(),
     completed: z.number().int().nonnegative(),
@@ -2182,3 +2182,10 @@ export const superProductivityPreviewSchema = z.object({
 export type SuperProductivityPreview = z.infer<
   typeof superProductivityPreviewSchema
 >;
+
+export const taskImportApplyResponseSchema = z
+  .object({
+    created: z.number().int().nonnegative(),
+    existing: z.number().int().nonnegative(),
+  })
+  .strict();

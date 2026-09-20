@@ -2431,6 +2431,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       )}
       {route === "connections" && (
         <ConnectionsPage
+          onTaskImport={syncNow}
           calendarMessage={calendarMessage}
           baikal={state.baikal}
           google={googleView}
