@@ -35,8 +35,12 @@ Recovery updates the session without replaying the failed action. Calendar actio
 use the same recovery UI. Full verification passed: 192 tests and four builds.
 Two disposable Chrome profiles verified expired-session login and stale-CSRF refresh,
 retained capture drafts, no mutation before explicit retry, and one create per retry.
-Remaining audit: successful writes followed by failed ancillary reads and offline
-outbox recovery across expiry. Browser snapshots are in local `.playwright-cli/`.
+Follow-up audit: acknowledged structured captures now remain visible and cached
+when a later sync fails, without overwriting offline edits. Sync distinguishes
+expired authentication from CSRF failure; recovery recognizes legacy route codes.
+Full verification passed with 199 tests and four builds. Browser checks preserved
+a queued task across reload/login and inline sign-in/explicit Sync now, with exactly
+one server task in each case; injected post-create 503 retained the saved task. Browser snapshots are in local `.playwright-cli/`.
 
 Calendar actions now recover explicitly, but the other task/calendar/focus,
 settings, and automation UI paths need the same audit. Inspect `apps/web/src/api.ts`,

@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import { IDBFactory } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
 import type {
   ClientRegistrationResponse,
@@ -12,6 +13,24 @@ const ownerId = "728a504a-0997-4eb3-94dd-5d6ff8af5967";
 const taskId = "4519c805-e478-486b-a918-616fc6d9ea98";
 const operationId = "afcab502-2199-43fd-b9d3-c8b556c6f25b";
 const generatedIds = [installationId, taskId, operationId] as const;
+
+it("retains acknowledged creates through failed refresh without overwriting offline edits", async () => {
+  const store = new LocalStore({ indexedDb: new IDBFactory() });
+  await store.ensureClient(() => Promise.resolve(registration));
+  const created = {
+    ...taskSnapshot().task,
+    title: "Acknowledged create",
+    revision: 1,
+  };
+  await store.cacheCreatedTask(created);
+  expect((await store.loadCachedTasks())[0]?.task.title).toBe(
+    "Acknowledged create",
+  );
+  await store.queueTaskPatch(created.id, { title: "Offline edit" });
+  await store.cacheCreatedTask(created);
+  expect((await store.loadCachedTasks())[0]?.task.title).toBe("Offline edit");
+  expect(await store.loadOutbox()).toHaveLength(1);
+});
 
 const registration: ClientRegistrationResponse = {
   client: {

@@ -14,9 +14,11 @@ export const subscribeSessionFailure = (
 
 export const reportSessionFailure = (error: ApiRequestError): void => {
   const failure =
-    error.status === 401 && error.code === "AUTH_REQUIRED"
+    (error.status === 401 || error.status === 403) &&
+    error.code === "AUTH_REQUIRED"
       ? "expired"
-      : error.status === 403 && error.code === "CSRF_INVALID"
+      : error.status === 403 &&
+          (error.code === "CSRF_INVALID" || error.code === "CSRF_REQUIRED")
         ? "csrf"
         : null;
   if (failure !== null) for (const listener of listeners) listener(failure);

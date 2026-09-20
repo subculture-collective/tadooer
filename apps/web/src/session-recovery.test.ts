@@ -12,6 +12,8 @@ describe("shared session recovery boundary", () => {
   it.each([
     [401, "AUTH_REQUIRED", "expired"],
     [403, "CSRF_INVALID", "csrf"],
+    [403, "CSRF_REQUIRED", "csrf"],
+    [403, "AUTH_REQUIRED", "expired"],
     [401, "GOOGLE_AUTH_REQUIRED", null],
     [503, "PROVIDER_UNAVAILABLE", null],
   ] as const)(

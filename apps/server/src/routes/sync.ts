@@ -157,19 +157,22 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
     (method === "GET" && url.pathname === "/api/sync/snapshot")
   ) {
     const session = auth.authenticate(request, method === "POST");
+    if (session === undefined) {
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
+      return true;
+    }
     if (
-      session === undefined ||
-      (method === "POST" &&
-        (!sameOrigin(request) ||
-          !auth.csrfMatches(
-            session,
-            request.headers["x-csrf-token"] as string | undefined,
-          )))
+      method === "POST" &&
+      (!sameOrigin(request) ||
+        !auth.csrfMatches(
+          session,
+          request.headers["x-csrf-token"] as string | undefined,
+        ))
     ) {
       sendError(
         response,
-        method === "POST" ? 403 : 401,
-        method === "POST" ? "CSRF_REQUIRED" : "AUTH_REQUIRED",
+        403,
+        "CSRF_REQUIRED",
         "Authenticated same-origin request required",
       );
       return true;

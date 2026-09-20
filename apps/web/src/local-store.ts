@@ -349,6 +349,31 @@ export class LocalStore {
     );
   }
 
+  /** Cache an acknowledged initial create without moving the sync cursor. */
+  async cacheCreatedTask(task: Task): Promise<void> {
+    if (task.revision !== 1) return;
+    const database = await this.#open();
+    const transaction = database.transaction(entityStore, "readwrite");
+    const entities = transaction.objectStore(entityStore);
+    const existing: unknown = await requestResult(
+      entities.get(entityKey("task", task.id)),
+    );
+    // A replay must not overwrite subsequent offline edits or a newer snapshot.
+    if (existing === undefined)
+      entities.put({
+        entityKind: "task",
+        id: task.id,
+        revision: 1,
+        changeSequence: 0,
+        value: {
+          task,
+          fieldVersions: initialFieldVersions(),
+          changeSequence: 0,
+        },
+      } satisfies CachedEntity);
+    await transactionDone(transaction);
+  }
+
   async loadConflicts(): Promise<readonly LocalConflict[]> {
     const database = await this.#open();
     const transaction = database.transaction(conflictStore, "readonly");

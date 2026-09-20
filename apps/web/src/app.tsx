@@ -867,7 +867,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     );
   };
 
-  const syncAfterLocalMutation = async (): Promise<void> => {
+  const syncAfterLocalMutation = async (
+    savedMessage = "Saved locally",
+  ): Promise<void> => {
     await publishLocalState();
     if (state.kind !== "authenticated" || !navigator.onLine) return;
     try {
@@ -887,7 +889,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           ? { ...current, syncStatus: "offline" }
           : current,
       );
-      setFormError(`Saved locally. ${messageFor(error)}`);
+      setFormError(`${savedMessage}. ${messageFor(error)}`);
     }
   };
 
@@ -961,6 +963,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     const data = new FormData(form);
     setBusy(true);
     setFormError(null);
+    let committedTask: Task | undefined;
     try {
       const estimate = Number(formValue(data, "estimateMinutes"));
       if (data.get("structured") === "on") {
@@ -983,8 +986,10 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             ? prior.slice(0, 36)
             : crypto.randomUUID();
         sessionStorage.setItem(storageKey, `${key}:${serialized}`);
-        await createTask(input, state.session.csrfToken, key);
+        const result = await createTask(input, state.session.csrfToken, key);
+        committedTask = result.task;
         sessionStorage.removeItem(storageKey);
+        await localStore.cacheCreatedTask(result.task);
       } else {
         await localStore.queueTaskCreate({
           title: formValue(data, "title"),
@@ -993,11 +998,29 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             Number.isInteger(estimate) && estimate > 0 ? estimate : null,
         });
       }
-      await syncAfterLocalMutation();
+      await syncAfterLocalMutation(
+        committedTask === undefined
+          ? "Saved locally"
+          : "Task saved on the server",
+      );
       form.reset();
     } catch (error: unknown) {
-      setFormError(messageFor(error));
+      setFormError(
+        committedTask === undefined
+          ? messageFor(error)
+          : `Task saved on the server. Could not refresh the workspace: ${messageFor(error)}`,
+      );
     } finally {
+      if (committedTask !== undefined) {
+        const saved = committedTask;
+        setState((current) =>
+          current.kind === "authenticated" &&
+          !current.tasks.some((task) => task.id === saved.id)
+            ? { ...current, tasks: [...current.tasks, saved] }
+            : current,
+        );
+        form.reset();
+      }
       setBusy(false);
     }
   };
