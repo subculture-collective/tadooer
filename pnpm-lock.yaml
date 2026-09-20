@@ -189,7 +189,11 @@ importers:
 
   packages/google-calendar: {}
 
-  packages/import-export: {}
+  packages/import-export:
+    dependencies:
+      '@suite/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/persistence:
     dependencies:
