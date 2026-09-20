@@ -101,3 +101,30 @@ export const deriveHabitMetrics = (
     completedPeriods: keys.filter((key) => completed.has(key)).length,
   };
 };
+
+/** Date keys are civil dates in the habit's timezone; they never represent durations. */
+export const habitDueOn = (schedule: HabitSchedule, date: string): boolean => {
+  const difference = Math.round(
+    (dateFor(date).getTime() - dateFor(schedule.startedOn).getTime()) /
+      dayMillis,
+  );
+  if (difference < 0) return false;
+  if (schedule.cadence.kind === "daily") return true;
+  if (schedule.cadence.kind === "weekly")
+    return schedule.cadence.weekdays.includes(
+      (dateFor(date).getUTCDay() + 6) % 7,
+    );
+  return difference % schedule.cadence.intervalDays === 0;
+};
+
+export const habitDateAt = (at: string, timeZone: string): string => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(at));
+  const value = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+};

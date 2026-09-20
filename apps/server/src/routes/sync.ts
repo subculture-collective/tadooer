@@ -1,3 +1,4 @@
+import { isHabitSyncOperation, habitCommandSchema } from "@suite/contracts";
 import { randomUUID, createHash, randomBytes } from "node:crypto";
 import type {
   ClientRegistrationResponse,
@@ -85,6 +86,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         revokedAt: null,
       },
       clientCredential: credential,
+      protocolVersion: 2 as const,
       initialCursor: cursorFor(state),
     };
     sendJson(response, 201, body);
@@ -209,6 +211,12 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
     if (method === "GET") {
       const snapshot = database.fullSyncSnapshot(session.owner.id);
       const allSnapshots = [
+        ...database.habits
+          .list(session.owner.id)
+          .map((value) => ({ entityKind: "habit" as const, value })),
+        ...database.habits
+          .occurrences(session.owner.id)
+          .map((value) => ({ entityKind: "habit_occurrence" as const, value })),
         ...snapshot.tasks.map((task) => ({
           entityKind: "task" as const,
           value: {
@@ -304,6 +312,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         snapshots,
         nextCursor: cursorFor(snapshot.cursor),
         hasMore: offset + snapshots.length < allSnapshots.length,
+        protocolVersion: 2 as const,
         serverTimestamp: new Date().toISOString(),
       };
       sendJson(response, 200, body);
@@ -345,6 +354,57 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
     }
     const outcomes = parsed.data.operations.map((operation) => {
       const now = new Date().toISOString();
+      if (isHabitSyncOperation(operation)) {
+        const { operationId, requestHash } = operation;
+        const command = Object.fromEntries(
+          Object.entries(operation).filter(
+            ([key]) =>
+              ![
+                "operationId",
+                "clientSequence",
+                "createdAt",
+                "requestHash",
+              ].includes(key),
+          ),
+        );
+        const result = database.habits.apply({
+          ownerId: session.owner.id,
+          actorId: `client:${client.id}`,
+          syncClientId: client.id,
+          operationId,
+          requestHash,
+          command: habitCommandSchema.parse(command),
+          now,
+        });
+        if (result.kind === "conflict")
+          return {
+            kind: "conflict" as const,
+            operationId,
+            code: "SYNC_RESOURCE_CONFLICT" as const,
+            taskId: result.habit.id,
+            taskRevision: result.habit.revision,
+          };
+        if (result.kind === "invalid" || result.kind === "idempotency-conflict")
+          return {
+            kind: "rejected" as const,
+            operationId,
+            code:
+              result.kind === "invalid"
+                ? ("INVALID_SYNC_OPERATION" as const)
+                : ("IDEMPOTENCY_CONFLICT" as const),
+          };
+        return {
+          kind: result.kind,
+          operationId,
+          entityId: result.occurrence?.id ?? result.habit.id,
+          entityRevision:
+            result.occurrence === null ? result.habit.revision : 1,
+          changeSequence: Math.max(
+            1,
+            database.getSyncState(session.owner.id).cursor,
+          ),
+        };
+      }
       const result =
         operation.kind === "task.create"
           ? database.applyTaskCreateSync({
@@ -480,6 +540,38 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
     const body: SyncRoundResponse = {
       outcomes,
       changes: page.changes.map((change) => {
+        if (
+          change.entityType === "habit" ||
+          change.entityType === "habit_occurrence"
+        ) {
+          const snapshot =
+            change.entityType === "habit"
+              ? (() => {
+                  const value = database.habits
+                    .list(session.owner.id)
+                    .find(({ id }) => id === change.entityId);
+                  return value === undefined
+                    ? null
+                    : { entityKind: "habit" as const, value };
+                })()
+              : (() => {
+                  const value = database.habits
+                    .occurrences(session.owner.id)
+                    .find(({ id }) => id === change.entityId);
+                  return value === undefined
+                    ? null
+                    : { entityKind: "habit_occurrence" as const, value };
+                })();
+          return {
+            sequence: change.sequence,
+            entityKind: change.entityType,
+            entityId: change.entityId,
+            kind: "upsert" as const,
+            entityRevision: change.revision,
+            changedAt: change.createdAt,
+            snapshot,
+          };
+        }
         const task =
           change.entityType === "task"
             ? database.getTask(session.owner.id, change.entityId, true)
@@ -655,6 +747,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         cursor: page.cursor,
       }),
       hasMore: page.changes.length === parsed.data.pullLimit,
+      protocolVersion: 2 as const,
       serverTimestamp: new Date().toISOString(),
     };
     sendJson(response, 200, body);

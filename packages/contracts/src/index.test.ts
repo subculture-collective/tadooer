@@ -28,6 +28,8 @@ import {
   projectSchema,
   syncDiagnosticManifestSchema,
   syncOperationSchema,
+  habitCommandSchema,
+  syncRoundResponseSchema,
   syncRoundRequestSchema,
   syncTaskSnapshotSchema,
   tagSchema,
@@ -43,6 +45,33 @@ const fixture = (name: string): unknown =>
   JSON.parse(
     readFileSync(new URL(`../test-fixtures/${name}`, import.meta.url), "utf8"),
   ) as unknown;
+
+describe("Habit protocol", () => {
+  it("rejects empty edits, mutable occurrences, and absent protocol version", () => {
+    const habitId = "00000000-0000-4000-8000-000000000001";
+    expect(
+      habitCommandSchema.safeParse({
+        kind: "habit.patch",
+        habitId,
+        baseRevision: 1,
+        fields: {},
+      }).success,
+    ).toBe(false);
+    for (const kind of ["habit_occurrence.patch", "habit_occurrence.delete"])
+      expect(habitCommandSchema.safeParse({ kind, habitId }).success).toBe(
+        false,
+      );
+    expect(
+      syncRoundResponseSchema.safeParse({
+        outcomes: [],
+        changes: [],
+        nextCursor: "cursor",
+        hasMore: false,
+        serverTimestamp: "2026-09-19T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("deadline sync contracts", () => {
   it("accepts date, instant, and clearing deadlines but rejects planned-start writes", () => {

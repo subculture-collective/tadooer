@@ -192,6 +192,13 @@ importers:
   packages/import-export: {}
 
   packages/persistence:
+    dependencies:
+      '@suite/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@suite/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
       '@suite/test-support':
         specifier: workspace:*

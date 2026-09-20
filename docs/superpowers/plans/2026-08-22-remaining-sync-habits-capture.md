@@ -68,12 +68,12 @@ changed by this increment.
 
 - [x] Add `deadline` to `coreTaskFieldSchema` and `taskFieldVersionsSchema`.
 - [x] Permit only `deadline` (`TaskDeadline | null`) in sync task create/patch fields; do not add `plannedStart` to an operation schema.
-- [ ] Add v2 habit operations: create, patch, archive, restore, and immutable occurrence complete. Occurrence completion uses its operation UUID as the candidate occurrence identity.
-- [ ] Add `habit` and `habit_occurrence` sync snapshot variants.
-- [ ] Add protocol version `2` to registration/round/snapshot response schemas and assert missing header returns 426 before parsing/executing operations.
-- [ ] Test date, instant, and null deadlines; reject sync planned starts; reject empty habit patch and any occurrence edit/delete command.
-- [ ] Run: `pnpm test -- packages/contracts/src/index.test.ts apps/server/src/phase2.test.ts`
-- [ ] Commit: `feat: define sync v2 operations`
+- [x] Add v2 habit operations: create, patch, archive, restore, and immutable occurrence complete. Occurrence completion uses its operation UUID as the candidate occurrence identity.
+- [x] Add `habit` and `habit_occurrence` sync snapshot variants.
+- [x] Add protocol version `2` to registration/round/snapshot response schemas and assert missing header returns 426 before parsing/executing operations.
+- [x] Test date, instant, and null deadlines; reject sync planned starts; reject empty habit patch and any occurrence edit/delete command.
+- [x] Run: `pnpm test -- packages/contracts/src/index.test.ts apps/server/src/phase2.test.ts`
+- [x] Commit: `feat: define sync v2 operations`
 
 ### Task 2: Implement deadline and habit sync persistence
 
@@ -84,13 +84,13 @@ changed by this increment.
 
 - [x] Map logical deadline writes atomically: date -> `deadline_date`, instant -> `deadline_at`, null -> both null.
 - [x] Advance `deadline` field versions for online PATCH and sync operations. Keep `plannedStart` excluded from sync operations.
-- [ ] Add transactional habit sync methods: create, patch, archive, restore, occurrence complete.
-- [ ] Append a sync change and operation outcome in the same transaction as every successful mutation.
-- [ ] For duplicate habit-period completion, return the existing canonical occurrence without another change row.
-- [ ] Enforce owner scope before every habit/occurrence mutation.
-- [ ] Test deadline/title disjoint merge, deadline conflict, habit stale revision, archive/restore, duplicate occurrence convergence, and cross-owner rejection.
-- [ ] Run: `pnpm test -- packages/persistence/src/index.test.ts apps/server/src/phase2.test.ts`
-- [ ] Commit: `feat: sync deadlines and habits`
+- [x] Add transactional habit sync methods: create, patch, archive, restore, occurrence complete.
+- [x] Append a sync change and operation outcome in the same transaction as every successful mutation.
+- [x] For duplicate habit-period completion, return the existing canonical occurrence without another change row.
+- [x] Enforce owner scope before every habit/occurrence mutation.
+- [x] Test deadline/title disjoint merge, deadline conflict, habit stale revision, archive/restore, duplicate occurrence convergence, and cross-owner rejection.
+- [x] Run: `pnpm test -- packages/persistence/src/index.test.ts apps/server/src/phase2.test.ts`
+- [x] Commit: `feat: sync deadlines and habits`
 
 ### Task 3: Finish server snapshot/round ordering
 
@@ -101,12 +101,12 @@ changed by this increment.
 - Test: `apps/server/src/phase6.test.ts`
 
 - [x] Validate cursor epoch/range before executing any queued operation; return reset before side effects.
-- [ ] Include deadline snapshots, habits, and occurrences in full and incremental projections.
+- [x] Include deadline snapshots, habits, and occurrences in full and incremental projections.
 - [x] Page changes from the validated original cursor after applying the round, so response includes local changes.
-- [ ] Return canonical occurrence ID for duplicate completions.
+- [x] Return canonical occurrence ID for duplicate completions.
 - [x] Test invalid cursor leaves task/outcome untouched and snapshot + replay applies an operation once.
-- [ ] Run: `pnpm test -- apps/server/src/phase2.test.ts apps/server/src/phase5.test.ts apps/server/src/phase6.test.ts`
-- [ ] Commit: `fix: make sync resets side-effect free`
+- [x] Run: `pnpm test -- apps/server/src/phase2.test.ts apps/server/src/phase5.test.ts apps/server/src/phase6.test.ts`
+- [x] Commit: `fix: make sync resets side-effect free`
 
 ### Task 4: Migrate IndexedDB and replay safely
 
@@ -121,11 +121,11 @@ changed by this increment.
 - [x] Persist `syncProtocolVersion: 2` and `resetRequired` metadata.
 - [x] On upgrade/reset, fetch a complete snapshot before sending an outbox round.
 - [x] Replace only canonical caches in one transaction; preserve queued/sending operations ordered by client sequence and retain conflicts/rejections.
-- [ ] Add habit/occurrence entity caches and queue helpers.
-- [ ] Do not optimistically create an occurrence cache row. Show it only after canonical server response.
-- [ ] Test restart persistence, snapshot failure atomicity, retained outbox IDs/hashes, deadline conflict visibility, and canonical duplicate occurrence convergence.
-- [ ] Run: `pnpm test -- apps/web/src/local-store.test.ts apps/web/src/sync-engine.test.ts`
-- [ ] Commit: `feat: replay sync v2 cache safely`
+- [x] Add habit/occurrence entity caches and queue helpers.
+- [x] Do not optimistically create an occurrence cache row. Show it only after canonical server response.
+- [x] Test restart persistence, snapshot failure atomicity, retained outbox IDs/hashes, deadline conflict visibility, and canonical duplicate occurrence convergence.
+- [x] Run: `pnpm test -- apps/web/src/local-store.test.ts apps/web/src/sync-engine.test.ts`
+- [x] Commit: `feat: replay sync v2 cache safely`
 
 ### Task 5: Resolve structured capture atomically
 
@@ -183,3 +183,15 @@ changed by this increment.
 - Every habit completion is immutable and period-deduplicated.
 - A reset occurs before mutation; replay preserves operation IDs, hashes, and client sequence.
 - No project/tag implicit creation occurs.
+
+### Habit sync checkpoint — 2026-09-19
+
+Habit create, title edit, archive/restore, and immutable completion now share a
+transactional owner-scoped store across HTTP and sync. Schedule identity stays
+fixed after creation so edits cannot reinterpret historical completion facts.
+Repeated completion converges on the original occurrence ID without a new change.
+Outcomes survive restart and reject changed payloads under the same key. Additive
+migration 0019 stores those outcomes; all v2 responses explicitly carry version 2.
+Client habit queues preserve their operation IDs across restart/reset and cache
+only canonical occurrences. The complete repository gate passed: 180 tests in 54
+files plus format, lint, typechecks, and four builds. UI and automation remain next.

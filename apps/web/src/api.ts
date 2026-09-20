@@ -459,6 +459,7 @@ export const getSyncSnapshot = async (
       snapshots,
       nextCursor: page.nextCursor,
       hasMore: false,
+      protocolVersion: 2 as const,
       serverTimestamp: page.serverTimestamp,
     };
   }

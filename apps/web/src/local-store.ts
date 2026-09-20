@@ -1,5 +1,9 @@
 import {
   syncDiagnosticManifestSchema,
+  isHabitSyncOperation,
+  habitListResponseSchema,
+  type HabitCommand,
+  type HabitListResponse,
   syncEntitySnapshotSchema,
   syncOperationSchema,
   type ClientRegistrationResponse,
@@ -27,6 +31,8 @@ const conflictStore = "conflicts";
 const diagnosticStore = "diagnostics";
 
 export type CachedEntityKind =
+  | "habit"
+  | "habit_occurrence"
   | "task"
   | "project"
   | "tag"
@@ -266,6 +272,48 @@ export class LocalStore {
     )) as CachedEntity[];
     await transactionDone(transaction);
     return records;
+  }
+
+  async loadCachedHabits(): Promise<HabitListResponse> {
+    const records = await this.loadCachedEntities();
+    return habitListResponseSchema.parse({
+      habits: records
+        .filter(({ entityKind }) => entityKind === "habit")
+        .map(({ value }) => value),
+      occurrences: records
+        .filter(({ entityKind }) => entityKind === "habit_occurrence")
+        .map(({ value }) => value),
+    });
+  }
+
+  async queueHabitCommand(command: HabitCommand): Promise<SyncOperation> {
+    const { kind, ...payload } = command;
+    const operation = await this.#operation(
+      await this.#requiredMetadata(),
+      kind,
+      payload,
+    );
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [metadataStore, outboxStore],
+      "readwrite",
+    );
+    const metadataHandle = transaction.objectStore(metadataStore);
+    const metadata = (await requestResult(
+      metadataHandle.get(metadataKey),
+    )) as LocalMetadata;
+    metadataHandle.put(
+      { ...metadata, nextClientSequence: metadata.nextClientSequence + 1 },
+      metadataKey,
+    );
+    transaction.objectStore(outboxStore).put({
+      operation,
+      state: "queued",
+      safeErrorCode: null,
+    } satisfies LocalOutboxEntry);
+    await transactionDone(transaction);
+    // Habit completion is visible only after the server supplies the canonical occurrence.
+    return operation;
   }
 
   async loadCachedTasks(
@@ -581,7 +629,7 @@ export class LocalStore {
           entityKind: snapshot.entityKind,
           id: value.id,
           value,
-          revision: value.revision,
+          revision: "revision" in value ? value.revision : 1,
           changeSequence: 0,
         } satisfies CachedEntity);
       }
@@ -593,6 +641,7 @@ export class LocalStore {
         (left, right) =>
           left.operation.clientSequence - right.operation.clientSequence,
       )) {
+      if (isHabitSyncOperation(operation)) continue;
       const taskId =
         operation.kind === "task.create" ? operation.task.id : operation.taskId;
       let snapshot = taskSnapshots.get(taskId);
@@ -699,7 +748,13 @@ export class LocalStore {
       conflictCount: conflicts.length,
       operations: outbox.map(({ operation, state, safeErrorCode }) => ({
         operationId: operation.operationId,
-        entityId: "taskId" in operation ? operation.taskId : operation.task.id,
+        entityId: isHabitSyncOperation(operation)
+          ? operation.kind === "habit.create"
+            ? operation.habit.id
+            : operation.habitId
+          : "taskId" in operation
+            ? operation.taskId
+            : operation.task.id,
         kind: operation.kind,
         state,
         requestHash: operation.requestHash,
@@ -746,11 +801,14 @@ export class LocalStore {
       kind,
       ...payload,
     };
-    const operation = syncOperationSchema.parse({
+    const normalized = syncOperationSchema.parse({
       ...operationBase,
-      requestHash: await hash(operationBase),
+      requestHash: "a".repeat(43),
     });
-    return operation;
+    const payloadToHash = Object.fromEntries(
+      Object.entries(normalized).filter(([key]) => key !== "requestHash"),
+    );
+    return { ...normalized, requestHash: await hash(payloadToHash) };
   }
 
   async #queueAndWriteTask(

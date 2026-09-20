@@ -179,7 +179,7 @@ export const habitSchema = z.object({
   title: z.string().trim().min(1).max(240),
   cadence: habitCadenceSchema,
   startedOn: z.iso.date(),
-  timeZone: z.string().trim().min(1).max(100),
+  timeZone: ianaTimeZoneSchema,
   revision: revisionSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -198,8 +198,50 @@ export const createHabitRequestSchema = z.object({
   title: z.string().trim().min(1).max(240),
   cadence: habitCadenceSchema,
   startedOn: z.iso.date(),
-  timeZone: z.string().trim().min(1).max(100),
+  timeZone: ianaTimeZoneSchema,
 });
+
+// Schedule identity is immutable once created; edits do not reinterpret past occurrences.
+export const patchHabitRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240).optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "A habit edit is required",
+  });
+
+export const habitCommandSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("habit.create"),
+      habit: createHabitRequestSchema.extend({ id: entityIdSchema }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("habit.patch"),
+      habitId: entityIdSchema,
+      baseRevision: revisionSchema,
+      fields: patchHabitRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.enum(["habit.archive", "habit.restore"]),
+      habitId: entityIdSchema,
+      baseRevision: revisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("habit.complete"),
+      habitId: entityIdSchema,
+      baseRevision: revisionSchema,
+      periodKey: z.iso.date(),
+    })
+    .strict(),
+]);
 
 export const completeHabitRequestSchema = z.object({
   periodKey: z.iso.date(),
@@ -863,6 +905,7 @@ export const clientRegistrationRequestSchema = z
 export const clientCredentialSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 export const clientRegistrationResponseSchema = z.object({
+  protocolVersion: z.literal(2),
   client: clientIdentitySchema,
   clientCredential: clientCredentialSchema,
   initialCursor: z.string().min(1).max(512),
@@ -935,7 +978,15 @@ const syncOperationBaseSchema = z.object({
   requestHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
 
+export const habitSyncOperationSchema = z.discriminatedUnion("kind", [
+  habitCommandSchema.options[0].extend(syncOperationBaseSchema.shape),
+  habitCommandSchema.options[1].extend(syncOperationBaseSchema.shape),
+  habitCommandSchema.options[2].extend(syncOperationBaseSchema.shape),
+  habitCommandSchema.options[3].extend(syncOperationBaseSchema.shape),
+]);
+
 export const syncOperationSchema = z.discriminatedUnion("kind", [
+  ...habitSyncOperationSchema.options,
   syncOperationBaseSchema.extend({
     kind: z.literal("task.create"),
     task: z
@@ -1119,6 +1170,11 @@ export const syncPlanningPlaceholderSnapshotSchema = z.object({
 });
 
 export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
+  z.object({ entityKind: z.literal("habit"), value: habitSchema }),
+  z.object({
+    entityKind: z.literal("habit_occurrence"),
+    value: habitOccurrenceSchema,
+  }),
   z.object({ entityKind: z.literal("task"), value: syncTaskSnapshotSchema }),
   z.object({ entityKind: z.literal("project"), value: projectSchema }),
   z.object({ entityKind: z.literal("tag"), value: tagSchema }),
@@ -1148,6 +1204,8 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
 export const syncChangeSchema = z.object({
   sequence: revisionSchema,
   entityKind: z.enum([
+    "habit",
+    "habit_occurrence",
     "task",
     "project",
     "tag",
@@ -1180,6 +1238,7 @@ export const syncRoundRequestSchema = z
   );
 
 export const syncRoundResponseSchema = z.object({
+  protocolVersion: z.literal(2),
   outcomes: z.array(syncOperationOutcomeSchema).max(100),
   changes: z.array(syncChangeSchema).max(200),
   nextCursor: syncCursorSchema,
@@ -1193,6 +1252,7 @@ export const syncCursorExpiredSchema = apiErrorSchema.extend({
 });
 
 export const syncSnapshotResponseSchema = z.object({
+  protocolVersion: z.literal(2),
   snapshots: z.array(syncEntitySnapshotSchema).max(200),
   nextCursor: syncCursorSchema,
   hasMore: z.boolean(),
@@ -1204,6 +1264,11 @@ export const syncDiagnosticOperationSchema = z
     operationId: entityIdSchema,
     entityId: entityIdSchema.nullable(),
     kind: z.enum([
+      "habit.create",
+      "habit.patch",
+      "habit.archive",
+      "habit.restore",
+      "habit.complete",
       "task.create",
       "task.patch",
       "task.complete",
@@ -1944,3 +2009,13 @@ export type AutomationConfirmationResponse = z.infer<
 >;
 
 export { ApiRequestError, createAutomationClient } from "./http-client.ts";
+
+export type HabitCommand = z.infer<typeof habitCommandSchema>;
+export type HabitSyncOperation = z.infer<typeof habitSyncOperationSchema>;
+
+export const isHabitSyncOperation = (
+  operation: SyncOperation,
+): operation is HabitSyncOperation => operation.kind.startsWith("habit.");
+
+export type Habit = z.infer<typeof habitSchema>;
+export type HabitOccurrence = z.infer<typeof habitOccurrenceSchema>;

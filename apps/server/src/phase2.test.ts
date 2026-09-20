@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ManualSessionClock } from "@suite/domain";
 import {
   activeSessionCommandResponseSchema,
+  habitListResponseSchema,
   apiErrorSchema,
   clientRegistrationResponseSchema,
   syncRoundResponseSchema,
@@ -258,6 +259,64 @@ describe("Phase 2 HTTP integration", () => {
             conflictingFields: ["deadline"],
           });
         }
+
+        const habitId = operationId("81");
+        const habitCreate = {
+          kind: "habit.create",
+          operationId: operationId("82"),
+          clientSequence: 30,
+          createdAt: create.createdAt,
+          requestHash: hash,
+          habit: {
+            id: habitId,
+            title: "Read",
+            cadence: { kind: "daily" },
+            startedOn: "2026-08-01",
+            timeZone: "America/Chicago",
+          },
+        };
+        const habitCreated = await sync(first, [habitCreate]);
+        expect(
+          syncRoundResponseSchema.parse(await habitCreated.json()).outcomes[0],
+        ).toMatchObject({ kind: "applied", entityId: habitId });
+        const complete = {
+          kind: "habit.complete",
+          operationId: operationId("83"),
+          clientSequence: 31,
+          createdAt: create.createdAt,
+          requestHash: hash,
+          habitId,
+          baseRevision: 1,
+          periodKey: "2026-08-21",
+        };
+        const completion = await sync(first, [complete]);
+        const completionBody = syncRoundResponseSchema.parse(
+          await completion.json(),
+        );
+        expect(completionBody.outcomes[0]).toMatchObject({
+          entityId: complete.operationId,
+        });
+        const duplicate = await sync(
+          second,
+          [{ ...complete, operationId: operationId("84") }],
+          completionBody.nextCursor,
+        );
+        const duplicateBody = syncRoundResponseSchema.parse(
+          await duplicate.json(),
+        );
+        expect(duplicateBody.outcomes[0]).toMatchObject({
+          entityId: complete.operationId,
+        });
+        expect(duplicateBody.changes).toEqual([]);
+        const habitList = habitListResponseSchema.parse(
+          await (
+            await fetch(`${server.baseUrl}/api/habits`, {
+              headers: { Cookie: cookie },
+            })
+          ).json(),
+        );
+        expect(habitList.occurrences).toHaveLength(1);
+        expect(habitList.habits[0]?.id).toBe(habitId);
 
         const titlePatch = {
           kind: "task.patch",

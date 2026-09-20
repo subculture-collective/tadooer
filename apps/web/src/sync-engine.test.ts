@@ -19,6 +19,7 @@ const registration: ClientRegistrationResponse = {
     label: "Test client",
   },
   clientCredential: "A".repeat(43),
+  protocolVersion: 2 as const,
   initialCursor: "sync-v1.epoch.0.tag",
 };
 
@@ -48,6 +49,7 @@ describe("SyncEngine", () => {
         changes: [],
         nextCursor: "sync-v1.epoch.4.tag",
         hasMore: false,
+        protocolVersion: 2 as const,
         serverTimestamp: "2026-08-06T16:00:00.000Z",
       } satisfies SyncRoundResponse),
     );
@@ -71,6 +73,7 @@ describe("SyncEngine", () => {
           snapshots: [],
           nextCursor: "sync-v1.epoch.4.tag",
           hasMore: false,
+          protocolVersion: 2 as const,
           serverTimestamp: "2026-08-06T16:00:00.000Z",
         }),
     }).sync();
@@ -94,6 +97,7 @@ describe("SyncEngine", () => {
         changes: [],
         nextCursor: "sync-v1.epoch.0.tag",
         hasMore: false,
+        protocolVersion: 2 as const,
         serverTimestamp: "2026-08-06T16:00:00.000Z",
       } satisfies SyncRoundResponse),
     );
@@ -104,6 +108,7 @@ describe("SyncEngine", () => {
           snapshots: [],
           nextCursor: "sync-v1.epoch.0.tag",
           hasMore: false,
+          protocolVersion: 2 as const,
           serverTimestamp: "2026-08-06T16:00:00.000Z",
         }),
       syncRound,
@@ -125,6 +130,7 @@ describe("SyncEngine", () => {
         snapshots: [],
         nextCursor: "sync-v1.epoch.4.tag",
         hasMore: false,
+        protocolVersion: 2 as const,
         serverTimestamp: "2026-08-06T16:00:00.000Z",
       }),
     );
@@ -142,6 +148,7 @@ describe("SyncEngine", () => {
           changes: [],
           nextCursor: request.cursor,
           hasMore: false,
+          protocolVersion: 2 as const,
           serverTimestamp: "2026-08-06T16:00:01.000Z",
         });
       },

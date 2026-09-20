@@ -23,6 +23,7 @@ const registration: ClientRegistrationResponse = {
     revokedAt: null,
   },
   clientCredential: "A".repeat(43),
+  protocolVersion: 2 as const,
   initialCursor: "sync-v1.epoch.0.tag",
 };
 
@@ -71,6 +72,7 @@ const response = (
   ],
   nextCursor: "sync-v1.epoch.2.tag",
   hasMore: false,
+  protocolVersion: 2 as const,
   serverTimestamp: "2026-08-06T16:01:00.000Z",
   ...overrides,
 });
@@ -201,6 +203,7 @@ describe("LocalStore", () => {
       snapshots: [{ entityKind: "task", value: taskSnapshot() }],
       nextCursor: "sync-v1.new-epoch.2.tag",
       hasMore: false,
+      protocolVersion: 2 as const,
       serverTimestamp: "2026-08-06T16:02:00.000Z",
     });
     expect(await local.loadConflicts()).toEqual(conflictBefore);
@@ -212,6 +215,77 @@ describe("LocalStore", () => {
       "acknowledged",
       "queued",
     ]);
+  });
+
+  it("waits for canonical habit occurrences and preserves queued completions through reset", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    const habit = {
+      id: taskId,
+      ownerId,
+      title: "Read",
+      cadence: { kind: "daily" as const },
+      startedOn: "2026-08-06",
+      timeZone: "UTC",
+      revision: 1,
+      createdAt: "2026-08-06T12:00:00.000Z",
+      updatedAt: "2026-08-06T12:00:00.000Z",
+      archivedAt: null,
+    };
+    await local.replaceFromSnapshot({
+      protocolVersion: 2,
+      snapshots: [{ entityKind: "habit", value: habit }],
+      nextCursor: "sync-v1.epoch.1.tag",
+      hasMore: false,
+      serverTimestamp: habit.createdAt,
+    });
+    const queued = await local.queueHabitCommand({
+      kind: "habit.complete",
+      habitId: taskId,
+      baseRevision: 1,
+      periodKey: "2026-08-06",
+    });
+    expect((await local.loadCachedHabits()).occurrences).toEqual([]);
+    await local.close();
+    const reopened = store();
+    const occurrence = {
+      id: "a4f90881-652b-4411-b18b-5f5f643d20d6",
+      habitId: taskId,
+      periodKey: "2026-08-06",
+      completedAt: habit.createdAt,
+      createdAt: habit.createdAt,
+    };
+    await reopened.replaceFromSnapshot({
+      protocolVersion: 2,
+      snapshots: [
+        { entityKind: "habit", value: habit },
+        { entityKind: "habit_occurrence", value: occurrence },
+      ],
+      nextCursor: "sync-v1.next.2.tag",
+      hasMore: false,
+      serverTimestamp: habit.createdAt,
+    });
+    expect((await reopened.loadOutbox())[0]?.operation).toEqual(queued);
+    await reopened.applySyncRound({
+      protocolVersion: 2,
+      outcomes: [
+        {
+          kind: "applied",
+          operationId: queued.operationId,
+          entityId: occurrence.id,
+          entityRevision: 1,
+          changeSequence: 2,
+        },
+      ],
+      changes: [],
+      nextCursor: "sync-v1.next.2.tag",
+      hasMore: false,
+      serverTimestamp: habit.createdAt,
+    });
+    expect((await reopened.loadCachedHabits()).occurrences).toEqual([
+      occurrence,
+    ]);
+    expect((await reopened.loadOutbox())[0]?.state).toBe("acknowledged");
   });
 
   it("upgrades a v1 cache without changing client identity, sequence, outbox, or conflicts", async () => {
@@ -290,6 +364,7 @@ describe("LocalStore", () => {
       snapshots: [],
       nextCursor: "sync-v1.next.0.tag",
       hasMore: false,
+      protocolVersion: 2 as const,
       serverTimestamp: now,
     });
     expect(await local.requiresSnapshot()).toBe(false);
@@ -319,6 +394,7 @@ describe("LocalStore", () => {
       snapshots: [{ entityKind: "task", value: taskSnapshot() }],
       nextCursor: "sync-v1.next.3.tag",
       hasMore: false,
+      protocolVersion: 2 as const,
       serverTimestamp: "2026-09-19T12:00:00.000Z",
     });
     expect((await reopened.loadCachedTasks())[0]?.task.deadline).toEqual(
@@ -338,6 +414,7 @@ describe("LocalStore", () => {
       snapshots: [{ entityKind: "task" as const, value: taskSnapshot() }],
       nextCursor: "sync-v1.other.3.tag",
       hasMore: true,
+      protocolVersion: 2 as const,
       serverTimestamp: "2026-08-06T16:02:00.000Z",
     };
     await expect(local.replaceFromSnapshot(snapshot)).rejects.toThrow(
@@ -378,6 +455,7 @@ describe("LocalStore", () => {
       ],
       nextCursor: "sync-v1.epoch.3.tag",
       hasMore: false,
+      protocolVersion: 2 as const,
       serverTimestamp: "2026-08-06T16:02:00.000Z",
     });
 

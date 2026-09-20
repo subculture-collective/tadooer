@@ -1,3 +1,4 @@
+import { SqliteHabitStore } from "./habit-store.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -1198,6 +1199,14 @@ const migrations: readonly Migration[] = [
         WHERE id NOT IN (SELECT task_id FROM task_field_versions WHERE field='deadline');
     `,
   },
+  {
+    id: "0019_habit_operation_outcomes",
+    sql: `CREATE TABLE habit_operation_outcomes (
+      owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+      actor_id TEXT NOT NULL, operation_id TEXT NOT NULL, request_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL, PRIMARY KEY(owner_id,actor_id,operation_id)
+    ) STRICT;`,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -1209,11 +1218,25 @@ const escapeSqliteString = (value: string): string =>
 export class SuiteDatabase {
   readonly #database: DatabaseSync;
   readonly credentials: SqliteCredentialStore;
+  readonly habits: SqliteHabitStore;
   readonly calendarProjections: SqliteCalendarProjectionStore;
   readonly planningPreferences: SqlitePlanningPreferencesStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.habits = new SqliteHabitStore(
+      database,
+      (ownerId, kind, id, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          kind,
+          id,
+          "upsert",
+          revision,
+          now,
+        );
+      },
+    );
     this.credentials = new SqliteCredentialStore(this.#database);
     this.calendarProjections = new SqliteCalendarProjectionStore(
       this.#database,
