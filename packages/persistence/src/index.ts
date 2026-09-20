@@ -1,4 +1,6 @@
 import {
+  planningPreferencesSchema,
+  notificationPreferencesSchema,
   checklistCommandSchema,
   type ChecklistCommand,
 } from "@suite/contracts";
@@ -1222,6 +1224,35 @@ const migrations: readonly Migration[] = [
       PRIMARY KEY(owner_id,source_kind,entity_kind,source_id)
     ) STRICT;`,
   },
+  {
+    id: "0021_preference_revisions",
+    sql: `
+      CREATE TABLE owner_preference_revisions (
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('planning','notifications')),
+        revision INTEGER NOT NULL CHECK(revision > 0),
+        PRIMARY KEY(owner_id,kind)
+      ) STRICT;
+      INSERT INTO owner_preference_revisions SELECT owner_id,'planning',1 FROM owner_planning_preferences;
+      INSERT INTO owner_preference_revisions SELECT owner_id,'notifications',1 FROM owner_notification_preferences;
+      CREATE TRIGGER planning_preference_insert AFTER INSERT ON owner_planning_preferences BEGIN
+        INSERT INTO owner_preference_revisions VALUES (NEW.owner_id,'planning',1)
+        ON CONFLICT(owner_id,kind) DO UPDATE SET revision=revision+1;
+      END;
+      CREATE TRIGGER planning_preference_update AFTER UPDATE ON owner_planning_preferences BEGIN
+        INSERT INTO owner_preference_revisions VALUES (NEW.owner_id,'planning',1)
+        ON CONFLICT(owner_id,kind) DO UPDATE SET revision=revision+1;
+      END;
+      CREATE TRIGGER notification_preference_insert AFTER INSERT ON owner_notification_preferences BEGIN
+        INSERT INTO owner_preference_revisions VALUES (NEW.owner_id,'notifications',1)
+        ON CONFLICT(owner_id,kind) DO UPDATE SET revision=revision+1;
+      END;
+      CREATE TRIGGER notification_preference_update AFTER UPDATE ON owner_notification_preferences BEGIN
+        INSERT INTO owner_preference_revisions VALUES (NEW.owner_id,'notifications',1)
+        ON CONFLICT(owner_id,kind) DO UPDATE SET revision=revision+1;
+      END;
+    `,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -1919,6 +1950,83 @@ export class SuiteDatabase {
       this.#database.exec("ROLLBACK;");
       throw error;
     }
+  }
+
+  getPreferenceRevision(
+    ownerId: string,
+    kind: "planning" | "notifications",
+  ): number {
+    const row = this.#database
+      .prepare(
+        "SELECT revision FROM owner_preference_revisions WHERE owner_id=? AND kind=?",
+      )
+      .get(ownerId, kind) as { revision: number } | undefined;
+    return row?.revision ?? 0;
+  }
+
+  #mutatePreferences(
+    ownerId: string,
+    kind: "planning" | "notifications",
+    expectedRevision: number,
+    apply: () => void,
+  ): boolean {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
+      return false;
+    this.#database.exec("SAVEPOINT preference_mutation;");
+    try {
+      if (this.getPreferenceRevision(ownerId, kind) !== expectedRevision) {
+        this.#database.exec("RELEASE SAVEPOINT preference_mutation;");
+        return false;
+      }
+      apply();
+      this.#database.exec("RELEASE SAVEPOINT preference_mutation;");
+      return true;
+    } catch (error) {
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT preference_mutation; RELEASE SAVEPOINT preference_mutation;",
+      );
+      throw error;
+    }
+  }
+
+  mutatePlanningPreferences(
+    ownerId: string,
+    expectedRevision: number,
+    preferences: PlanningPreferencesRecord,
+    now: string,
+  ): PlanningPreferencesRecord | undefined {
+    const parsed = planningPreferencesSchema.safeParse(preferences);
+    if (!parsed.success) return undefined;
+    return this.#mutatePreferences(
+      ownerId,
+      "planning",
+      expectedRevision,
+      () => {
+        this.putPlanningPreferences(ownerId, parsed.data, now);
+      },
+    )
+      ? this.getPlanningPreferences(ownerId)
+      : undefined;
+  }
+
+  mutateNotificationPreferences(
+    ownerId: string,
+    expectedRevision: number,
+    preferences: NotificationPreferencesRecord,
+    now: string,
+  ): NotificationPreferencesRecord | undefined {
+    const parsed = notificationPreferencesSchema.safeParse(preferences);
+    if (!parsed.success) return undefined;
+    return this.#mutatePreferences(
+      ownerId,
+      "notifications",
+      expectedRevision,
+      () => {
+        this.putNotificationPreferences(ownerId, parsed.data, now);
+      },
+    )
+      ? this.getNotificationPreferences(ownerId)
+      : undefined;
   }
 
   getPlanningPreferences(ownerId: string): PlanningPreferencesRecord {

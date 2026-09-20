@@ -238,10 +238,28 @@ it("nests lifecycle and task assignments in the confirmation transaction and rol
             db.assignTaskProject(owner.id, "task", "project", 1, now),
           ).toMatchObject({ revision: 2 });
           expect(db.setTaskTags(owner.id, "task", ["tag"], 2, now)).toBe(true);
+          expect(
+            db.mutatePlanningPreferences(
+              owner.id,
+              0,
+              { ...db.getPlanningPreferences(owner.id), timeZone: "UTC" },
+              now,
+            ),
+          ).toBeDefined();
+          expect(
+            db.mutateNotificationPreferences(
+              owner.id,
+              0,
+              { ...db.getNotificationPreferences(owner.id), enabled: true },
+              now,
+            ),
+          ).toBeDefined();
           return { ok: true };
         },
       );
     expect(confirm).toThrow("injected audit failure");
+    expect(db.getPreferenceRevision(owner.id, "planning")).toBe(0);
+    expect(db.getPreferenceRevision(owner.id, "notifications")).toBe(0);
     expect(db.listProjects(owner.id)).toEqual([]);
     expect(db.listTags(owner.id)).toEqual([]);
     expect(db.getTask(owner.id, "task")).toMatchObject({
@@ -258,6 +276,8 @@ it("nests lifecycle and task assignments in the confirmation transaction and rol
     ).toMatchObject({ count: 0 });
     raw.exec("DROP TRIGGER fail_audit;");
     expect(confirm()).toBe(true);
+    expect(db.getPreferenceRevision(owner.id, "planning")).toBe(1);
+    expect(db.getPreferenceRevision(owner.id, "notifications")).toBe(1);
     expect(db.getTask(owner.id, "task")).toMatchObject({
       revision: 3,
       projectId: "project",
