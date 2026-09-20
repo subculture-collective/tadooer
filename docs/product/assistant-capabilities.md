@@ -32,8 +32,8 @@ explicit authority boundary rather than silently counting as covered.
 | Owner setup, browser sign-in/out and session recovery | owner-only | — | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Provision Baikal credentials, authorize Google, disconnect grants | owner-only | — | [#60](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/60) |
 | Connector health and explicit Google sync/resync | gap | — | [#60](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/60) |
-| Day plan and planning preferences | partial | `planning.day_plan`, `planning.preferences` (reads) | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
-| Notification preferences, health and test delivery | partial | `notifications.preferences`, `notifications.status` (reads) | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
+| Day plan and planning preferences | covered | `planning.day_plan`, `planning.preferences`, `planning.update_preferences` | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
+| Notification preferences, health and test delivery | partial | `notifications.preferences`, `notifications.status`, `notifications.update_preferences`; test delivery remains open | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
 | Active and deleted task inventory | covered | `tasks.list`, `tasks.deleted` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Plain or structured task capture | covered | `tasks.create` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Title, notes, dates and estimate edits | covered | `tasks.update` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
@@ -95,3 +95,5 @@ in `calendar-migration.tsx`, outside the API helper module.
 Project/tag lifecycle now uses dedicated write scopes. Task assignment retains `tasks:write` and validates owner, active destination, task revision and frozen destination revisions. New scopes must be explicitly provisioned; existing tokens are not broadened. These four operations use the existing preview/confirm protocol, with entity, sync, consumed preview, receipt and audit committed together. Live client qualification remains #39.
 
 Checklist reads use `tasks:read`; mutations use `tasks:write`. Previews bind the parent task revision and item revisions. Reorder validates complete membership again at confirmation, including newly added items; deleted items emit sync tombstones. Atomic receipts prevent confirmed deletions from being executed twice. This is the existing checklist model, not full hierarchy (#27).
+
+Planning and notification preference reads include a persisted revision (zero for unstored defaults). Dedicated write scopes use that revision in preview/confirmation. Browser writes advance the same revision; change-away-and-back is stale. Enabling notifications may permit later scheduled worker delivery, which the preview states; confirmation does not send a test notification.
