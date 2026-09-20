@@ -90,3 +90,11 @@ are not evidence that the user's real history was migrated.
 - Live Super Productivity MCP health and capabilities responded successfully;
   plugin 0.1.0/protocol 2.0 includes recurrence, archive, worklog, bulk scheduling,
   project/tag mutations, and counters. These extend the initial parity inventory.
+- Local assistant package: dual Codex/Claude plugin manifests, one scoped stdio
+  launcher, and a preview/confirmation workflow skill. Read resources are also
+  available as tools. Installer tested under a temporary prefix; it does not
+  change user client registration or credentials. Plugin and skill validators pass.
+- Installed-runtime smoke against the disposable server: initialize, 23 tools,
+  task reads, schedule query, preview with no write, confirmation plus replay
+  producing exactly one task, and clean stderr. Full client installation,
+  subscription runtime, and hosted OAuth remain unqualified.

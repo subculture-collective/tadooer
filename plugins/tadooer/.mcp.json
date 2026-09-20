@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tadooer": {
+      "command": "tadooer-mcp",
+      "args": []
+    }
+  }
+}

@@ -11,6 +11,30 @@ import {
 const validToken = `suite_at_00000000-0000-4000-8000-000000000001.${"a".repeat(43)}`;
 
 describe("MCP stdio adapter configuration", () => {
+  it("loads plugin settings without placing secrets in client configuration", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const tokenFile = join(directory, "token");
+      const configFile = join(directory, "mcp.json");
+      await writeFile(tokenFile, validToken, { mode: 0o600 });
+      await writeFile(
+        configFile,
+        JSON.stringify({ url: "https://suite.example.test", tokenFile }),
+      );
+      await expect(
+        loadConfig([], { TADOOER_MCP_CONFIG: configFile }),
+      ).resolves.toMatchObject({ token: validToken });
+      await writeFile(
+        configFile,
+        JSON.stringify({
+          url: "https://suite.example.test",
+          tokenFile: "relative-token",
+        }),
+      );
+      await expect(
+        loadConfig([], { TADOOER_MCP_CONFIG: configFile }),
+      ).rejects.toThrow("absolute");
+    });
+  });
   it("requires exactly one Suite URL and one token file", () => {
     expect(() => parseConfigArguments([])).toThrow("Usage:");
     expect(() =>
