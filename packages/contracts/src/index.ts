@@ -599,6 +599,66 @@ export const subtaskSchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
+export const subtaskCreateRequestSchema = subtaskSchema
+  .pick({ title: true, position: true })
+  .strict();
+export const subtaskPatchRequestSchema = subtaskSchema
+  .pick({ title: true, completed: true, position: true })
+  .partial()
+  .strict()
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: "A checklist edit is required",
+  });
+export const subtaskOrderRequestSchema = z
+  .object({
+    items: z
+      .array(
+        z.object({ id: entityIdSchema, revision: revisionSchema }).strict(),
+      )
+      .min(1)
+      .max(200)
+      .refine(
+        (items) => new Set(items.map((item) => item.id)).size === items.length,
+        { message: "Checklist ids must be unique" },
+      ),
+  })
+  .strict();
+export const checklistCommandSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("create"),
+      taskId: entityIdSchema,
+      id: entityIdSchema,
+      ...subtaskCreateRequestSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("update"),
+      taskId: entityIdSchema,
+      id: entityIdSchema,
+      expectedRevision: revisionSchema,
+      patch: subtaskPatchRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("delete"),
+      taskId: entityIdSchema,
+      id: entityIdSchema,
+      expectedRevision: revisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("reorder"),
+      taskId: entityIdSchema,
+      ...subtaskOrderRequestSchema.shape,
+    })
+    .strict(),
+]);
+export type ChecklistCommand = z.infer<typeof checklistCommandSchema>;
+
 // Templates are deliberately not tasks. They have their own lifecycle and
 // query surface, so they can never leak into active-task calculations.
 export const templateSubtaskBlueprintSchema = z.object({
