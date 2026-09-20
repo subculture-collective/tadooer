@@ -39,3 +39,5 @@ export * from "./notifications.ts";
 export * from "./structured-capture.ts";
 
 export * from "./calendar-freshness.ts";
+
+export * from "./calendar-bridge.ts";

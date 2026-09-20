@@ -7,6 +7,7 @@ status: accepted
 September 20, 2026 amendment: the owner explicitly requested a Baikal-centered,
 opt-in bidirectional bridge, with Google first. See the
 [interview decision record](../discovery/2026-09-20-parity-assistants-calendar-hub.md).
+The authority and failure contract is in [ADR 0017](0017-opt-in-baikal-calendar-hub.md).
 That direction supersedes the restriction on an explicitly enabled two-way bridge
 below. Existing federation remains in effect until qualification; implicit
 mirroring is still not a default.
