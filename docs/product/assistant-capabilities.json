@@ -216,10 +216,10 @@
         "reorderSubtasks",
         "deleteSubtask"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": ["subtasks.list", "subtasks.mutate"],
+      "status": "covered",
       "issue": 56,
-      "authority": "Current checklist model only; future full task hierarchy remains #27.",
+      "authority": "Task read/write scopes, owner-scoped checklist and parent revisions; exact reorder membership; atomic mutation, sync and confirmation receipt. Explicit approval for deletion/reorder.",
       "source": "apps/web/src/api.ts"
     },
     {

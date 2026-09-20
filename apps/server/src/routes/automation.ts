@@ -7,6 +7,7 @@ import type {
   AutomationTokenScope,
 } from "@suite/contracts";
 import {
+  checklistResourceInputSchema,
   createAutomationTokenRequestSchema,
   automationPreviewCommandSchema,
   automationConfirmRequestSchema,
@@ -33,6 +34,7 @@ import {
   automationConfirmPath,
   automationResourceEntries,
   sendEmpty,
+  subtaskResponse,
   taskResponse,
   projectResponse,
   tagResponse,
@@ -301,7 +303,25 @@ export const handleAutomation: RouteHandler = async (
         habits: database.habits.list(token.ownerId),
         occurrences: database.habits.occurrences(token.ownerId),
       };
-    else if (resource === "tasks.list")
+    else if (resource === "subtasks.list") {
+      const input = checklistResourceInputSchema.safeParse({
+        taskId: url.searchParams.get("taskId"),
+      });
+      if (!input.success) {
+        sendError(response, 400, "INVALID_CHECKLIST", "A task id is required");
+        return true;
+      }
+      if (database.getTask(token.ownerId, input.data.taskId) === undefined) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      body = {
+        taskId: input.data.taskId,
+        subtasks: database
+          .listSubtasks(token.ownerId, input.data.taskId)
+          .map(subtaskResponse),
+      };
+    } else if (resource === "tasks.list")
       body = {
         tasks: database.listTasks(token.ownerId).map(taskResponse),
       };
@@ -496,6 +516,7 @@ export const handleAutomation: RouteHandler = async (
     let taskSummary: string | undefined;
     const affected: {
       entityKind:
+        | "subtask"
         | "task"
         | "calendar"
         | "active_session"
@@ -511,6 +532,7 @@ export const handleAutomation: RouteHandler = async (
     }[] = [];
     const baseRevisions: {
       entityKind:
+        | "subtask"
         | "task"
         | "active_session"
         | "template"
@@ -524,7 +546,68 @@ export const handleAutomation: RouteHandler = async (
       entityId: string;
       revision: number;
     }[] = [];
-    if (
+    if (command.operation === "subtasks.mutate") {
+      const input = command.input.command;
+      const task = database.getTask(token.ownerId, input.taskId);
+      if (task?.revision !== command.input.expectedTaskRevision) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Parent task changed or is unavailable",
+        );
+        return true;
+      }
+      const items = database.listSubtasks(token.ownerId, input.taskId);
+      const targets =
+        input.action === "reorder"
+          ? items
+          : items.filter((item) => item.id === input.id);
+      if (
+        input.action === "create"
+          ? database.getSubtask(token.ownerId, input.id) !== undefined
+          : input.action === "reorder"
+            ? input.items.length !== items.length ||
+              input.items.some(
+                (item) =>
+                  items.find((current) => current.id === item.id)?.revision !==
+                  item.revision,
+              )
+            : targets[0]?.revision !== input.expectedRevision
+      ) {
+        sendError(
+          response,
+          412,
+          "SUBTASK_REVISION_CONFLICT",
+          "Checklist changed or is unavailable",
+        );
+        return true;
+      }
+      affected.push({ entityKind: "task", entityId: task.id });
+      baseRevisions.push({
+        entityKind: "task",
+        entityId: task.id,
+        revision: task.revision,
+      });
+      for (const item of targets) {
+        affected.push({ entityKind: "subtask", entityId: item.id });
+        baseRevisions.push({
+          entityKind: "subtask",
+          entityId: item.id,
+          revision: item.revision,
+        });
+      }
+      if (input.action === "create")
+        affected.push({ entityKind: "subtask", entityId: input.id });
+      taskSummary =
+        input.action === "create"
+          ? `Add checklist item "${input.title}" to task "${task.title}"`
+          : input.action === "delete"
+            ? `Permanently delete checklist item "${targets[0]?.title ?? ""}" from task "${task.title}"`
+            : input.action === "reorder"
+              ? `Reorder all ${String(items.length)} checklist items on task "${task.title}"`
+              : `Edit checklist item "${targets[0]?.title ?? ""}" on task "${task.title}": ${Object.keys(input.patch).join(", ")}`;
+    } else if (
       command.operation === "projects.mutate" ||
       command.operation === "tags.mutate"
     ) {
@@ -1142,6 +1225,7 @@ export const handleAutomation: RouteHandler = async (
       const current =
         database.habits.list(token.ownerId).find(({ id }) => id === entityId) ??
         database.getTask(token.ownerId, entityId, true) ??
+        database.getSubtask(token.ownerId, entityId) ??
         database.getTaskTemplate(token.ownerId, entityId, true) ??
         database
           .listTemplateSets(token.ownerId, true)
@@ -1185,7 +1269,56 @@ export const handleAutomation: RouteHandler = async (
     let result: AutomationConfirmationResponse["result"] | undefined;
     let applyLocalMutation:
       (() => AutomationConfirmationResponse["result"]) | undefined;
-    if (
+    if (command.operation === "subtasks.mutate") {
+      const frozen = command.input.command;
+      if (frozen.action === "reorder") {
+        const items = database.listSubtasks(token.ownerId, frozen.taskId);
+        if (
+          items.length !== frozen.items.length ||
+          frozen.items.some(
+            (item) =>
+              items.find((current) => current.id === item.id)?.revision !==
+              item.revision,
+          )
+        ) {
+          sendError(
+            response,
+            412,
+            "AUTOMATION_PREVIEW_STALE",
+            "Checklist membership changed before confirmation",
+          );
+          return true;
+        }
+      }
+      if (
+        frozen.action === "create" &&
+        database.getSubtask(token.ownerId, frozen.id) !== undefined
+      ) {
+        sendError(
+          response,
+          412,
+          "AUTOMATION_PREVIEW_STALE",
+          "Checklist item already exists",
+        );
+        return true;
+      }
+      applyLocalMutation = () => {
+        const input = command.input.command;
+        const items = database.mutateChecklist(
+          token.ownerId,
+          input,
+          new Date().toISOString(),
+          command.input.expectedTaskRevision,
+        );
+        if (items === undefined)
+          throw new Error("Checklist changed during atomic confirmation");
+        return {
+          taskId: input.taskId,
+          subtasks: items.map(subtaskResponse),
+          deletedIds: input.action === "delete" ? [input.id] : [],
+        };
+      };
+    } else if (
       command.operation === "projects.mutate" ||
       command.operation === "tags.mutate"
     ) {
