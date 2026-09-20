@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
+  subtaskCreateRequestSchema,
+  subtaskPatchRequestSchema,
+  subtaskOrderRequestSchema,
+  type ChecklistCommand,
+} from "@suite/contracts";
+import {
   sendJson,
   sendError,
   readJson,
@@ -17,227 +23,129 @@ export const handleSubtasks: RouteHandler = async (
 ) => {
   const { stores: database, auth } = ctx;
   const method = request.method ?? "GET";
-
-  const taskSubtasksMatch = /^\/api\/tasks\/([0-9a-f-]{36})\/subtasks$/.exec(
+  const taskMatch = /^\/api\/tasks\/([0-9a-f-]{36})\/subtasks$/.exec(
     url.pathname,
   );
+  const itemMatch = /^\/api\/subtasks\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (!(
+    (taskMatch !== null && ["GET", "POST", "PUT"].includes(method)) ||
+    (itemMatch !== null && ["PATCH", "DELETE"].includes(method))
+  ))
+    return false;
+  const session = auth.authenticate(request, method !== "GET");
   if (
-    taskSubtasksMatch !== null &&
-    (method === "GET" || method === "POST" || method === "PUT")
+    session === undefined ||
+    (method !== "GET" &&
+      (!sameOrigin(request) ||
+        !auth.csrfMatches(
+          session,
+          request.headers["x-csrf-token"] as string | undefined,
+        )))
   ) {
-    const session = auth.authenticate(request, method !== "GET");
-    if (
-      session === undefined ||
-      (method !== "GET" &&
-        (!sameOrigin(request) ||
-          !auth.csrfMatches(
-            session,
-            request.headers["x-csrf-token"] as string | undefined,
-          )))
-    ) {
-      sendError(response, 403, "AUTH_REQUIRED", "Authentication required");
-      return true;
-    }
-    const taskId = taskSubtasksMatch[1];
-    if (taskId === undefined) {
-      sendError(response, 404, "NOT_FOUND", "Task subtask route not found");
-      return true;
-    }
-    if (database.getTask(session.owner.id, taskId) === undefined) {
-      sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
-      return true;
-    }
-    if (method === "GET") {
-      sendJson(response, 200, {
-        subtasks: database
-          .listSubtasks(session.owner.id, taskId)
-          .map(subtaskResponse),
-      });
-      return true;
-    }
-    if (method === "PUT") {
-      const input = (await readJson(request)) as {
-        items?: unknown;
-      };
-      if (
-        !Array.isArray(input.items) ||
-        input.items.length === 0 ||
-        input.items.length > 200 ||
-        input.items.some(
-          (item) =>
-            typeof item !== "object" ||
-            item === null ||
-            typeof (item as { id?: unknown }).id !== "string" ||
-            !Number.isInteger((item as { revision?: unknown }).revision) ||
-            Number((item as { revision?: unknown }).revision) <= 0,
-        )
-      ) {
-        sendError(
-          response,
-          400,
-          "INVALID_SUBTASK_ORDER",
-          "Checklist order is invalid",
-        );
-        return true;
-      }
-      const items = input.items as readonly {
-        readonly id: string;
-        readonly revision: number;
-      }[];
-      if (new Set(items.map(({ id }) => id)).size !== items.length) {
-        sendError(
-          response,
-          400,
-          "INVALID_SUBTASK_ORDER",
-          "Checklist order contains duplicates",
-        );
-        return true;
-      }
-      const subtasks = database.reorderSubtasks(
-        session.owner.id,
-        taskId,
-        items,
-        new Date().toISOString(),
+    sendError(
+      response,
+      403,
+      "AUTH_REQUIRED",
+      "Same-origin session and CSRF token required",
+    );
+    return true;
+  }
+  const existing =
+    itemMatch?.[1] === undefined
+      ? undefined
+      : database.getSubtask(session.owner.id, itemMatch[1]);
+  const taskId = taskMatch?.[1] ?? existing?.taskId;
+  if (
+    taskId === undefined ||
+    database.getTask(session.owner.id, taskId) === undefined
+  ) {
+    sendError(
+      response,
+      itemMatch === null ? 404 : 412,
+      itemMatch === null ? "TASK_NOT_FOUND" : "SUBTASK_REVISION_CONFLICT",
+      "Task or checklist item is unavailable",
+    );
+    return true;
+  }
+  if (method === "GET") {
+    sendJson(response, 200, {
+      subtasks: database
+        .listSubtasks(session.owner.id, taskId)
+        .map(subtaskResponse),
+    });
+    return true;
+  }
+  let command: ChecklistCommand;
+  if (method === "PUT") {
+    const parsed = subtaskOrderRequestSchema.safeParse(await readJson(request));
+    if (!parsed.success) {
+      sendError(
+        response,
+        400,
+        "INVALID_SUBTASK_ORDER",
+        "Checklist order is invalid",
       );
-      if (subtasks === undefined) {
-        sendError(response, 412, "SUBTASK_ORDER_CONFLICT", "Checklist changed");
-        return true;
-      }
-      sendJson(response, 200, {
-        subtasks: subtasks.map(subtaskResponse),
-      });
       return true;
     }
-    const input = (await readJson(request)) as {
-      title?: unknown;
-      position?: unknown;
-    };
-    if (
-      typeof input.title !== "string" ||
-      input.title.trim().length === 0 ||
-      !Number.isInteger(input.position) ||
-      Number(input.position) < 0
-    ) {
+    command = { action: "reorder", taskId, items: parsed.data.items };
+  } else if (method === "POST") {
+    const parsed = subtaskCreateRequestSchema.safeParse(
+      await readJson(request),
+    );
+    if (!parsed.success) {
       sendError(response, 400, "INVALID_SUBTASK", "Subtask input is invalid");
       return true;
     }
-    const now = new Date().toISOString();
-    const subtask = {
-      id: randomUUID(),
-      ownerId: session.owner.id,
-      taskId,
-      title: input.title.trim(),
-      completed: false,
-      position: Number(input.position),
-      revision: 1,
-      createdAt: now,
-      updatedAt: now,
-    };
-    database.createSubtask(subtask);
-    database.appendSyncChange(
-      session.owner.id,
-      "subtask",
-      subtask.id,
-      "upsert",
-      1,
-      now,
-    );
-    sendJson(response, 201, { subtask: subtaskResponse(subtask) });
-    return true;
-  }
-
-  const subtaskMatch = /^\/api\/subtasks\/([0-9a-f-]{36})$/.exec(url.pathname);
-  if (subtaskMatch !== null && (method === "PATCH" || method === "DELETE")) {
-    const session = auth.authenticate(request, true);
-    if (
-      session === undefined ||
-      !sameOrigin(request) ||
-      !auth.csrfMatches(
-        session,
-        request.headers["x-csrf-token"] as string | undefined,
-      )
-    ) {
-      sendError(response, 403, "CSRF_REQUIRED", "Valid CSRF required");
-      return true;
-    }
+    command = { action: "create", taskId, id: randomUUID(), ...parsed.data };
+  } else {
     const revision = expectedRevision(request, response);
     if (revision === undefined) return true;
-    const id = subtaskMatch[1];
-    if (id === undefined) {
-      sendError(response, 404, "NOT_FOUND", "Subtask route not found");
-      return true;
-    }
-    const now = new Date().toISOString();
-    if (method === "DELETE") {
-      if (!database.deleteSubtask(session.owner.id, id, revision)) {
-        sendError(
-          response,
-          412,
-          "SUBTASK_REVISION_CONFLICT",
-          "Subtask changed",
-        );
+    if (existing === undefined) throw new Error("Checklist item disappeared");
+    if (method === "DELETE")
+      command = {
+        action: "delete",
+        taskId,
+        id: existing.id,
+        expectedRevision: revision,
+      };
+    else {
+      const parsed = subtaskPatchRequestSchema.safeParse(
+        await readJson(request),
+      );
+      if (!parsed.success) {
+        sendError(response, 400, "INVALID_SUBTASK", "Subtask patch is invalid");
         return true;
       }
-      database.appendSyncChange(
-        session.owner.id,
-        "subtask",
-        id,
-        "deleted",
-        revision + 1,
-        now,
-      );
-      sendEmpty(response, 204);
-      return true;
+      command = {
+        action: "update",
+        taskId,
+        id: existing.id,
+        expectedRevision: revision,
+        patch: parsed.data,
+      };
     }
-    const input = (await readJson(request)) as {
-      title?: unknown;
-      completed?: unknown;
-      position?: unknown;
-    };
-    const patch = {
-      ...(typeof input.title === "string" && input.title.trim().length > 0
-        ? { title: input.title.trim() }
-        : {}),
-      ...(typeof input.completed === "boolean"
-        ? { completed: input.completed }
-        : {}),
-      ...(Number.isInteger(input.position) && Number(input.position) >= 0
-        ? { position: Number(input.position) }
-        : {}),
-    };
-    if (Object.keys(patch).length === 0) {
-      sendError(response, 400, "INVALID_SUBTASK", "Subtask patch is empty");
-      return true;
-    }
-    const updated = database.updateSubtask(
-      session.owner.id,
-      id,
-      revision,
-      patch,
-      now,
-    );
-    if (updated === undefined) {
-      sendError(response, 412, "SUBTASK_REVISION_CONFLICT", "Subtask changed");
-      return true;
-    }
-    database.appendSyncChange(
-      session.owner.id,
-      "subtask",
-      id,
-      "upsert",
-      updated.revision,
-      now,
-    );
-    sendJson(
-      response,
-      200,
-      { subtask: subtaskResponse(updated) },
-      {
-        ETag: `"${String(updated.revision)}"`,
-      },
-    );
+  }
+  const items = database.mutateChecklist(
+    session.owner.id,
+    command,
+    new Date().toISOString(),
+  );
+  if (items === undefined) {
+    sendError(response, 412, "SUBTASK_REVISION_CONFLICT", "Checklist changed");
     return true;
   }
-
-  return false;
+  if (command.action === "delete") sendEmpty(response, 204);
+  else if (command.action === "reorder")
+    sendJson(response, 200, { subtasks: items.map(subtaskResponse) });
+  else {
+    const result = items.find((item) => item.id === command.id);
+    if (result === undefined) throw new Error("Checklist result missing");
+    sendJson(
+      response,
+      command.action === "create" ? 201 : 200,
+      { subtask: subtaskResponse(result) },
+      { ETag: `"${String(result.revision)}"` },
+    );
+  }
+  return true;
 };

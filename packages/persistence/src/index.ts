@@ -1,3 +1,7 @@
+import {
+  checklistCommandSchema,
+  type ChecklistCommand,
+} from "@suite/contracts";
 import { StructuredCaptureError } from "@suite/domain";
 import { SqliteHabitStore } from "./habit-store.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -4144,6 +4148,112 @@ export class SuiteDatabase {
       throw error;
     }
   }
+  getSubtask(ownerId: string, id: string): SubtaskRecord | undefined {
+    const row = this.#database
+      .prepare("SELECT task_id FROM subtasks WHERE owner_id=? AND id=?")
+      .get(ownerId, id) as { task_id: string } | undefined;
+    if (row === undefined || this.getTask(ownerId, row.task_id) === undefined)
+      return undefined;
+    return this.listSubtasks(ownerId, row.task_id).find(
+      (item) => item.id === id,
+    );
+  }
+
+  mutateChecklist(
+    ownerId: string,
+    command: ChecklistCommand,
+    now: string,
+    expectedTaskRevision?: number,
+  ): readonly SubtaskRecord[] | undefined {
+    const parsed = checklistCommandSchema.safeParse(command);
+    if (!parsed.success) return undefined;
+    command = parsed.data;
+    this.#database.exec("SAVEPOINT checklist_mutation;");
+    try {
+      const task = this.getTask(ownerId, command.taskId);
+      if (
+        task === undefined ||
+        (expectedTaskRevision !== undefined &&
+          task.revision !== expectedTaskRevision)
+      ) {
+        this.#database.exec("RELEASE SAVEPOINT checklist_mutation;");
+        return undefined;
+      }
+      if (command.action === "reorder") {
+        if (
+          this.reorderSubtasks(ownerId, command.taskId, command.items, now) ===
+          undefined
+        ) {
+          this.#database.exec("RELEASE SAVEPOINT checklist_mutation;");
+          return undefined;
+        }
+      } else {
+        const current = this.getSubtask(ownerId, command.id);
+        if (
+          command.action === "create"
+            ? current !== undefined
+            : current?.taskId !== command.taskId ||
+              current.revision !== command.expectedRevision
+        ) {
+          this.#database.exec("RELEASE SAVEPOINT checklist_mutation;");
+          return undefined;
+        }
+        let revision = 1;
+        if (command.action === "create") {
+          this.createSubtask({
+            id: command.id,
+            ownerId,
+            taskId: command.taskId,
+            title: command.title,
+            position: command.position,
+            completed: false,
+            revision,
+            createdAt: now,
+            updatedAt: now,
+          });
+        } else if (command.action === "update") {
+          const { title, completed, position } = command.patch;
+          const updated = this.updateSubtask(
+            ownerId,
+            command.id,
+            command.expectedRevision,
+            {
+              ...(title === undefined ? {} : { title }),
+              ...(completed === undefined ? {} : { completed }),
+              ...(position === undefined ? {} : { position }),
+            },
+            now,
+          );
+          if (updated === undefined)
+            throw new Error("Checklist changed during atomic update");
+          revision = updated.revision;
+        } else {
+          if (
+            !this.deleteSubtask(ownerId, command.id, command.expectedRevision)
+          )
+            throw new Error("Checklist changed during atomic delete");
+          revision = command.expectedRevision + 1;
+        }
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "subtask",
+          command.id,
+          command.action === "delete" ? "deleted" : "upsert",
+          revision,
+          now,
+        );
+      }
+      const result = this.listSubtasks(ownerId, command.taskId);
+      this.#database.exec("RELEASE SAVEPOINT checklist_mutation;");
+      return result;
+    } catch (error) {
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT checklist_mutation; RELEASE SAVEPOINT checklist_mutation;",
+      );
+      throw error;
+    }
+  }
+
   createSubtask(record: SubtaskRecord): void {
     this.#database
       .prepare(
@@ -4225,19 +4335,20 @@ export class SuiteDatabase {
     items: readonly { readonly id: string; readonly revision: number }[],
     now: string,
   ): readonly SubtaskRecord[] | undefined {
-    const current = this.listSubtasks(ownerId, taskId);
-    const currentById = new Map(current.map((item) => [item.id, item]));
-    if (
-      items.length !== current.length ||
-      new Set(items.map(({ id }) => id)).size !== items.length ||
-      items.some(
-        ({ id, revision }) => currentById.get(id)?.revision !== revision,
-      )
-    )
-      return undefined;
-
-    this.#database.exec("BEGIN IMMEDIATE;");
+    this.#database.exec("SAVEPOINT checklist_order;");
     try {
+      const current = this.listSubtasks(ownerId, taskId);
+      const currentById = new Map(current.map((item) => [item.id, item]));
+      if (
+        items.length !== current.length ||
+        new Set(items.map(({ id }) => id)).size !== items.length ||
+        items.some(
+          ({ id, revision }) => currentById.get(id)?.revision !== revision,
+        )
+      ) {
+        this.#database.exec("RELEASE SAVEPOINT checklist_order;");
+        return undefined;
+      }
       const update = this.#database.prepare(
         "UPDATE subtasks SET position=?,revision=revision+1,updated_at=? WHERE owner_id=? AND task_id=? AND id=? AND revision=?",
       );
@@ -4246,7 +4357,9 @@ export class SuiteDatabase {
           update.run(position, now, ownerId, taskId, item.id, item.revision)
             .changes !== 1
         ) {
-          this.#database.exec("ROLLBACK;");
+          this.#database.exec(
+            "ROLLBACK TO SAVEPOINT checklist_order; RELEASE SAVEPOINT checklist_order;",
+          );
           return undefined;
         }
         this.#appendSyncChangeInTransaction(
@@ -4258,10 +4371,12 @@ export class SuiteDatabase {
           now,
         );
       }
-      this.#database.exec("COMMIT;");
+      this.#database.exec("RELEASE SAVEPOINT checklist_order;");
       return this.listSubtasks(ownerId, taskId);
     } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT checklist_order; RELEASE SAVEPOINT checklist_order;",
+      );
       throw error;
     }
   }
