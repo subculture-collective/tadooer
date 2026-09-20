@@ -44,7 +44,7 @@ explicit authority boundary rather than silently counting as covered.
 | Browser registration, cache snapshots and outbox transport | internal | — | [#19](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/19) |
 | Focus/break lifecycle and takeover | covered | `active-session.get`, `focus.start`, `focus.pause`, `focus.resume`, `focus.start_break`, `focus.end_break`, `focus.complete`, `focus.takeover` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Project and tag inventory | covered | `projects.list`, `tags.list` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
-| Project/tag lifecycle and task assignment | gap | — | [#55](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/55) |
+| Project/tag lifecycle and task assignment | covered | `projects.mutate`, `tags.mutate`, `tasks.assign_project`, `tasks.set_tags` | [#55](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/55) |
 | Checklist child create/edit/reorder/delete | gap | — | [#56](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/56) |
 | Template and set libraries | covered | `templates.list`, `template-sets.list` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Template authoring, archive, from-task and set creation | gap | — | [#57](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/57) |
@@ -91,3 +91,5 @@ in `calendar-migration.tsx`, outside the API helper module.
 4. Actual Codex and Claude workflow evidence under #39, including skill behavior,
    approval rejection and no secret disclosure. Claude account access is deferred.
 5. Update this inventory and linked implementation issue; deployment remains #37.
+
+Project/tag lifecycle now uses dedicated write scopes. Task assignment retains `tasks:write` and validates owner, active destination, task revision and frozen destination revisions. New scopes must be explicitly provisioned; existing tokens are not broadened. These four operations use the existing preview/confirm protocol, with entity, sync, consumed preview, receipt and audit committed together. Live client qualification remains #39.

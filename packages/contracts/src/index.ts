@@ -1342,7 +1342,9 @@ export const automationTokenScopeSchema = z.enum([
   "schedule:read",
   "schedule:write",
   "projects:read",
+  "projects:write",
   "tags:read",
+  "tags:write",
   "focus:read",
   "focus:write",
   "templates:read",
@@ -1402,6 +1404,10 @@ export const automationTokenListResponseSchema = z
   .strict();
 
 export const automationOperationSchema = z.enum([
+  "projects.mutate",
+  "tags.mutate",
+  "tasks.assign_project",
+  "tasks.set_tags",
   "tasks.create",
   "tasks.update",
   "tasks.set_completed",
@@ -1474,9 +1480,72 @@ export const automationTaskCompletionInputSchema = z
   })
   .strict();
 
+const organizationMutationInput = (title: z.ZodString) =>
+  z.discriminatedUnion("action", [
+    z
+      .object({ action: z.literal("create"), id: entityIdSchema, title })
+      .strict(),
+    z
+      .object({
+        action: z.literal("rename"),
+        id: entityIdSchema,
+        expectedRevision: revisionSchema,
+        title,
+      })
+      .strict(),
+    z
+      .object({
+        action: z.enum(["archive", "restore"]),
+        id: entityIdSchema,
+        expectedRevision: revisionSchema,
+      })
+      .strict(),
+  ]);
+export const automationProjectMutationInputSchema = organizationMutationInput(
+  projectCreateRequestSchema.shape.title,
+);
+export const automationTagMutationInputSchema = organizationMutationInput(
+  tagCreateRequestSchema.shape.title,
+);
+export const automationAssignProjectInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    projectId: entityIdSchema.nullable(),
+  })
+  .strict();
+export const automationSetTagsInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    tagIds: z
+      .array(entityIdSchema)
+      .max(25)
+      .refine((ids) => new Set(ids).size === ids.length, {
+        message: "Tag ids must be unique",
+      }),
+  })
+  .strict();
+
 export const automationPreviewCommandSchema = z.discriminatedUnion(
   "operation",
   [
+    z.object({
+      operation: z.literal("projects.mutate"),
+      input: automationProjectMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tags.mutate"),
+      input: automationTagMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.assign_project"),
+      input: automationAssignProjectInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.set_tags"),
+      input: automationSetTagsInputSchema,
+    }),
     z.object({
       operation: z.literal("habits.mutate"),
       input: habitCommandSchema,
@@ -1553,6 +1622,26 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
 const automationToolInputSchema = (
   operation: z.infer<typeof automationOperationSchema>,
 ): z.ZodType => {
+  if (operation === "projects.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationProjectMutationInputSchema,
+    });
+  if (operation === "tags.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTagMutationInputSchema,
+    });
+  if (operation === "tasks.assign_project")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationAssignProjectInputSchema,
+    });
+  if (operation === "tasks.set_tags")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationSetTagsInputSchema,
+    });
   if (operation === "habits.mutate")
     return z.object({
       operation: z.literal(operation),
@@ -1632,6 +1721,7 @@ export const automationAffectedEntitySchema = z
       "template",
       "template_set",
       "project",
+      "tag",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -1649,6 +1739,7 @@ export const automationBaseRevisionSchema = z
       "template",
       "template_set",
       "project",
+      "tag",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -1692,6 +1783,8 @@ export const habitMutationResponseSchema = z
   .strict();
 
 export const automationExecutionResultSchema = z.union([
+  z.object({ project: projectSchema }).strict(),
+  z.object({ tag: tagSchema }).strict(),
   habitMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
@@ -1858,17 +1951,21 @@ export const automationCatalog = [
     id,
     kind: "tool" as const,
     scopes: [
-      id === "habits.mutate"
-        ? "habits:write"
-        : id.startsWith("tasks.")
-          ? "tasks:write"
-          : id === "schedule.create_time_block"
-            ? "schedule:write"
-            : id.startsWith("templates.") || id.startsWith("template_sets.")
-              ? "templates:write"
-              : id === "placeholders.resolve"
-                ? "pools:write"
-                : "focus:write",
+      id === "projects.mutate"
+        ? "projects:write"
+        : id === "tags.mutate"
+          ? "tags:write"
+          : id === "habits.mutate"
+            ? "habits:write"
+            : id.startsWith("tasks.")
+              ? "tasks:write"
+              : id === "schedule.create_time_block"
+                ? "schedule:write"
+                : id.startsWith("templates.") || id.startsWith("template_sets.")
+                  ? "templates:write"
+                  : id === "placeholders.resolve"
+                    ? "pools:write"
+                    : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -1881,6 +1978,8 @@ export const automationCatalog = [
     kind: "tool",
     scopes: [
       "tasks:write",
+      "projects:write",
+      "tags:write",
       "schedule:write",
       "focus:write",
       "templates:write",

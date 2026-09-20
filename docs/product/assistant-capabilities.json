@@ -34,11 +34,7 @@
     {
       "id": "connector-status",
       "action": "Connector health and explicit Google sync/resync",
-      "webApi": [
-        "getBaikalStatus",
-        "getGoogleStatus",
-        "synchronizeGoogle"
-      ],
+      "webApi": ["getBaikalStatus", "getGoogleStatus", "synchronizeGoogle"],
       "catalog": [],
       "status": "gap",
       "issue": 60,
@@ -77,14 +73,8 @@
     {
       "id": "tasks-read",
       "action": "Active and deleted task inventory",
-      "webApi": [
-        "getTasks",
-        "getRecoveryTasks"
-      ],
-      "catalog": [
-        "tasks.list",
-        "tasks.deleted"
-      ],
+      "webApi": ["getTasks", "getRecoveryTasks"],
+      "catalog": ["tasks.list", "tasks.deleted"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scopes; owner filtering and recovery visibility.",
@@ -93,12 +83,8 @@
     {
       "id": "tasks-create",
       "action": "Plain or structured task capture",
-      "webApi": [
-        "createTask"
-      ],
-      "catalog": [
-        "tasks.create"
-      ],
+      "webApi": ["createTask"],
+      "catalog": ["tasks.create"],
       "status": "covered",
       "issue": 39,
       "authority": "Preview resolves source input; caller idempotency key binds one creation.",
@@ -107,12 +93,8 @@
     {
       "id": "tasks-edit",
       "action": "Title, notes, dates and estimate edits",
-      "webApi": [
-        "patchTask"
-      ],
-      "catalog": [
-        "tasks.update"
-      ],
+      "webApi": ["patchTask"],
+      "catalog": ["tasks.update"],
       "status": "covered",
       "issue": 39,
       "authority": "Exact expected task revision; atomic mutation/audit/receipt. Calendar-linked scheduling restrictions still apply.",
@@ -121,12 +103,8 @@
     {
       "id": "tasks-complete",
       "action": "Complete and reopen tasks",
-      "webApi": [
-        "transitionTask"
-      ],
-      "catalog": [
-        "tasks.set_completed"
-      ],
+      "webApi": ["transitionTask"],
+      "catalog": ["tasks.set_completed"],
       "status": "covered",
       "issue": 39,
       "authority": "Expected revision and replay receipt; task completion is distinct from focus completion.",
@@ -135,14 +113,8 @@
     {
       "id": "tasks-delete",
       "action": "Delete and restore tasks",
-      "webApi": [
-        "deleteTask",
-        "restoreTask"
-      ],
-      "catalog": [
-        "tasks.delete",
-        "tasks.restore"
-      ],
+      "webApi": ["deleteTask", "restoreTask"],
+      "catalog": ["tasks.delete", "tasks.restore"],
       "status": "covered",
       "issue": 33,
       "authority": "Explicit consequential approval, expected revision and focus/calendar deletion guards.",
@@ -151,12 +123,8 @@
     {
       "id": "planner-read",
       "action": "Bounded planner and calendar projection",
-      "webApi": [
-        "getPlanner"
-      ],
-      "catalog": [
-        "schedule.get"
-      ],
+      "webApi": ["getPlanner"],
+      "catalog": ["schedule.get"],
       "status": "covered",
       "issue": 39,
       "authority": "Schedule read scope, requested range, provider-qualified identities and visible freshness.",
@@ -165,13 +133,8 @@
     {
       "id": "time-blocks",
       "action": "Create, move and remove a task time block",
-      "webApi": [
-        "putTaskTimeBlock",
-        "removeTaskTimeBlock"
-      ],
-      "catalog": [
-        "schedule.create_time_block"
-      ],
+      "webApi": ["putTaskTimeBlock", "removeTaskTimeBlock"],
+      "catalog": ["schedule.create_time_block"],
       "status": "partial",
       "issue": 58,
       "authority": "Create tool exists; move/remove need provider conditional revisions, durable outcomes and explicit removal approval.",
@@ -195,10 +158,7 @@
     {
       "id": "focus",
       "action": "Focus/break lifecycle and takeover",
-      "webApi": [
-        "getActiveSession",
-        "commandActiveSession"
-      ],
+      "webApi": ["getActiveSession", "commandActiveSession"],
       "catalog": [
         "active-session.get",
         "focus.start",
@@ -217,14 +177,8 @@
     {
       "id": "organization-read",
       "action": "Project and tag inventory",
-      "webApi": [
-        "getProjects",
-        "getTags"
-      ],
-      "catalog": [
-        "projects.list",
-        "tags.list"
-      ],
+      "webApi": ["getProjects", "getTags"],
+      "catalog": ["projects.list", "tags.list"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scopes with owner-scoped records.",
@@ -241,10 +195,15 @@
         "assignTaskProject",
         "assignTaskTags"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": [
+        "projects.mutate",
+        "tags.mutate",
+        "tasks.assign_project",
+        "tasks.set_tags"
+      ],
+      "status": "covered",
       "issue": 55,
-      "authority": "Proposed project/tag write scopes and task assignment boundaries; revisions and atomic audit/replay required.",
+      "authority": "Project/tag write scopes and task write scope; frozen revisions, explicit preview confirmation, atomic sync/audit/replay.",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -266,14 +225,8 @@
     {
       "id": "templates-read",
       "action": "Template and set libraries",
-      "webApi": [
-        "getTemplateLibrary",
-        "getTemplateSets"
-      ],
-      "catalog": [
-        "templates.list",
-        "template-sets.list"
-      ],
+      "webApi": ["getTemplateLibrary", "getTemplateSets"],
+      "catalog": ["templates.list", "template-sets.list"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scope and explicit library query semantics.",
@@ -298,14 +251,8 @@
     {
       "id": "templates-use",
       "action": "Instantiate a template or set",
-      "webApi": [
-        "instantiateTemplate",
-        "instantiateTemplateSet"
-      ],
-      "catalog": [
-        "templates.instantiate",
-        "template_sets.instantiate"
-      ],
+      "webApi": ["instantiateTemplate", "instantiateTemplateSet"],
+      "catalog": ["templates.instantiate", "template_sets.instantiate"],
       "status": "covered",
       "issue": 33,
       "authority": "Freeze source revisions and destination; multi-task creation uses consequential approval policy.",
@@ -314,12 +261,8 @@
     {
       "id": "pools-read",
       "action": "Choice pool library",
-      "webApi": [
-        "getChoicePools"
-      ],
-      "catalog": [
-        "pools.list"
-      ],
+      "webApi": ["getChoicePools"],
+      "catalog": ["pools.list"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scope; eligibility and policy data are not new task state.",
@@ -345,12 +288,8 @@
     {
       "id": "pools-resolve",
       "action": "Resolve a planning placeholder",
-      "webApi": [
-        "resolvePlanningPlaceholder"
-      ],
-      "catalog": [
-        "placeholders.resolve"
-      ],
+      "webApi": ["resolvePlanningPlaceholder"],
+      "catalog": ["placeholders.resolve"],
       "status": "covered",
       "issue": 33,
       "authority": "Expected placeholder/source revisions; atomic task creation, history and consumed preview.",
@@ -360,10 +299,7 @@
       "id": "habits",
       "action": "Habit lifecycle, canonical completion and metrics",
       "webApi": [],
-      "catalog": [
-        "habits.list",
-        "habits.mutate"
-      ],
+      "catalog": ["habits.list", "habits.mutate"],
       "status": "covered",
       "issue": 39,
       "authority": "UI uses immutable sync commands; assistant preview binds habit revision and period completion deduplicates.",
@@ -372,10 +308,7 @@
     {
       "id": "calendar-import",
       "action": "Calendar import preview/apply",
-      "webApi": [
-        "previewCalendarImport",
-        "applyCalendarImport"
-      ],
+      "webApi": ["previewCalendarImport", "applyCalendarImport"],
       "catalog": [],
       "status": "gap",
       "issue": 60,
@@ -399,10 +332,7 @@
     {
       "id": "task-import",
       "action": "Super Productivity preview and reviewed apply",
-      "webApi": [
-        "previewTaskImport",
-        "applyTaskImport"
-      ],
+      "webApi": ["previewTaskImport", "applyTaskImport"],
       "catalog": [],
       "status": "gap",
       "issue": 60,
@@ -427,9 +357,7 @@
       "id": "confirm",
       "action": "Execute approved catalog preview",
       "webApi": [],
-      "catalog": [
-        "automation.confirm"
-      ],
+      "catalog": ["automation.confirm"],
       "status": "internal",
       "issue": 33,
       "authority": "Confirmation resolves the stored operation scope; advertised write scopes are alternatives, not a demand for every scope. Approval policy and stale/replay checks remain server enforced.",

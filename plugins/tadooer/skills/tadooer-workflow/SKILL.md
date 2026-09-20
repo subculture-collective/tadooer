@@ -26,11 +26,13 @@ If a confirmation times out, retain its idempotency key and inspect current stat
 - Create a task with `suite.tasks.create` using the discovered operation wrapper.
 - Edit task fields with `suite.tasks.update`; complete or reopen with `suite.tasks.set_completed`. Read the current revision first.
 - Delete only after explicit approval of the concrete `suite.tasks.delete` preview. Inspect `suite.tasks.deleted` for recovery and use `suite.tasks.restore` with its current revision. A replay of an old deletion does not authorize another deletion after restoration.
+- Create, rename, archive, or restore projects/tags with `suite.projects.mutate` and `suite.tags.mutate`. Use stable UUIDs for creates and current revisions for edits. Archiving retains existing task assignments.
+- Assign or clear a task project with `suite.tasks.assign_project`. `suite.tasks.set_tags` replaces the complete tag set: read current tags, preserve those the user did not request removing, and obtain approval for destructive replacement. Both require the current task revision; a changed destination invalidates the preview.
 - Inspect a date range and preview a time block with `suite.schedule.create_time_block`.
 - Start, pause, resume, take breaks, complete, or explicitly take over focus through the advertised focus tools.
 - Search and instantiate templates or template sets; inspect the preview for how many tasks it creates.
 - Inspect pools, resolve placeholders, and mutate habits through their advertised contracts.
 
-Full user capability parity is a development goal. This release does not provide project/tag editing, full subtask/recurrence/worklog migration, or Google–Baikal mirroring controls through MCP. If an operation is absent from the live catalog, state that limitation. Do not bypass it with database writes, copied browser credentials, or invented endpoints.
+Full user capability parity is a development goal. This release does not provide full subtask/recurrence/worklog migration, or Google–Baikal mirroring controls through MCP. If an operation is absent from the live catalog, state that limitation. Do not bypass it with database writes, copied browser credentials, or invented endpoints.
 
 Authentication failures require the user to provision or renew a scoped Tadooer automation token locally. Never request a password or token in chat, echo credentials, or broaden token scopes silently. This plugin invokes the user's assistant client; it does not configure paid model API fallback or provide a hosted MCP endpoint.

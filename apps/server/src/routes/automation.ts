@@ -501,6 +501,7 @@ export const handleAutomation: RouteHandler = async (
         | "active_session"
         | "template"
         | "template_set"
+        | "tag"
         | "project"
         | "choice_pool"
         | "planning_placeholder"
@@ -514,6 +515,7 @@ export const handleAutomation: RouteHandler = async (
         | "active_session"
         | "template"
         | "template_set"
+        | "tag"
         | "project"
         | "choice_pool"
         | "planning_placeholder"
@@ -523,6 +525,138 @@ export const handleAutomation: RouteHandler = async (
       revision: number;
     }[] = [];
     if (
+      command.operation === "projects.mutate" ||
+      command.operation === "tags.mutate"
+    ) {
+      const kind = command.operation === "projects.mutate" ? "project" : "tag";
+      const input = command.input;
+      const records =
+        kind === "project"
+          ? database.listProjects(token.ownerId)
+          : database.listTags(token.ownerId);
+      const current = records.find((record) => record.id === input.id);
+      if (
+        input.action === "create"
+          ? current !== undefined
+          : current?.revision !== input.expectedRevision
+      ) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Organization changed or is unavailable",
+        );
+        return true;
+      }
+      if (
+        kind === "tag" &&
+        (input.action === "create" || input.action === "rename") &&
+        database
+          .listTags(token.ownerId)
+          .some(
+            (tag) =>
+              tag.id !== input.id &&
+              tag.normalizedName ===
+                input.title.normalize("NFKC").toLocaleLowerCase(),
+          )
+      ) {
+        sendError(
+          response,
+          409,
+          "ORGANIZATION_NAME_CONFLICT",
+          "That tag name is already in use",
+        );
+        return true;
+      }
+      affected.push({ entityKind: kind, entityId: input.id });
+      if (current !== undefined)
+        baseRevisions.push({
+          entityKind: kind,
+          entityId: input.id,
+          revision: current.revision,
+        });
+      taskSummary =
+        input.action === "create"
+          ? `Create ${kind} "${input.title}"`
+          : input.action === "rename"
+            ? `Rename ${kind} "${current?.title ?? ""}" to "${input.title}"`
+            : `${input.action === "archive" ? "Archive" : "Restore"} ${kind} "${current?.title ?? ""}"; task assignments are retained`;
+    } else if (
+      command.operation === "tasks.assign_project" ||
+      command.operation === "tasks.set_tags"
+    ) {
+      const task = database.getTask(token.ownerId, command.input.taskId);
+      if (task?.revision !== command.input.expectedRevision) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Task changed or is unavailable",
+        );
+        return true;
+      }
+      affected.push({ entityKind: "task", entityId: task.id });
+      baseRevisions.push({
+        entityKind: "task",
+        entityId: task.id,
+        revision: task.revision,
+      });
+      if (command.operation === "tasks.assign_project") {
+        const project = database
+          .listProjects(token.ownerId)
+          .find(
+            (record) =>
+              record.id === command.input.projectId &&
+              record.archivedAt === null,
+          );
+        if (command.input.projectId !== null && project === undefined) {
+          sendError(
+            response,
+            400,
+            "INVALID_ORGANIZATION",
+            "Project is unavailable or archived",
+          );
+          return true;
+        }
+        if (project !== undefined)
+          baseRevisions.push({
+            entityKind: "project",
+            entityId: project.id,
+            revision: project.revision,
+          });
+        taskSummary = `Assign task "${task.title}" to ${project === undefined ? "no project" : `project "${project.title}"`}`;
+      } else {
+        const tags = database
+          .listTags(token.ownerId)
+          .filter(
+            (tag) =>
+              command.input.tagIds.includes(tag.id) && tag.archivedAt === null,
+          );
+        if (tags.length !== command.input.tagIds.length) {
+          sendError(
+            response,
+            400,
+            "INVALID_ORGANIZATION",
+            "A tag is unavailable or archived",
+          );
+          return true;
+        }
+        for (const tag of tags)
+          baseRevisions.push({
+            entityKind: "tag",
+            entityId: tag.id,
+            revision: tag.revision,
+          });
+        taskSummary = `Replace all tags on task "${task.title}" with ${
+          tags.length === 0
+            ? "none"
+            : `${String(tags.length)} tags: ${tags
+                .map((tag) => `"${tag.title}"`)
+                .join(", ")
+                .slice(0, 650)}`
+        }`;
+      }
+    } else if (
       command.operation === "tasks.update" ||
       command.operation === "tasks.set_completed" ||
       command.operation === "tasks.delete" ||
@@ -1015,6 +1149,7 @@ export const handleAutomation: RouteHandler = async (
         database
           .listProjects(token.ownerId)
           .find(({ id }) => id === entityId) ??
+        database.listTags(token.ownerId).find(({ id }) => id === entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1047,10 +1182,83 @@ export const handleAutomation: RouteHandler = async (
     }
     const command = automationPreviewCommandSchema.parse(preview.input);
     const internalKey = `automation.${token.id}.${parsed.data.idempotencyKey}`;
-    let result: AutomationConfirmationResponse["result"];
-    let applyLocalTask:
+    let result: AutomationConfirmationResponse["result"] | undefined;
+    let applyLocalMutation:
       (() => AutomationConfirmationResponse["result"]) | undefined;
     if (
+      command.operation === "projects.mutate" ||
+      command.operation === "tags.mutate"
+    ) {
+      const kind = command.operation === "projects.mutate" ? "project" : "tag";
+      const input = command.input;
+      applyLocalMutation = () => {
+        const record = database.mutateOrganization(
+          kind,
+          token.ownerId,
+          input.id,
+          input.action === "create" ? null : input.expectedRevision,
+          input.action === "create" || input.action === "rename"
+            ? { title: input.title }
+            : { archived: input.action === "archive" },
+          new Date().toISOString(),
+        );
+        if (record === undefined)
+          throw new Error("Organization changed during atomic confirmation");
+        return "normalizedName" in record
+          ? { tag: tagResponse(record) }
+          : { project: projectResponse(record) };
+      };
+    } else if (
+      command.operation === "tasks.assign_project" ||
+      command.operation === "tasks.set_tags"
+    ) {
+      const current = database.getTask(token.ownerId, command.input.taskId);
+      if (current === undefined) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      result = { task: taskResponse(current), replayed: false };
+      applyLocalMutation = () => {
+        const input = command.input;
+        const now = new Date().toISOString();
+        const targets =
+          command.operation === "tasks.assign_project"
+            ? database
+                .listProjects(token.ownerId)
+                .filter((project) => project.id === command.input.projectId)
+            : database
+                .listTags(token.ownerId)
+                .filter((tag) => command.input.tagIds.includes(tag.id));
+        for (const target of targets) {
+          if (
+            target.revision !== preview.baseRevisions[target.id] ||
+            target.archivedAt !== null
+          )
+            throw new Error("Organization changed during atomic confirmation");
+        }
+        const task =
+          command.operation === "tasks.assign_project"
+            ? database.assignTaskProject(
+                token.ownerId,
+                input.taskId,
+                command.input.projectId,
+                input.expectedRevision,
+                now,
+              )
+            : database.setTaskTags(
+                  token.ownerId,
+                  input.taskId,
+                  command.input.tagIds,
+                  input.expectedRevision,
+                  now,
+                )
+              ? database.getTask(token.ownerId, input.taskId)
+              : undefined;
+        if (task === undefined)
+          throw new Error("Task assignment changed during atomic confirmation");
+        return { task: taskResponse(task), replayed: false };
+      };
+    } else if (
       command.operation === "tasks.update" ||
       command.operation === "tasks.set_completed" ||
       command.operation === "tasks.delete" ||
@@ -1073,7 +1281,7 @@ export const handleAutomation: RouteHandler = async (
       result = { task: taskResponse(current), replayed: false };
       // Execute inside the confirmation transaction so task, sync change,
       // consumed preview, audit, and replay response commit or roll back together.
-      applyLocalTask = () => {
+      applyLocalMutation = () => {
         const now = new Date().toISOString();
         const input = command.input;
         let applied;
@@ -1615,12 +1823,15 @@ export const handleAutomation: RouteHandler = async (
         changeSequence: database.getSyncState(token.ownerId).cursor,
       };
     }
-    const body: AutomationConfirmationResponse = {
+    const responseBody = (
+      value: AutomationConfirmationResponse["result"],
+    ): AutomationConfirmationResponse => ({
       previewId: preview.id,
       operation: command.operation,
       replayed: false,
-      result,
-    };
+      result: value,
+    });
+    let body = result === undefined ? undefined : responseBody(result);
     const completedAt = new Date().toISOString();
     const completed = database.completeAutomationConfirmation(
       preview.id,
@@ -1648,10 +1859,10 @@ export const handleAutomation: RouteHandler = async (
         createdAt: completedAt,
       },
       completedAt,
-      applyLocalTask === undefined
+      applyLocalMutation === undefined
         ? undefined
         : () => {
-            body.result = applyLocalTask();
+            body = responseBody(applyLocalMutation());
             return body;
           },
     );
@@ -1677,6 +1888,7 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
+    if (body === undefined) throw new Error("Confirmation result missing");
     sendJson(response, 200, body);
     return true;
   }
