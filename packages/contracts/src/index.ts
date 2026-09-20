@@ -1397,6 +1397,7 @@ export const syncDiagnosticManifestSchema = z
 // raw token secrets and preview input are never returned in inventories, audit
 // records, or diagnostic exports.
 export const automationTokenScopeSchema = z.enum([
+  "notifications:test",
   "notifications:read",
   "notifications:write",
   "planning:write",
@@ -1468,6 +1469,7 @@ export const automationTokenListResponseSchema = z
 
 export const automationOperationSchema = z.enum([
   "planning.update_preferences",
+  "notifications.send_test",
   "notifications.update_preferences",
   "subtasks.mutate",
   "projects.mutate",
@@ -1630,9 +1632,26 @@ export const notificationPreferenceMutationInputSchema = z
   })
   .strict();
 
+export const notificationTestInputSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+  })
+  .strict();
+export const notificationTestQueuedSchema = z
+  .object({
+    notificationTest: z
+      .object({ deliveryId: entityIdSchema, state: z.literal("pending") })
+      .strict(),
+  })
+  .strict();
+
 export const automationPreviewCommandSchema = z.discriminatedUnion(
   "operation",
   [
+    z.object({
+      operation: z.literal("notifications.send_test"),
+      input: notificationTestInputSchema,
+    }),
     z.object({
       operation: z.literal("planning.update_preferences"),
       input: planningPreferenceMutationInputSchema,
@@ -1737,6 +1756,11 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
 const automationToolInputSchema = (
   operation: z.infer<typeof automationOperationSchema>,
 ): z.ZodType => {
+  if (operation === "notifications.send_test")
+    return z.object({
+      operation: z.literal(operation),
+      input: notificationTestInputSchema,
+    });
   if (operation === "planning.update_preferences")
     return z.object({
       operation: z.literal(operation),
@@ -1928,6 +1952,7 @@ export const habitMutationResponseSchema = z
   .strict();
 
 export const automationExecutionResultSchema = z.union([
+  notificationTestQueuedSchema,
   z.object({ planningPreferences: planningPreferenceSnapshotSchema }).strict(),
   z
     .object({ notificationPreferences: notificationPreferenceSnapshotSchema })
@@ -2160,26 +2185,28 @@ export const automationCatalog = [
     id,
     kind: "tool" as const,
     scopes: [
-      id === "planning.update_preferences"
-        ? "planning:write"
-        : id === "notifications.update_preferences"
-          ? "notifications:write"
-          : id === "projects.mutate"
-            ? "projects:write"
-            : id === "tags.mutate"
-              ? "tags:write"
-              : id === "habits.mutate"
-                ? "habits:write"
-                : id.startsWith("tasks.") || id === "subtasks.mutate"
-                  ? "tasks:write"
-                  : id === "schedule.create_time_block"
-                    ? "schedule:write"
-                    : id.startsWith("templates.") ||
-                        id.startsWith("template_sets.")
-                      ? "templates:write"
-                      : id === "placeholders.resolve"
-                        ? "pools:write"
-                        : "focus:write",
+      id === "notifications.send_test"
+        ? "notifications:test"
+        : id === "planning.update_preferences"
+          ? "planning:write"
+          : id === "notifications.update_preferences"
+            ? "notifications:write"
+            : id === "projects.mutate"
+              ? "projects:write"
+              : id === "tags.mutate"
+                ? "tags:write"
+                : id === "habits.mutate"
+                  ? "habits:write"
+                  : id.startsWith("tasks.") || id === "subtasks.mutate"
+                    ? "tasks:write"
+                    : id === "schedule.create_time_block"
+                      ? "schedule:write"
+                      : id.startsWith("templates.") ||
+                          id.startsWith("template_sets.")
+                        ? "templates:write"
+                        : id === "placeholders.resolve"
+                          ? "pools:write"
+                          : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -2191,6 +2218,7 @@ export const automationCatalog = [
     id: "automation.confirm",
     kind: "tool",
     scopes: [
+      "notifications:test",
       "planning:write",
       "notifications:write",
       "tasks:write",

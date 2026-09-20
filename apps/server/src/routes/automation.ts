@@ -582,7 +582,41 @@ export const handleAutomation: RouteHandler = async (
       entityId: string;
       revision: number;
     }[] = [];
-    if (
+    if (command.operation === "notifications.send_test") {
+      if (ctx.ntfy === undefined) {
+        sendError(
+          response,
+          503,
+          "NTFY_NOT_CONFIGURED",
+          "Notification delivery is unavailable",
+        );
+        return true;
+      }
+      const revision = database.getPreferenceRevision(
+        token.ownerId,
+        "notifications",
+      );
+      if (revision !== command.input.expectedRevision) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Notification preferences changed before preview",
+        );
+        return true;
+      }
+      affected.push({
+        entityKind: "notification_preferences",
+        entityId: token.ownerId,
+      });
+      baseRevisions.push({
+        entityKind: "notification_preferences",
+        entityId: token.ownerId,
+        revision,
+      });
+      taskSummary =
+        "Queue one test notification to the server-configured owner notification destination, even if scheduled reminders are disabled. Confirmation queues delivery; it does not prove delivery. Ambiguous sends are not retried.";
+    } else if (
       command.operation === "planning.update_preferences" ||
       command.operation === "notifications.update_preferences"
     ) {
@@ -1289,7 +1323,8 @@ export const handleAutomation: RouteHandler = async (
       const preferenceKind =
         preview.operation === "planning.update_preferences"
           ? "planning"
-          : preview.operation === "notifications.update_preferences"
+          : preview.operation === "notifications.update_preferences" ||
+              preview.operation === "notifications.send_test"
             ? "notifications"
             : undefined;
       const preferenceCurrent =
@@ -1350,7 +1385,27 @@ export const handleAutomation: RouteHandler = async (
     let result: AutomationConfirmationResponse["result"] | undefined;
     let applyLocalMutation:
       (() => AutomationConfirmationResponse["result"]) | undefined;
-    if (command.operation === "planning.update_preferences") {
+    if (command.operation === "notifications.send_test") {
+      if (ctx.ntfy === undefined) {
+        sendError(
+          response,
+          503,
+          "NTFY_NOT_CONFIGURED",
+          "Notification delivery is unavailable",
+        );
+        return true;
+      }
+      applyLocalMutation = () => {
+        const delivery = database.queueNotificationTest(
+          token.ownerId,
+          preview.id,
+          new Date().toISOString(),
+        );
+        return {
+          notificationTest: { deliveryId: delivery.id, state: "pending" },
+        };
+      };
+    } else if (command.operation === "planning.update_preferences") {
       applyLocalMutation = () => {
         const preferences = database.mutatePlanningPreferences(
           token.ownerId,
