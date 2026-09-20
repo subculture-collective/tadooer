@@ -1376,6 +1376,8 @@ export const automationOperationSchema = z.enum([
   "tasks.create",
   "tasks.update",
   "tasks.set_completed",
+  "tasks.delete",
+  "tasks.restore",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1429,6 +1431,12 @@ export const automationTaskUpdateInputSchema = z
     patch: taskPatchRequestSchema,
   })
   .strict();
+export const automationTaskLifecycleInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+  })
+  .strict();
 export const automationTaskCompletionInputSchema = z
   .object({
     taskId: entityIdSchema,
@@ -1443,6 +1451,14 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     z.object({
       operation: z.literal("habits.mutate"),
       input: habitCommandSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.delete"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.restore"),
+      input: automationTaskLifecycleInputSchema,
     }),
     z.object({
       operation: z.literal("tasks.update"),
@@ -1512,6 +1528,11 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: habitCommandSchema,
+    });
+  if (operation === "tasks.delete" || operation === "tasks.restore")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskLifecycleInputSchema,
     });
   if (operation === "tasks.update")
     return z.object({
@@ -1713,6 +1734,17 @@ export const automationCatalog = [
     apiPath: "/api/automation/v1/resources/tasks",
     mcpName: "suite.tasks.list",
     mcpUri: "suite://v1/tasks",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTaskResourceSchema,
+  },
+  {
+    id: "tasks.deleted",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tasks/deleted",
+    mcpName: "suite.tasks.deleted",
+    mcpUri: "suite://v1/tasks/deleted",
     inputSchema: z.object({}).strict(),
     outputSchema: automationTaskResourceSchema,
   },

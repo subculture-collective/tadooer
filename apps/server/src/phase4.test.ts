@@ -652,7 +652,12 @@ describe("Assistant task changes", () => {
             await response.json(),
           ).token;
         };
-        const token = await issue(["tasks:read", "tasks:write"]);
+        const token = await issue([
+          "tasks:read",
+          "tasks:write",
+          "focus:read",
+          "focus:write",
+        ]);
         const readOnly = await issue(["tasks:read"]);
         const request = (path: string, body: unknown, credential = token) =>
           automationRequest(server, credential, path, "POST", body);
@@ -787,6 +792,88 @@ describe("Assistant task changes", () => {
             completedAt: null,
           },
         });
+        const lifecycleInput = {
+          taskId: original.id,
+          expectedRevision: original.revision + 3,
+        };
+        expect(
+          (
+            await request(
+              "/api/automation/v1/previews",
+              { operation: "tasks.delete", input: lifecycleInput },
+              readOnly,
+            )
+          ).status,
+        ).toBe(403);
+        const deletion = await preview("tasks.delete", lifecycleInput);
+        const deleteKey = randomUUID();
+        const removed = automationConfirmationResponseSchema.parse(
+          await (await confirm(deletion.id, deleteKey)).json(),
+        );
+        expect(removed.result).toMatchObject({
+          task: { revision: original.revision + 4 },
+        });
+        if (!("task" in removed.result))
+          throw new Error("Expected deleted task");
+        expect(typeof removed.result.task.deletedAt).toBe("string");
+        const deletedRead = await automationRequest(
+          server,
+          token,
+          "/api/automation/v1/resources/tasks/deleted",
+          "GET",
+        );
+        expect(
+          automationTaskResourceSchema
+            .parse(await deletedRead.json())
+            .tasks.map((task) => task.id),
+        ).toEqual([original.id]);
+        const activeRead = await automationRequest(
+          server,
+          token,
+          "/api/automation/v1/resources/tasks",
+          "GET",
+        );
+        expect(
+          automationTaskResourceSchema.parse(await activeRead.json()).tasks,
+        ).toEqual([]);
+        const restore = await preview("tasks.restore", {
+          taskId: original.id,
+          expectedRevision: original.revision + 4,
+        });
+        const restored = automationConfirmationResponseSchema.parse(
+          await (await confirm(restore.id)).json(),
+        );
+        expect(restored.result).toMatchObject({
+          task: { deletedAt: null, revision: original.revision + 5 },
+        });
+        // Replaying an old deletion after restoration must not delete again.
+        expect(
+          automationConfirmationResponseSchema.parse(
+            await (await confirm(deletion.id, deleteKey)).json(),
+          ),
+        ).toEqual({ ...removed, replayed: true });
+        const pendingDelete = await preview("tasks.delete", {
+          taskId: original.id,
+          expectedRevision: original.revision + 5,
+        });
+        const start = await preview("focus.start", {
+          operation: "focus.start",
+          taskId: original.id,
+        });
+        expect((await confirm(start.id)).status).toBe(200);
+        const blocked = await confirm(pendingDelete.id);
+        expect(blocked.status).toBe(409);
+        expect(apiErrorSchema.parse(await blocked.json()).code).toBe(
+          "ACTIVE_SESSION_COMPLETE_REQUIRED",
+        );
+        const blockedPreview = await request("/api/automation/v1/previews", {
+          operation: "tasks.delete",
+          input: {
+            taskId: original.id,
+            expectedRevision: original.revision + 5,
+          },
+        });
+        expect(blockedPreview.status).toBe(409);
       } finally {
         await server.close();
       }

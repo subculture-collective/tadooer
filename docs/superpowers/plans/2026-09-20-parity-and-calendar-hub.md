@@ -114,9 +114,12 @@ are not evidence that the user's real history was migrated.
   through its own terminal/browser flow before qualifying subscription-backed
   reads and writes. Never provide the credentials in chat.
 
-## Resume after client sign-in
+## Client qualification deferred; continue independent implementation
 
-1. Rebuild/install the runtime into a disposable prefix and provision a short-lived
+The owner cannot access Claude on September 20 and explicitly deferred its client
+qualification. This is not a blocker for import, parity, or MCP implementation.
+
+1. When client access returns, rebuild/install the runtime into a disposable prefix and provision a short-lived
    scoped token on the disposable Tadooer instance.
 2. Load the plugin in each target client and exercise read, preview, rejected
    approval, confirmed task edit, completion, and replay. Validate the skill's
@@ -127,3 +130,11 @@ are not evidence that the user's real history was migrated.
    mapped calendars are required before live two-way bridge qualification.
 4. Keep production on its pinned soak candidate. This work has not been deployed
    or used as evidence to qualify that candidate.
+
+- Import integrity checks now report malformed archive containers, broken child
+  lists, parent cycles, missing tags, invalid daily time keys, and unsafe time
+  totals. A 10,000-task chain is traversed iteratively. Preview remains read-only.
+- MCP task deletion/restoration now share atomic confirmation with editing.
+  Deleted tasks have a read-only recovery resource/tool. Deletion checks active
+  focus and calendar links at preview and confirmation; old deletion replay does
+  not delete a restored task again. Concrete previews name the affected task.
