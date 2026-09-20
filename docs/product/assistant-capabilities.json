@@ -71,11 +71,12 @@
       "catalog": [
         "notifications.preferences",
         "notifications.status",
-        "notifications.update_preferences"
+        "notifications.update_preferences",
+        "notifications.send_test"
       ],
-      "status": "partial",
+      "status": "covered",
       "issue": 59,
-      "authority": "Dedicated notifications read/write scopes; redacted status and revisioned preference confirmation. Enabling changes future scheduled delivery; test delivery remains #59.",
+      "authority": "Dedicated read/write/test scopes; redacted status and revisioned confirmation. Test confirmation atomically queues one delivery with its audit and replay receipt; worker delivery is separate and uncertain sends are terminal.",
       "source": "apps/web/src/api.ts"
     },
     {
