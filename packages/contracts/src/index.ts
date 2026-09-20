@@ -506,6 +506,25 @@ export const notificationStatusResponseSchema = z
   })
   .strict();
 
+export const notificationDeliveryInputSchema = z
+  .object({ deliveryId: entityIdSchema })
+  .strict();
+export const notificationDeliveryResponseSchema = z
+  .object({
+    delivery: z
+      .object({
+        id: entityIdSchema,
+        state: notificationDeliveryStateSchema,
+        kind: z.enum(["lead", "at_start", "test"]),
+        attemptCount: z.number().int().nonnegative(),
+        updatedAt: z.iso.datetime(),
+        deliveredAt: z.iso.datetime().nullable(),
+        errorCode: apiErrorCodeSchema.nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const notificationTestResponseSchema = z
   .object({
     accepted: z.boolean(),
@@ -2046,6 +2065,17 @@ export const automationCatalog = [
     mcpUri: "suite://v1/notification-preferences",
     inputSchema: z.object({}).strict(),
     outputSchema: notificationPreferenceSnapshotSchema,
+  },
+  {
+    id: "notifications.delivery",
+    kind: "resource",
+    scopes: ["notifications:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/notification-delivery",
+    mcpName: "suite.notifications.delivery",
+    mcpUri: "suite://v1/notification-delivery",
+    inputSchema: notificationDeliveryInputSchema,
+    outputSchema: notificationDeliveryResponseSchema,
   },
   {
     id: "notifications.status",
