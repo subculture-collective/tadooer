@@ -343,7 +343,7 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       const delivery = database.getNotificationDelivery(parsed.data.deliveryId);
-      if (delivery === undefined || delivery.ownerId !== token.ownerId) {
+      if (delivery?.ownerId !== token.ownerId) {
         sendError(
           response,
           404,
