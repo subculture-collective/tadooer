@@ -134,14 +134,32 @@ export const GooglePlanning = ({
                     <span>
                       {freshness?.message ?? "Awaiting first projection"}
                     </span>
+                    <p className="hint">
+                      {freshness?.lastSuccessfulSyncAt ? (
+                        <>
+                          Last successful sync:{" "}
+                          <time dateTime={freshness.lastSuccessfulSyncAt}>
+                            {new Intl.DateTimeFormat("en-US", {
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                              timeZone: preferences.timeZone,
+                            }).format(new Date(freshness.lastSuccessfulSyncAt))}
+                          </time>{" "}
+                          ({preferences.timeZone})
+                        </>
+                      ) : (
+                        "Never successfully synced"
+                      )}
+                    </p>
                   </li>
                 );
               })}
             </ul>
             <p className="hint">
-              Resync reloads your calendars and events using the existing Google
-              connection. Your saved projection stays available if the resync
-              fails.
+              Google refresh is currently manual. A recent sync is considered
+              fresh for fifteen minutes. Resync reloads your calendars and
+              events using the existing Google connection. Your saved projection
+              stays available if the resync fails.
             </p>
             <div className="task-actions">
               <button

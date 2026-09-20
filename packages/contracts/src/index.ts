@@ -1335,7 +1335,10 @@ export const automationTokenSchema = z
     id: entityIdSchema,
     ownerId: entityIdSchema,
     label: z.string().trim().min(1).max(100),
-    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    scopes: z
+      .array(automationTokenScopeSchema)
+      .min(1)
+      .max(automationTokenScopeSchema.options.length),
     createdAt: z.iso.datetime(),
     lastUsedAt: z.iso.datetime().nullable(),
     expiresAt: z.iso.datetime(),
@@ -1349,7 +1352,10 @@ export const automationTokenSchema = z
 export const createAutomationTokenRequestSchema = z
   .object({
     label: z.string().trim().min(1).max(100),
-    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    scopes: z
+      .array(automationTokenScopeSchema)
+      .min(1)
+      .max(automationTokenScopeSchema.options.length),
     expiresAt: z.iso.datetime(),
   })
   .strict()
@@ -1374,6 +1380,10 @@ export const automationTokenListResponseSchema = z
 
 export const automationOperationSchema = z.enum([
   "tasks.create",
+  "tasks.update",
+  "tasks.set_completed",
+  "tasks.delete",
+  "tasks.restore",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1420,12 +1430,49 @@ export const automationFocusCommandInputSchema = z.discriminatedUnion(
   ],
 );
 
+export const automationTaskUpdateInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    patch: taskPatchRequestSchema,
+  })
+  .strict();
+export const automationTaskLifecycleInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+  })
+  .strict();
+export const automationTaskCompletionInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    completed: z.boolean(),
+  })
+  .strict();
+
 export const automationPreviewCommandSchema = z.discriminatedUnion(
   "operation",
   [
     z.object({
       operation: z.literal("habits.mutate"),
       input: habitCommandSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.delete"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.restore"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.update"),
+      input: automationTaskUpdateInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.set_completed"),
+      input: automationTaskCompletionInputSchema,
     }),
     z.object({
       operation: z.literal("tasks.create"),
@@ -1487,6 +1534,21 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: habitCommandSchema,
+    });
+  if (operation === "tasks.delete" || operation === "tasks.restore")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskLifecycleInputSchema,
+    });
+  if (operation === "tasks.update")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskUpdateInputSchema,
+    });
+  if (operation === "tasks.set_completed")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskCompletionInputSchema,
     });
   if (operation === "tasks.create")
     return z.object({
@@ -1682,6 +1744,17 @@ export const automationCatalog = [
     outputSchema: automationTaskResourceSchema,
   },
   {
+    id: "tasks.deleted",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tasks/deleted",
+    mcpName: "suite.tasks.deleted",
+    mcpUri: "suite://v1/tasks/deleted",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTaskResourceSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -1764,7 +1837,7 @@ export const automationCatalog = [
     scopes: [
       id === "habits.mutate"
         ? "habits:write"
-        : id === "tasks.create"
+        : id.startsWith("tasks.")
           ? "tasks:write"
           : id === "schedule.create_time_block"
             ? "schedule:write"
@@ -2066,3 +2139,53 @@ export const isHabitSyncOperation = (
 
 export type Habit = z.infer<typeof habitSchema>;
 export type HabitOccurrence = z.infer<typeof habitOccurrenceSchema>;
+
+export const superProductivityPreviewSchema = z.object({
+  source: z.literal("super_productivity"),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  canApply: z.boolean(),
+  totals: z.object({
+    tasks: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    archived: z.number().int().nonnegative(),
+    childTasks: z.number().int().nonnegative(),
+    projects: z.number().int().nonnegative(),
+    tags: z.number().int().nonnegative(),
+    repeatConfigurations: z.number().int().nonnegative(),
+    trackedMilliseconds: z.number().nonnegative(),
+  }),
+  tasks: z.array(
+    z.object({
+      sourceId: z.string(),
+      title: z.string(),
+      completed: z.boolean(),
+      archived: z.boolean(),
+      parentId: z.string().nullable(),
+      projectId: z.string().nullable(),
+      repeatConfigId: z.string().nullable(),
+      estimateMilliseconds: z.number().nonnegative(),
+      trackedMilliseconds: z.number().nonnegative(),
+      scheduledAt: z.iso.datetime().nullable(),
+      scheduledDay: z.string().nullable(),
+      deadlineAt: z.iso.datetime().nullable(),
+      deadlineDay: z.string().nullable(),
+    }),
+  ),
+  issues: z.array(
+    z.object({
+      code: z.string(),
+      sourceId: z.string().nullable(),
+      detail: z.string(),
+    }),
+  ),
+});
+export type SuperProductivityPreview = z.infer<
+  typeof superProductivityPreviewSchema
+>;
+
+export const taskImportApplyResponseSchema = z
+  .object({
+    created: z.number().int().nonnegative(),
+    existing: z.number().int().nonnegative(),
+  })
+  .strict();

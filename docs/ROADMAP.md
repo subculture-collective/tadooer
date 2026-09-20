@@ -20,6 +20,13 @@ tracks the next development work separately from the frozen production candidate
 
 ## Strategy
 
+The [September 20 interview](discovery/2026-09-20-parity-assistants-calendar-hub.md)
+adds explicit Super Productivity parity, full-capability assistant plugins/MCP,
+and an opt-in Google/Baikal two-way calendar hub to the product direction.
+Subscription-backed embedded assistance is conditional on runtime qualification.
+These decisions supersede conflicting historical deferrals below; they are not
+claims of implementation or a change to the frozen soak candidate.
+
 Deliver contract-first vertical slices that are usable end to end. Every phase
 must leave a runnable, testable product state; phases are dependency order, not
 calendar-date commitments.

@@ -27,7 +27,20 @@ production repair requires a new immutable candidate and a fresh soak ledger.
 
 ## Ordered development backlog
 
-### 1. Consistent session recovery across online actions — ready
+### 1. Consistent session recovery across online actions — shared recovery implemented
+
+September 20 implementation: shared API failure notifications now surface inline
+session recovery for authenticated actions, preserving mounted drafts and IndexedDB.
+Recovery updates the session without replaying the failed action. Calendar actions
+use the same recovery UI. Full verification passed: 192 tests and four builds.
+Two disposable Chrome profiles verified expired-session login and stale-CSRF refresh,
+retained capture drafts, no mutation before explicit retry, and one create per retry.
+Follow-up audit: acknowledged structured captures now remain visible and cached
+when a later sync fails, without overwriting offline edits. Sync distinguishes
+expired authentication from CSRF failure; recovery recognizes legacy route codes.
+Full verification passed with 199 tests and four builds. Browser checks preserved
+a queued task across reload/login and inline sign-in/explicit Sync now, with exactly
+one server task in each case; injected post-create 503 retained the saved task. Browser snapshots are in local `.playwright-cli/`.
 
 Calendar actions now recover explicitly, but the other task/calendar/focus,
 settings, and automation UI paths need the same audit. Inspect `apps/web/src/api.ts`,
@@ -41,7 +54,15 @@ produces an actionable state; successful writes remain visible when a later
 read fails; queued offline work survives sign-in. Focused failure tests plus
 server-backed browser checks and `pnpm verify` pass.
 
-### 2. Planner range and loading consistency — ready after item 1
+### 2. Planner range and loading consistency — implemented and verified
+
+September 20 implementation: server filters tasks by planned start in [from, to);
+latest navigation request wins, mismatched periods stay hidden, and load failures
+provide an explicit retry. Navigation uses local calendar days across DST.
+Full verification passed (195 tests, four builds); disposable browser verification
+delayed an older response behind a newer one, injected a 503, and recovered using
+Retry without displaying prior-period tasks. Source checks cover period endpoints,
+unscheduled/old tasks, and spring/fall DST.
 
 Production inspection showed an old planned task outside the selected week in
 Planned tasks. Audit `PlannerPage.tsx`, calendar-range helpers, `loadPlanner`,
@@ -54,7 +75,15 @@ DST boundaries work, rapid navigation cannot display another period's results,
 and loading/failure states identify saved data. No scheduling or task dates
 change as a side effect of navigation.
 
-### 3. Calendar freshness and recovery feedback — queued
+### 3. Calendar freshness and recovery feedback — implemented and verified
+
+September 20 implementation: Google freshness ages after fifteen minutes on both
+server reads and a browser-local one-minute clock. Missing/future timestamps are
+not fresh; failures preserve saved projections. Connections shows per-calendar
+last successful sync in the planning timezone. Manual refresh remains explicit
+until the separately planned background bridge. Full verification: 196 tests and
+four builds. Disposable browser with synthetic Google status confirmed an old
+last-success timestamp overrides a stored fresh flag and displays the timezone.
 
 Audit the meaning of “current” against `lastSuccessfulSyncAt`, stored incremental
 cursors, disconnected/revoked state, and transient provider failures. Show when

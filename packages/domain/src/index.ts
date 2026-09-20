@@ -37,3 +37,5 @@ export * from "./day-planning.ts";
 export * from "./habits.ts";
 export * from "./notifications.ts";
 export * from "./structured-capture.ts";
+
+export * from "./calendar-freshness.ts";

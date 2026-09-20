@@ -110,6 +110,12 @@ export const handlePlanner: RouteHandler = async (
       window: window.data,
       tasks: database
         .listTasks(session.owner.id)
+        .filter(
+          (task) =>
+            task.plannedStart !== null &&
+            Date.parse(task.plannedStart) >= Date.parse(window.data.from) &&
+            Date.parse(task.plannedStart) < Date.parse(window.data.to),
+        )
         .toSorted((left, right) => {
           const leftTime =
             left.plannedStart === null

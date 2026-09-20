@@ -131,6 +131,28 @@ export const handleAutomation: RouteHandler = async (
 ) => {
   const { stores: database, auth, baikal: connector, sessionClock } = ctx;
   const method = request.method ?? "GET";
+  const deletionBlocked = (ownerId: string, taskId: string): boolean => {
+    const active = database.getActiveSession(ownerId);
+    if (active?.endedAt === null && active.taskId === taskId) {
+      sendError(
+        response,
+        409,
+        "ACTIVE_SESSION_COMPLETE_REQUIRED",
+        "Complete the active focus session before deleting this task",
+      );
+      return true;
+    }
+    if (database.getTaskCalendarBlock(ownerId, taskId) !== undefined) {
+      sendError(
+        response,
+        409,
+        "TIME_BLOCK_REMOVE_REQUIRED",
+        "Remove the calendar block before deleting this task",
+      );
+      return true;
+    }
+    return false;
+  };
 
   // GET/POST /api/automation/tokens
   if (url.pathname === "/api/automation/tokens") {
@@ -282,6 +304,10 @@ export const handleAutomation: RouteHandler = async (
     else if (resource === "tasks.list")
       body = {
         tasks: database.listTasks(token.ownerId).map(taskResponse),
+      };
+    else if (resource === "tasks.deleted")
+      body = {
+        tasks: database.listDeletedTasks(token.ownerId).map(taskResponse),
       };
     else if (resource === "projects.list")
       body = {
@@ -467,6 +493,7 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
     }
+    let taskSummary: string | undefined;
     const affected: {
       entityKind:
         | "task"
@@ -495,7 +522,53 @@ export const handleAutomation: RouteHandler = async (
       entityId: string;
       revision: number;
     }[] = [];
-    if (command.operation === "habits.mutate") {
+    if (
+      command.operation === "tasks.update" ||
+      command.operation === "tasks.set_completed" ||
+      command.operation === "tasks.delete" ||
+      command.operation === "tasks.restore"
+    ) {
+      const task = database.getTask(
+        token.ownerId,
+        command.input.taskId,
+        command.operation === "tasks.restore",
+      );
+      if (
+        task === undefined ||
+        (command.operation === "tasks.restore" && task.deletedAt === null)
+      ) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      if (task.revision !== command.input.expectedRevision) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Task changed before preview",
+        );
+        return true;
+      }
+      if (
+        command.operation === "tasks.delete" &&
+        deletionBlocked(token.ownerId, task.id)
+      )
+        return true;
+      taskSummary =
+        command.operation === "tasks.delete"
+          ? `Delete task "${task.title}"; it remains available in recovery`
+          : command.operation === "tasks.restore"
+            ? `Restore task "${task.title}" from recovery`
+            : command.operation === "tasks.set_completed"
+              ? `${command.input.completed ? "Complete" : "Reopen"} task "${task.title}"`
+              : `Edit task "${task.title}": ${Object.keys(command.input.patch).join(", ")}`;
+      affected.push({ entityKind: "task", entityId: task.id });
+      baseRevisions.push({
+        entityKind: "task",
+        entityId: task.id,
+        revision: task.revision,
+      });
+    } else if (command.operation === "habits.mutate") {
       const input = command.input;
       const habitId =
         input.kind === "habit.create" ? input.habit.id : input.habitId;
@@ -793,7 +866,9 @@ export const handleAutomation: RouteHandler = async (
       id: randomUUID(),
       operation: command.operation,
       inputHash,
-      summary: `Confirm ${command.operation} affecting ${String(affected.length)} resource(s)`,
+      summary:
+        taskSummary ??
+        `Confirm ${command.operation} affecting ${String(affected.length)} resource(s)`,
       affected,
       baseRevisions,
       expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
@@ -973,7 +1048,88 @@ export const handleAutomation: RouteHandler = async (
     const command = automationPreviewCommandSchema.parse(preview.input);
     const internalKey = `automation.${token.id}.${parsed.data.idempotencyKey}`;
     let result: AutomationConfirmationResponse["result"];
-    if (command.operation === "habits.mutate") {
+    let applyLocalTask:
+      (() => AutomationConfirmationResponse["result"]) | undefined;
+    if (
+      command.operation === "tasks.update" ||
+      command.operation === "tasks.set_completed" ||
+      command.operation === "tasks.delete" ||
+      command.operation === "tasks.restore"
+    ) {
+      const current = database.getTask(
+        token.ownerId,
+        command.input.taskId,
+        command.operation === "tasks.restore",
+      );
+      if (current === undefined) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      if (
+        command.operation === "tasks.delete" &&
+        deletionBlocked(token.ownerId, current.id)
+      )
+        return true;
+      result = { task: taskResponse(current), replayed: false };
+      // Execute inside the confirmation transaction so task, sync change,
+      // consumed preview, audit, and replay response commit or roll back together.
+      applyLocalTask = () => {
+        const now = new Date().toISOString();
+        const input = command.input;
+        let applied;
+        if (command.operation === "tasks.delete") {
+          applied = database.deleteTask(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            now,
+          );
+        } else if (command.operation === "tasks.restore") {
+          applied = database.restoreTask(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            now,
+          );
+        } else if (command.operation === "tasks.set_completed") {
+          applied = database.setTaskCompleted(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            command.input.completed,
+            now,
+          );
+        } else {
+          const { deadline, ...fields } = command.input.patch;
+          applied = database.patchTask(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            {
+              ...(fields.title === undefined ? {} : { title: fields.title }),
+              ...(fields.notes === undefined ? {} : { notes: fields.notes }),
+              ...(fields.plannedStart === undefined
+                ? {}
+                : { plannedStart: fields.plannedStart }),
+              ...(fields.estimateMinutes === undefined
+                ? {}
+                : { estimateMinutes: fields.estimateMinutes }),
+              ...(deadline === undefined
+                ? {}
+                : deadline === null
+                  ? { deadlineDate: null, deadlineAt: null }
+                  : deadline.kind === "date"
+                    ? { deadlineDate: deadline.value, deadlineAt: null }
+                    : { deadlineDate: null, deadlineAt: deadline.value }),
+            },
+            now,
+          );
+        }
+        if (applied.kind !== "updated")
+          throw new Error("Task changed during atomic confirmation");
+        return { task: taskResponse(applied.task), replayed: false };
+      };
+    } else if (command.operation === "habits.mutate") {
       const applied = database.habits.apply({
         ownerId: token.ownerId,
         actorId: `automation:${token.id}`,
@@ -1492,6 +1648,12 @@ export const handleAutomation: RouteHandler = async (
         createdAt: completedAt,
       },
       completedAt,
+      applyLocalTask === undefined
+        ? undefined
+        : () => {
+            body.result = applyLocalTask();
+            return body;
+          },
     );
     if (!completed) {
       const replay = database.getAutomationOutcome(

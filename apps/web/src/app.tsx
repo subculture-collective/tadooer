@@ -1,4 +1,10 @@
+import { googleProjectionFreshness } from "@suite/domain";
 import { createTask } from "./api.ts";
+import { SessionRecovery } from "./components/SessionRecovery.tsx";
+import {
+  subscribeSessionFailure,
+  type SessionFailure,
+} from "./session-recovery.ts";
 import {
   type HabitListResponse,
   type HabitCommand,
@@ -6,7 +12,13 @@ import {
 } from "@suite/contracts";
 import { HabitsPage } from "./pages/HabitsPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
-import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from "react";
 import type {
   ActiveSession,
   BaikalStatusResponse,
@@ -177,8 +189,43 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     initialState ?? { kind: "loading" },
   );
   const [busy, setBusy] = useState(false);
+  const [freshnessNow, setFreshnessNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setFreshnessNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const [sessionFailure, setSessionFailure] = useState<SessionFailure | null>(
+    null,
+  );
+  useEffect(
+    () =>
+      subscribeSessionFailure((failure) => {
+        if (state.kind === "authenticated") setSessionFailure(failure);
+      }),
+    [state.kind],
+  );
+  const recovery =
+    state.kind === "authenticated" && sessionFailure !== null ? (
+      <SessionRecovery
+        failure={sessionFailure}
+        username={state.session.owner.username}
+        onRecovered={(session) => {
+          setState((current) =>
+            current.kind === "authenticated"
+              ? { ...current, session }
+              : current,
+          );
+          setSessionFailure(null);
+          setFormError(null);
+        }}
+      />
+    ) : null;
   const [formError, setFormError] = useState<string | null>(null);
   const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
+  const plannerRequest = useRef(0);
+  const [plannerLoading, setPlannerLoading] = useState(false);
+  const [plannerError, setPlannerError] = useState<string | null>(null);
   const [localStore] = useState(() => new LocalStore());
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [tags, setTags] = useState<readonly Tag[]>([]);
@@ -254,13 +301,20 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const loadPlanner = useCallback(
     async ({ from, to }: { readonly from: string; readonly to: string }) => {
       if (state.kind !== "authenticated") return;
+      const request = ++plannerRequest.current;
+      setPlannerLoading(true);
+      setPlannerError(null);
       try {
         const planner = await getPlanner(from, to);
+        if (request !== plannerRequest.current) return;
         setState((current) =>
           current.kind === "authenticated" ? { ...current, planner } : current,
         );
       } catch (error: unknown) {
-        setFormError(messageFor(error));
+        if (request === plannerRequest.current)
+          setPlannerError(messageFor(error));
+      } finally {
+        if (request === plannerRequest.current) setPlannerLoading(false);
       }
     },
     [state.kind],
@@ -599,14 +653,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       error.code === "AUTH_REQUIRED"
     ) {
       setFormError(null);
-      setState({
-        kind: "login",
-        ...(state.kind === "authenticated"
-          ? { username: state.session.owner.username }
-          : {}),
-        message:
-          "Your Tadooer session expired. Sign in again, then retry the calendar action. Your Google connection and saved work have been kept.",
-      });
+      setSessionFailure("expired");
     } else {
       setFormError(messageFor(error));
     }
@@ -820,7 +867,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     );
   };
 
-  const syncAfterLocalMutation = async (): Promise<void> => {
+  const syncAfterLocalMutation = async (
+    savedMessage = "Saved locally",
+  ): Promise<void> => {
     await publishLocalState();
     if (state.kind !== "authenticated" || !navigator.onLine) return;
     try {
@@ -840,7 +889,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           ? { ...current, syncStatus: "offline" }
           : current,
       );
-      setFormError(`Saved locally. ${messageFor(error)}`);
+      setFormError(`${savedMessage}. ${messageFor(error)}`);
     }
   };
 
@@ -914,6 +963,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     const data = new FormData(form);
     setBusy(true);
     setFormError(null);
+    let committedTask: Task | undefined;
     try {
       const estimate = Number(formValue(data, "estimateMinutes"));
       if (data.get("structured") === "on") {
@@ -936,8 +986,10 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             ? prior.slice(0, 36)
             : crypto.randomUUID();
         sessionStorage.setItem(storageKey, `${key}:${serialized}`);
-        await createTask(input, state.session.csrfToken, key);
+        const result = await createTask(input, state.session.csrfToken, key);
+        committedTask = result.task;
         sessionStorage.removeItem(storageKey);
+        await localStore.cacheCreatedTask(result.task);
       } else {
         await localStore.queueTaskCreate({
           title: formValue(data, "title"),
@@ -946,11 +998,29 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             Number.isInteger(estimate) && estimate > 0 ? estimate : null,
         });
       }
-      await syncAfterLocalMutation();
+      await syncAfterLocalMutation(
+        committedTask === undefined
+          ? "Saved locally"
+          : "Task saved on the server",
+      );
       form.reset();
     } catch (error: unknown) {
-      setFormError(messageFor(error));
+      setFormError(
+        committedTask === undefined
+          ? messageFor(error)
+          : `Task saved on the server. Could not refresh the workspace: ${messageFor(error)}`,
+      );
     } finally {
+      if (committedTask !== undefined) {
+        const saved = committedTask;
+        setState((current) =>
+          current.kind === "authenticated" &&
+          !current.tasks.some((task) => task.id === saved.id)
+            ? { ...current, tasks: [...current.tasks, saved] }
+            : current,
+        );
+        form.reset();
+      }
       setBusy(false);
     }
   };
@@ -1812,6 +1882,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     return (
       <div className="auth-centre">
         <div className="auth-card">
+          {recovery}
           {state.kind === "loading" && (
             <div style={{ textAlign: "center" }}>
               <div
@@ -2177,6 +2248,45 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     );
 
   /* ── Workspace ── */
+  const googleView =
+    state.google === undefined
+      ? undefined
+      : {
+          ...state.google,
+          freshness: state.google.freshness.map((item) => ({
+            ...item,
+            ...googleProjectionFreshness(
+              item.state,
+              item.lastSuccessfulSyncAt,
+              new Date(Math.max(Date.now(), freshnessNow.getTime())),
+            ),
+          })),
+        };
+  const googleStale =
+    googleView?.freshness.some((item) => item.state !== "fresh") ?? false;
+  const plannerView =
+    state.planner !== null && googleStale
+      ? {
+          ...state.planner,
+          freshness: {
+            ...state.planner.freshness,
+            state: "stale" as const,
+            message: "Showing saved calendar events; Google needs a refresh",
+          },
+        }
+      : state.planner;
+  const dayPlanView =
+    state.dayPlan !== undefined && googleStale
+      ? {
+          ...state.dayPlan,
+          freshness: {
+            ...state.dayPlan.freshness,
+            state: "stale" as const,
+            message: "Showing saved calendar events; Google needs a refresh",
+          },
+        }
+      : state.dayPlan;
+
   return (
     <AppShell
       route={route}
@@ -2194,15 +2304,16 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         />
       }
     >
+      {recovery}
       {route === "today" && (
         <TodayPage
-          dayPlan={state.dayPlan}
+          dayPlan={dayPlanView}
           planningPreferences={state.planningPreferences}
           tasks={state.tasks}
           activeSession={state.activeSession ?? null}
           clientId={state.client?.clientId ?? null}
           syncStatus={state.syncStatus}
-          planner={state.planner}
+          planner={plannerView}
           baikalCalendars={state.baikal.calendars}
           calendarActionsAvailable={networkOnline}
           focusActionsAvailable={networkOnline && state.client !== undefined}
@@ -2234,10 +2345,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       )}
       {route === "planner" && (
         <PlannerPage
-          planner={state.planner}
+          planner={plannerView}
           timeZone={state.planningPreferences?.timeZone ?? "UTC"}
           busy={busy}
           onLoadPlanner={loadPlanner}
+          loading={plannerLoading}
+          error={plannerError}
         />
       )}
       {route === "tasks" && (
@@ -2318,11 +2431,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       )}
       {route === "connections" && (
         <ConnectionsPage
+          onTaskImport={syncNow}
           calendarMessage={calendarMessage}
           baikal={state.baikal}
-          google={state.google}
+          google={googleView}
           planningPreferences={state.planningPreferences}
-          dayPlan={state.dayPlan}
+          dayPlan={dayPlanView}
           csrfToken={state.session.csrfToken}
           busy={busy}
           onAuthorizeGoogle={authorizeGoogle}
@@ -2333,9 +2447,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       )}
       {route === "settings" && (
         <SettingsPage
-          google={state.google}
+          google={googleView}
           planningPreferences={state.planningPreferences}
-          dayPlan={state.dayPlan}
+          dayPlan={dayPlanView}
           notificationPreferences={state.notificationPreferences}
           notificationStatus={state.notificationStatus}
           syncStatus={state.syncStatus}

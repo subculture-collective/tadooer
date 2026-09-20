@@ -1,0 +1,19 @@
+{
+  "name": "tadooer",
+  "version": "0.1.0",
+  "description": "Tadooer tasks, planning, focus, and habits through scoped MCP tools and workflow skills",
+  "author": {
+    "name": "Subcult"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Tadooer",
+    "shortDescription": "Plan and manage Tadooer with MCP tools.",
+    "longDescription": "Scoped task, schedule, focus, template, and habit workflows. Full user capability coverage is tracked separately.",
+    "developerName": "Subcult",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": "Help me use Tadooer."
+  },
+  "mcpServers": "./.mcp.json"
+}

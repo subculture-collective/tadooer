@@ -105,5 +105,12 @@ export const shiftCalendarAnchor = (
   view: CalendarView,
   anchor: Date,
   direction: -1 | 1,
+  timeZone = "UTC",
 ): Date =>
-  new Date(anchor.getTime() + direction * daysForView[view] * 86_400_000);
+  new Date(
+    localMidnight(
+      addDays(dateParts(anchor, timeZone), direction * daysForView[view]),
+      timeZone,
+    ).getTime() +
+      12 * 60 * 60 * 1000,
+  );

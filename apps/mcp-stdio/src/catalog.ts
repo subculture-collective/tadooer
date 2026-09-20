@@ -32,17 +32,18 @@ const isResource = (value: unknown): value is CatalogResource => {
 // The shared contract catalog is the sole declaration of Suite automation
 // surface. This adapter only turns its Zod contracts into MCP-facing schemas.
 export const loadMcpCatalog = (): AutomationCatalog => {
-  const tools = automationCatalog
-    .filter((entry) => entry.kind === "tool")
-    .map((entry) => ({
-      name: entry.mcpName,
-      description: entry.id,
-      inputSchema: z.toJSONSchema(entry.inputSchema),
-      outputSchema: z.toJSONSchema(entry.outputSchema),
-      http: { method: "POST" as const, path: entry.apiPath },
-      inputValidator: entry.inputSchema,
-      outputValidator: entry.outputSchema,
-    }));
+  const tools = automationCatalog.map((entry) => ({
+    name: entry.mcpName,
+    description: entry.id,
+    inputSchema: z.toJSONSchema(entry.inputSchema),
+    outputSchema: z.toJSONSchema(entry.outputSchema),
+    http: {
+      method: entry.kind === "resource" ? ("GET" as const) : ("POST" as const),
+      path: entry.apiPath,
+    },
+    inputValidator: entry.inputSchema,
+    outputValidator: entry.outputSchema,
+  }));
   const resources = automationCatalog
     .filter((entry) => entry.kind === "resource")
     .map((entry) => ({
