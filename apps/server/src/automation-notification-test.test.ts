@@ -177,10 +177,52 @@ it("queues test delivery atomically and gates scopes, stale revisions and replay
         expect(receipt.result).toEqual({
           notificationTest: { deliveryId: p.id, state: "pending" },
         });
+        const deliveryRead = (id: string, credential = readOnly.token) =>
+          automationRequest(
+            server,
+            credential,
+            `/api/automation/v1/resources/notification-delivery?deliveryId=${encodeURIComponent(id)}`,
+            "GET",
+          );
+        expect((await deliveryRead(randomUUID())).status).toBe(404);
+        expect((await deliveryRead("")).status).toBe(400);
+        const noRead = await issue(["notifications:test"]);
+        expect((await deliveryRead(p.id, noRead.token)).status).toBe(403);
+        const pending = await (await deliveryRead(p.id)).json();
+        expect(pending).toEqual({
+          delivery: {
+            id: p.id,
+            kind: "test",
+            state: "pending",
+            attemptCount: 0,
+            updatedAt: expect.any(String),
+            deliveredAt: null,
+            errorCode: null,
+          },
+        });
         expect(count()).toBe(1);
         expect(publisher).not.toHaveBeenCalled();
         await server.runNotifications();
         expect(publisher).toHaveBeenCalledTimes(1);
+        expect(await (await deliveryRead(p.id)).json()).toMatchObject({
+          delivery: {
+            state: "delivered",
+            attemptCount: 1,
+            deliveredAt: expect.any(String),
+          },
+        });
+        // Owner isolation even if a valid delivery ID is known.
+        raw.exec("PRAGMA foreign_keys=OFF");
+        raw
+          .prepare(
+            "UPDATE notification_deliveries SET owner_id='other-owner' WHERE id=?",
+          )
+          .run(p.id);
+        expect((await deliveryRead(p.id)).status).toBe(404);
+        raw
+          .prepare("UPDATE notification_deliveries SET owner_id=? WHERE id=?")
+          .run(token.record.ownerId, p.id);
+        raw.exec("PRAGMA foreign_keys=ON");
         await server.close();
         server = await startSuiteServer(config, options);
         expect(await (await confirm(p.id, key)).json()).toEqual({

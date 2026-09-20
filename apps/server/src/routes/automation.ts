@@ -10,6 +10,7 @@ import type {
 } from "@suite/contracts";
 import {
   dayPlanInputSchema,
+  notificationDeliveryInputSchema,
   checklistResourceInputSchema,
   createAutomationTokenRequestSchema,
   automationPreviewCommandSchema,
@@ -328,7 +329,41 @@ export const handleAutomation: RouteHandler = async (
           "notifications",
         ),
       };
-    else if (resource === "notifications.status")
+    else if (resource === "notifications.delivery") {
+      const parsed = notificationDeliveryInputSchema.safeParse({
+        deliveryId: url.searchParams.get("deliveryId"),
+      });
+      if (!parsed.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_DELIVERY_ID",
+          "A notification delivery ID is required",
+        );
+        return true;
+      }
+      const delivery = database.getNotificationDelivery(parsed.data.deliveryId);
+      if (delivery === undefined || delivery.ownerId !== token.ownerId) {
+        sendError(
+          response,
+          404,
+          "NOTIFICATION_DELIVERY_NOT_FOUND",
+          "Notification delivery not found",
+        );
+        return true;
+      }
+      body = {
+        delivery: {
+          id: delivery.id,
+          state: delivery.state,
+          kind: delivery.kind,
+          attemptCount: delivery.attemptCount,
+          updatedAt: delivery.updatedAt,
+          deliveredAt: delivery.deliveredAt,
+          errorCode: delivery.errorCode,
+        },
+      };
+    } else if (resource === "notifications.status")
       body = readNotificationStatus(ctx, token.ownerId);
     else if (resource === "habits.list")
       body = {

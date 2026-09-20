@@ -72,7 +72,8 @@
         "notifications.preferences",
         "notifications.status",
         "notifications.update_preferences",
-        "notifications.send_test"
+        "notifications.send_test",
+        "notifications.delivery"
       ],
       "status": "covered",
       "issue": 59,
