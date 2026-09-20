@@ -49,10 +49,14 @@
         "getPlanningPreferences",
         "updatePlanningPreferences"
       ],
-      "catalog": ["planning.day_plan", "planning.preferences"],
-      "status": "partial",
+      "catalog": [
+        "planning.day_plan",
+        "planning.preferences",
+        "planning.update_preferences"
+      ],
+      "status": "covered",
       "issue": 59,
-      "authority": "Schedule read scope uses the same day-plan calculation and preferences as the browser; preference mutations remain #59.",
+      "authority": "Schedule reads and dedicated planning write scope; persisted revisions, preview and atomic confirmation. Browser PUTs invalidate old previews.",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -64,10 +68,14 @@
         "getNotificationStatus",
         "sendTestNotification"
       ],
-      "catalog": ["notifications.preferences", "notifications.status"],
+      "catalog": [
+        "notifications.preferences",
+        "notifications.status",
+        "notifications.update_preferences"
+      ],
       "status": "partial",
       "issue": 59,
-      "authority": "Dedicated notifications read scope exposes only redacted preferences/status; no delivery side effects. Mutations and test delivery remain #59.",
+      "authority": "Dedicated notifications read/write scopes; redacted status and revisioned preference confirmation. Enabling changes future scheduled delivery; test delivery remains #59.",
       "source": "apps/web/src/api.ts"
     },
     {

@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import {
   dayPlanResponseSchema,
   planningPreferencesSchema,
+  notificationPreferenceSnapshotSchema,
   notificationPreferencesSchema,
   notificationStatusResponseSchema,
   createAutomationTokenResponseSchema,
@@ -134,11 +135,12 @@ it("shares browser planning reads and redacted notification health with explicit
       expect(
         (await read(schedule.token, "notification-preferences")).status,
       ).toBe(403);
-      const prefs = notificationPreferencesSchema.parse(
+      const { revision, ...prefs } = notificationPreferenceSnapshotSchema.parse(
         await (
           await read(notifications.token, "notification-preferences")
         ).json(),
       );
+      expect(revision).toBe(0);
       expect(prefs).toEqual(
         notificationPreferencesSchema.parse(
           await (await browser("/api/notifications/preferences")).json(),

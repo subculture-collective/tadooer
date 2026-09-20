@@ -316,9 +316,18 @@ export const handleAutomation: RouteHandler = async (
       }
       body = await readDayPlan(ctx, token.ownerId, new Date(input.data.at));
     } else if (resource === "planning.preferences")
-      body = database.getPlanningPreferences(token.ownerId);
+      body = {
+        ...database.getPlanningPreferences(token.ownerId),
+        revision: database.getPreferenceRevision(token.ownerId, "planning"),
+      };
     else if (resource === "notifications.preferences")
-      body = database.getNotificationPreferences(token.ownerId);
+      body = {
+        ...database.getNotificationPreferences(token.ownerId),
+        revision: database.getPreferenceRevision(
+          token.ownerId,
+          "notifications",
+        ),
+      };
     else if (resource === "notifications.status")
       body = readNotificationStatus(ctx, token.ownerId);
     else if (resource === "habits.list")
@@ -539,6 +548,8 @@ export const handleAutomation: RouteHandler = async (
     let taskSummary: string | undefined;
     const affected: {
       entityKind:
+        | "planning_preferences"
+        | "notification_preferences"
         | "subtask"
         | "task"
         | "calendar"
@@ -555,6 +566,8 @@ export const handleAutomation: RouteHandler = async (
     }[] = [];
     const baseRevisions: {
       entityKind:
+        | "planning_preferences"
+        | "notification_preferences"
         | "subtask"
         | "task"
         | "active_session"
@@ -569,7 +582,35 @@ export const handleAutomation: RouteHandler = async (
       entityId: string;
       revision: number;
     }[] = [];
-    if (command.operation === "subtasks.mutate") {
+    if (
+      command.operation === "planning.update_preferences" ||
+      command.operation === "notifications.update_preferences"
+    ) {
+      const kind =
+        command.operation === "planning.update_preferences"
+          ? "planning"
+          : "notifications";
+      const revision = database.getPreferenceRevision(token.ownerId, kind);
+      if (revision !== command.input.expectedRevision) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Preferences changed before preview",
+        );
+        return true;
+      }
+      const entityKind =
+        kind === "planning"
+          ? "planning_preferences"
+          : "notification_preferences";
+      affected.push({ entityKind, entityId: token.ownerId });
+      baseRevisions.push({ entityKind, entityId: token.ownerId, revision });
+      taskSummary =
+        command.operation === "planning.update_preferences"
+          ? `Change planning preferences to ${JSON.stringify(command.input.preferences)}. This changes civil-day planning and reminder eligibility.`
+          : `Change notification preferences to ${JSON.stringify(command.input.preferences)}. ${command.input.preferences.enabled ? "Scheduled reminder delivery may follow; this does not send a test notification." : "Future reminder delivery will be disabled."}`;
+    } else if (command.operation === "subtasks.mutate") {
       const input = command.input.command;
       const task = database.getTask(token.ownerId, input.taskId);
       if (task?.revision !== command.input.expectedTaskRevision) {
@@ -1245,7 +1286,24 @@ export const handleAutomation: RouteHandler = async (
     for (const [entityId, revision] of Object.entries(
       habitAlreadyApplied ? {} : preview.baseRevisions,
     )) {
+      const preferenceKind =
+        preview.operation === "planning.update_preferences"
+          ? "planning"
+          : preview.operation === "notifications.update_preferences"
+            ? "notifications"
+            : undefined;
+      const preferenceCurrent =
+        preferenceKind === undefined
+          ? undefined
+          : {
+              id: token.ownerId,
+              revision: database.getPreferenceRevision(
+                token.ownerId,
+                preferenceKind,
+              ),
+            };
       const current =
+        preferenceCurrent ??
         database.habits.list(token.ownerId).find(({ id }) => id === entityId) ??
         database.getTask(token.ownerId, entityId, true) ??
         database.getSubtask(token.ownerId, entityId) ??
@@ -1292,7 +1350,47 @@ export const handleAutomation: RouteHandler = async (
     let result: AutomationConfirmationResponse["result"] | undefined;
     let applyLocalMutation:
       (() => AutomationConfirmationResponse["result"]) | undefined;
-    if (command.operation === "subtasks.mutate") {
+    if (command.operation === "planning.update_preferences") {
+      applyLocalMutation = () => {
+        const preferences = database.mutatePlanningPreferences(
+          token.ownerId,
+          command.input.expectedRevision,
+          command.input.preferences,
+          new Date().toISOString(),
+        );
+        if (preferences === undefined)
+          throw new Error("Planning preferences changed during confirmation");
+        return {
+          planningPreferences: {
+            ...preferences,
+            workingDays: [...preferences.workingDays],
+            revision: database.getPreferenceRevision(token.ownerId, "planning"),
+          },
+        };
+      };
+    } else if (command.operation === "notifications.update_preferences") {
+      applyLocalMutation = () => {
+        const preferences = database.mutateNotificationPreferences(
+          token.ownerId,
+          command.input.expectedRevision,
+          command.input.preferences,
+          new Date().toISOString(),
+        );
+        if (preferences === undefined)
+          throw new Error(
+            "Notification preferences changed during confirmation",
+          );
+        return {
+          notificationPreferences: {
+            ...preferences,
+            revision: database.getPreferenceRevision(
+              token.ownerId,
+              "notifications",
+            ),
+          },
+        };
+      };
+    } else if (command.operation === "subtasks.mutate") {
       const frozen = command.input.command;
       if (frozen.action === "reorder") {
         const items = database.listSubtasks(token.ownerId, frozen.taskId);
