@@ -1,44 +1,46 @@
 import { randomUUID } from "node:crypto";
-import { sendJson, sendError, readJson, sameOrigin, expectedRevision } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  expectedRevision,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { subtaskResponse, sendEmpty } from "./shared.ts";
 
-export const handleSubtasks: RouteHandler = async (request, response, url, ctx) => {
+export const handleSubtasks: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
   const { stores: database, auth } = ctx;
   const method = request.method ?? "GET";
 
-  const taskSubtasksMatch =
-    /^\/api\/tasks\/([0-9a-f-]{36})\/subtasks$/.exec(url.pathname);
+  const taskSubtasksMatch = /^\/api\/tasks\/([0-9a-f-]{36})\/subtasks$/.exec(
+    url.pathname,
+  );
   if (
     taskSubtasksMatch !== null &&
-    (method === "GET" || method === "POST")
+    (method === "GET" || method === "POST" || method === "PUT")
   ) {
-    const session = auth.authenticate(request, method === "POST");
+    const session = auth.authenticate(request, method !== "GET");
     if (
       session === undefined ||
-      (method === "POST" &&
+      (method !== "GET" &&
         (!sameOrigin(request) ||
           !auth.csrfMatches(
             session,
             request.headers["x-csrf-token"] as string | undefined,
           )))
     ) {
-      sendError(
-        response,
-        403,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 403, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const taskId = taskSubtasksMatch[1];
     if (taskId === undefined) {
-      sendError(
-        response,
-        404,
-        "NOT_FOUND",
-        "Task subtask route not found",
-      );
+      sendError(response, 404, "NOT_FOUND", "Task subtask route not found");
       return true;
     }
     if (database.getTask(session.owner.id, taskId) === undefined) {
@@ -53,6 +55,59 @@ export const handleSubtasks: RouteHandler = async (request, response, url, ctx) 
       });
       return true;
     }
+    if (method === "PUT") {
+      const input = (await readJson(request)) as {
+        items?: unknown;
+      };
+      if (
+        !Array.isArray(input.items) ||
+        input.items.length === 0 ||
+        input.items.length > 200 ||
+        input.items.some(
+          (item) =>
+            typeof item !== "object" ||
+            item === null ||
+            typeof (item as { id?: unknown }).id !== "string" ||
+            !Number.isInteger((item as { revision?: unknown }).revision) ||
+            Number((item as { revision?: unknown }).revision) <= 0,
+        )
+      ) {
+        sendError(
+          response,
+          400,
+          "INVALID_SUBTASK_ORDER",
+          "Checklist order is invalid",
+        );
+        return true;
+      }
+      const items = input.items as readonly {
+        readonly id: string;
+        readonly revision: number;
+      }[];
+      if (new Set(items.map(({ id }) => id)).size !== items.length) {
+        sendError(
+          response,
+          400,
+          "INVALID_SUBTASK_ORDER",
+          "Checklist order contains duplicates",
+        );
+        return true;
+      }
+      const subtasks = database.reorderSubtasks(
+        session.owner.id,
+        taskId,
+        items,
+        new Date().toISOString(),
+      );
+      if (subtasks === undefined) {
+        sendError(response, 412, "SUBTASK_ORDER_CONFLICT", "Checklist changed");
+        return true;
+      }
+      sendJson(response, 200, {
+        subtasks: subtasks.map(subtaskResponse),
+      });
+      return true;
+    }
     const input = (await readJson(request)) as {
       title?: unknown;
       position?: unknown;
@@ -63,12 +118,7 @@ export const handleSubtasks: RouteHandler = async (request, response, url, ctx) 
       !Number.isInteger(input.position) ||
       Number(input.position) < 0
     ) {
-      sendError(
-        response,
-        400,
-        "INVALID_SUBTASK",
-        "Subtask input is invalid",
-      );
+      sendError(response, 400, "INVALID_SUBTASK", "Subtask input is invalid");
       return true;
     }
     const now = new Date().toISOString();
@@ -96,13 +146,8 @@ export const handleSubtasks: RouteHandler = async (request, response, url, ctx) 
     return true;
   }
 
-  const subtaskMatch = /^\/api\/subtasks\/([0-9a-f-]{36})$/.exec(
-    url.pathname,
-  );
-  if (
-    subtaskMatch !== null &&
-    (method === "PATCH" || method === "DELETE")
-  ) {
+  const subtaskMatch = /^\/api\/subtasks\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (subtaskMatch !== null && (method === "PATCH" || method === "DELETE")) {
     const session = auth.authenticate(request, true);
     if (
       session === undefined ||
@@ -161,12 +206,7 @@ export const handleSubtasks: RouteHandler = async (request, response, url, ctx) 
         : {}),
     };
     if (Object.keys(patch).length === 0) {
-      sendError(
-        response,
-        400,
-        "INVALID_SUBTASK",
-        "Subtask patch is empty",
-      );
+      sendError(response, 400, "INVALID_SUBTASK", "Subtask patch is empty");
       return true;
     }
     const updated = database.updateSubtask(
@@ -177,12 +217,7 @@ export const handleSubtasks: RouteHandler = async (request, response, url, ctx) 
       now,
     );
     if (updated === undefined) {
-      sendError(
-        response,
-        412,
-        "SUBTASK_REVISION_CONFLICT",
-        "Subtask changed",
-      );
+      sendError(response, 412, "SUBTASK_REVISION_CONFLICT", "Subtask changed");
       return true;
     }
     database.appendSyncChange(

@@ -29,7 +29,10 @@ export class SqliteAutomationPreviewStore implements AutomationPreviewStore {
       );
   }
 
-  getPreview(_ownerId: string, previewId: string): AutomationPreviewRecord | undefined {
+  getPreview(
+    _ownerId: string,
+    previewId: string,
+  ): AutomationPreviewRecord | undefined {
     const row = this.db
       .prepare("SELECT * FROM automation_previews WHERE id=?")
       .get(previewId) as unknown as Record<string, string | null> | undefined;
@@ -53,11 +56,7 @@ export class SqliteAutomationPreviewStore implements AutomationPreviewStore {
     };
   }
 
-  consumePreview(
-    _ownerId: string,
-    previewId: string,
-    now: string,
-  ): boolean {
+  consumePreview(_ownerId: string, previewId: string, now: string): boolean {
     return (
       this.db
         .prepare(

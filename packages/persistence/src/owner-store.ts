@@ -10,9 +10,7 @@ export class SqliteOwnerStore implements OwnerStore {
     try {
       if (
         this.db
-          .prepare(
-            "SELECT 1 FROM owner_accounts WHERE disabled_at IS NULL",
-          )
+          .prepare("SELECT 1 FROM owner_accounts WHERE disabled_at IS NULL")
           .get() !== undefined
       ) {
         this.db.exec("ROLLBACK;");

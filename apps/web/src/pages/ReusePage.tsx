@@ -7,7 +7,12 @@ import type {
   TemplatePoolSlot,
   Task,
 } from "@suite/contracts";
-import { TemplateLibrary, type TemplateView, type TemplateBlueprintView, type TemplateSetView } from "../template-library.tsx";
+import {
+  TemplateLibrary,
+  type TemplateView,
+  type TemplateBlueprintView,
+  type TemplateSetView,
+} from "../template-library.tsx";
 import { ChoicePoolLibrary } from "../choice-pool-library.tsx";
 
 export interface ReusePageProps {

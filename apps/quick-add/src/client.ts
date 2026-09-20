@@ -24,7 +24,8 @@ export const submitQuickAdd = async (
   const taskCreateEntry = automationCatalog.find(
     (e) => e.id === "tasks.create",
   );
-  if (!taskCreateEntry) throw new Error("tasks.create not found in automation catalog");
+  if (!taskCreateEntry)
+    throw new Error("tasks.create not found in automation catalog");
 
   const previewResponse = (await client.request(
     taskCreateEntry,

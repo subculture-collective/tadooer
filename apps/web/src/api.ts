@@ -405,6 +405,7 @@ export const syncRound = async (
       headers: {
         ...clientProofHeaders(client),
         "X-CSRF-Token": csrfToken,
+        "X-Suite-Sync-Version": "2",
       },
       body: JSON.stringify(input),
     });
@@ -428,7 +429,7 @@ const getSyncSnapshotPage = (
     `/api/sync/snapshot?offset=${String(offset)}`,
     syncSnapshotResponseSchema,
     {
-      headers: clientProofHeaders(client),
+      headers: { ...clientProofHeaders(client), "X-Suite-Sync-Version": "2" },
     },
   );
 
@@ -539,6 +540,21 @@ const subtaskPatchSchema = z
   .refine((input) => Object.keys(input).length > 0, {
     message: "At least one subtask field is required",
   });
+const subtaskOrderSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.uuid(),
+        revision: z.number().int().positive(),
+      }),
+    )
+    .min(1)
+    .max(200)
+    .refine(
+      (items) => new Set(items.map(({ id }) => id)).size === items.length,
+      { message: "Checklist order cannot contain duplicate items" },
+    ),
+});
 
 export type OrganizationPatch = z.infer<typeof organizationPatchSchema>;
 export type SubtaskCreate = z.infer<typeof subtaskCreateSchema>;
@@ -665,6 +681,17 @@ export const patchSubtask = (
     headers: conditionalHeaders(revision, csrfToken),
     body: JSON.stringify(subtaskPatchSchema.parse(input)),
   }).then(({ subtask }) => subtask);
+
+export const reorderSubtasks = (
+  taskId: string,
+  items: readonly { readonly id: string; readonly revision: number }[],
+  csrfToken: string,
+): Promise<readonly Subtask[]> =>
+  request(`/api/tasks/${taskId}/subtasks`, subtaskListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(subtaskOrderSchema.parse({ items })),
+  }).then(({ subtasks }) => subtasks);
 
 export const deleteSubtask = (
   subtaskId: string,

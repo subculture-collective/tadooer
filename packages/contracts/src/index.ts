@@ -155,6 +155,63 @@ export const calendarEventIdentitySchema = z.object({
 
 export const taskStatusSchema = z.enum(["open", "completed"]);
 
+export const habitCadenceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("daily") }),
+  z.object({
+    kind: z.literal("weekly"),
+    weekdays: z
+      .array(z.number().int().min(0).max(6))
+      .min(1)
+      .max(7)
+      .refine((weekdays) => new Set(weekdays).size === weekdays.length, {
+        message: "Weekly habit weekdays must be unique",
+      }),
+  }),
+  z.object({ kind: z.literal("custom"), intervalDays: z.number().int().min(1).max(365) }),
+]);
+
+export const habitSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  cadence: habitCadenceSchema,
+  startedOn: z.iso.date(),
+  timeZone: z.string().trim().min(1).max(100),
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+
+export const habitOccurrenceSchema = z.object({
+  id: entityIdSchema,
+  habitId: entityIdSchema,
+  periodKey: z.iso.date(),
+  completedAt: z.iso.datetime(),
+  createdAt: z.iso.datetime(),
+});
+
+export const createHabitRequestSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  cadence: habitCadenceSchema,
+  startedOn: z.iso.date(),
+  timeZone: z.string().trim().min(1).max(100),
+});
+
+export const completeHabitRequestSchema = z.object({
+  periodKey: z.iso.date(),
+});
+
+export const habitListResponseSchema = z.object({
+  habits: z.array(habitSchema),
+  occurrences: z.array(habitOccurrenceSchema),
+});
+
+export const taskDeadlineSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("date"), value: z.iso.date() }),
+  z.object({ kind: z.literal("instant"), value: z.iso.datetime() }),
+]);
+
 export const taskSchema = z.object({
   id: entityIdSchema,
   title: z.string().trim().min(1).max(240),
@@ -166,6 +223,7 @@ export const taskSchema = z.object({
   completedAt: z.iso.datetime().nullable().optional(),
   deletedAt: z.iso.datetime().nullable().optional(),
   plannedStart: z.iso.datetime().nullable().optional(),
+  deadline: taskDeadlineSchema.nullable().optional(),
   estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
   tagIds: z
@@ -180,6 +238,10 @@ export const taskSchema = z.object({
 export const createTaskRequestSchema = z.object({
   title: z.string().trim().min(1).max(240),
   notes: z.string().max(20_000).default(""),
+  plannedStart: z.iso.datetime().nullable().optional(),
+  deadline: taskDeadlineSchema.nullable().optional(),
+  projectId: entityIdSchema.nullable().optional(),
+  tagIds: z.array(entityIdSchema).max(25).optional(),
 });
 
 export const taskMutationResponseSchema = z.object({
@@ -196,6 +258,7 @@ export const taskPatchRequestSchema = z
     title: z.string().trim().min(1).max(240).optional(),
     notes: z.string().max(20_000).optional(),
     plannedStart: z.iso.datetime().nullable().optional(),
+    deadline: taskDeadlineSchema.nullable().optional(),
     estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   })
   .refine((input) => Object.keys(input).length > 0, {
@@ -1740,6 +1803,7 @@ export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
+export type HabitListResponse = z.infer<typeof habitListResponseSchema>;
 export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
 export type ConditionalRequestHeaders = z.infer<
   typeof conditionalRequestHeadersSchema

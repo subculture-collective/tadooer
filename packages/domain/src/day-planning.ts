@@ -1,7 +1,8 @@
 export interface CalmTask {
   readonly id: string;
   readonly status: "open" | "completed";
-  readonly plannedStart?: string | null;
+  readonly plannedStart?: string | null | undefined;
+  readonly deletedAt?: string | null | undefined;
 }
 export interface BusyInterval {
   readonly startsAt: string;
@@ -30,6 +31,13 @@ export interface CalmDayResult {
       | "calendar_busy"
       | "no_scheduled_task";
   };
+}
+
+export interface TodayQueueResult {
+  readonly overdueTaskIds: readonly string[];
+  readonly scheduledTodayTaskIds: readonly string[];
+  readonly unscheduledTaskIds: readonly string[];
+  readonly futureScheduledCount: number;
 }
 
 type ZonedParts = Readonly<
@@ -123,6 +131,47 @@ export const zonedDayWindow = (
       },
       timeZone,
     ).toISOString(),
+  };
+};
+
+export const buildTodayQueue = (input: {
+  readonly at: string;
+  readonly timeZone: string;
+  readonly tasks: readonly CalmTask[];
+}): TodayQueueResult => {
+  const now = Date.parse(input.at);
+  const dayEnd = Date.parse(zonedDayWindow(input.at, input.timeZone).to);
+  const open = input.tasks.filter(
+    ({ status, deletedAt }) => status === "open" && deletedAt == null,
+  );
+  const scheduled = open
+    .filter(
+      (task): task is CalmTask & { readonly plannedStart: string } =>
+        task.plannedStart != null,
+    )
+    .toSorted(
+      (left, right) =>
+        Date.parse(left.plannedStart) - Date.parse(right.plannedStart) ||
+        left.id.localeCompare(right.id),
+    );
+
+  return {
+    overdueTaskIds: scheduled
+      .filter(({ plannedStart }) => Date.parse(plannedStart) < now)
+      .map(({ id }) => id),
+    scheduledTodayTaskIds: scheduled
+      .filter(({ plannedStart }) => {
+        const start = Date.parse(plannedStart);
+        return start >= now && start < dayEnd;
+      })
+      .map(({ id }) => id),
+    unscheduledTaskIds: open
+      .filter(({ plannedStart }) => plannedStart == null)
+      .map(({ id }) => id)
+      .toSorted((left, right) => left.localeCompare(right)),
+    futureScheduledCount: scheduled.filter(
+      ({ plannedStart }) => Date.parse(plannedStart) >= dayEnd,
+    ).length,
   };
 };
 const minute = (value: string): number =>

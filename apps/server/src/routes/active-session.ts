@@ -1,24 +1,39 @@
 import { randomUUID, createHash } from "node:crypto";
 import type { ActiveSessionCommandResponse } from "@suite/contracts";
-import { clientAuthenticationHeadersSchema, activeSessionCommandSchema } from "@suite/contracts";
-import { createActiveSession, observeActiveSession, transitionActiveSession, type ActiveSession } from "@suite/domain";
+import {
+  clientAuthenticationHeadersSchema,
+  activeSessionCommandSchema,
+} from "@suite/contracts";
+import {
+  createActiveSession,
+  observeActiveSession,
+  transitionActiveSession,
+  type ActiveSession,
+} from "@suite/domain";
 import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
-import { activeResponse, activeFromRecord, activeFromPersistence, recordFromActive, intervalsFromActive, eventsFromActive } from "./shared.ts";
+import {
+  activeResponse,
+  activeFromRecord,
+  activeFromPersistence,
+  recordFromActive,
+  intervalsFromActive,
+  eventsFromActive,
+} from "./shared.ts";
 
-export const handleActiveSession: RouteHandler = async (request, response, url, ctx) => {
+export const handleActiveSession: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
   const { stores: database, auth, sessionClock } = ctx;
   const method = request.method ?? "GET";
 
   if (method === "GET" && url.pathname === "/api/active-session") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const headers = clientAuthenticationHeadersSchema.safeParse({
@@ -70,10 +85,7 @@ export const handleActiveSession: RouteHandler = async (request, response, url, 
     sendJson(response, 200, { session: activeResponse(observed) });
     return true;
   }
-  if (
-    method === "POST" &&
-    url.pathname === "/api/active-session/command"
-  ) {
+  if (method === "POST" && url.pathname === "/api/active-session/command") {
     const session = auth.authenticate(request, true);
     if (
       session === undefined ||
@@ -96,12 +108,7 @@ export const handleActiveSession: RouteHandler = async (request, response, url, 
       clientCredential: request.headers["x-suite-client-credential"],
     });
     if (!headers.success) {
-      sendError(
-        response,
-        401,
-        "CLIENT_AUTH_REQUIRED",
-        "Client proof required",
-      );
+      sendError(response, 401, "CLIENT_AUTH_REQUIRED", "Client proof required");
       return true;
     }
     const client = database.authenticateSyncClient(
@@ -188,15 +195,11 @@ export const handleActiveSession: RouteHandler = async (request, response, url, 
     }
     const before = database.getActiveSession(session.owner.id);
     const beforeSession =
-      before === undefined
-        ? undefined
-        : activeFromRecord(before, database);
+      before === undefined ? undefined : activeFromRecord(before, database);
     let next: ActiveSession;
     let expected: number | null;
     if (command.command === "start") {
-      if (
-        database.getTask(session.owner.id, command.taskId) === undefined
-      ) {
+      if (database.getTask(session.owner.id, command.taskId) === undefined) {
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
         return true;
       }
@@ -211,10 +214,7 @@ export const handleActiveSession: RouteHandler = async (request, response, url, 
       );
       expected = null;
     } else {
-      if (
-        before?.id !== command.sessionId ||
-        beforeSession === undefined
-      ) {
+      if (before?.id !== command.sessionId || beforeSession === undefined) {
         sendError(
           response,
           404,

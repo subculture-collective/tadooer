@@ -10,11 +10,14 @@ import {
   type SyncTaskSnapshot,
   type Task,
   type TaskFieldVersions,
+  type PlanningPreferences,
+  planningPreferencesSchema,
 } from "@suite/contracts";
 
 const databaseName = "suite-local-v1";
 const databaseVersion = 1;
 const metadataKey = "local-state";
+const planningPreferencesKey = "planning-preferences";
 const entityStore = "entities";
 const metadataStore = "metadata";
 const outboxStore = "outbox";
@@ -203,6 +206,32 @@ export class LocalStore {
 
   async clientIdentity(): Promise<LocalClientIdentity | undefined> {
     return this.#metadata();
+  }
+
+  async savePlanningPreferences(
+    preferences: PlanningPreferences,
+  ): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(metadataStore, "readwrite");
+    transaction
+      .objectStore(metadataStore)
+      .put(
+        planningPreferencesSchema.parse(preferences),
+        planningPreferencesKey,
+      );
+    await transactionDone(transaction);
+  }
+
+  async loadPlanningPreferences(): Promise<PlanningPreferences | undefined> {
+    const database = await this.#open();
+    const transaction = database.transaction(metadataStore, "readonly");
+    const value: unknown = await requestResult<unknown>(
+      transaction.objectStore(metadataStore).get(planningPreferencesKey),
+    );
+    await transactionDone(transaction);
+    return value === undefined
+      ? undefined
+      : planningPreferencesSchema.parse(value);
   }
 
   async loadCachedEntities(): Promise<readonly CachedEntity[]> {

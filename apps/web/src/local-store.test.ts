@@ -99,6 +99,22 @@ afterEach(async () => {
 });
 
 describe("LocalStore", () => {
+  it("caches planning preferences without changing the IndexedDB schema", async () => {
+    const local = store();
+    const preferences = {
+      workingDays: [1, 2, 3, 4, 5],
+      workdayStart: "09:00",
+      workdayEnd: "17:00",
+      breakStart: "12:00",
+      breakEnd: "12:30",
+      timeZone: "America/Chicago",
+    };
+
+    expect(await local.loadPlanningPreferences()).toBeUndefined();
+    await local.savePlanningPreferences(preferences);
+    expect(await local.loadPlanningPreferences()).toEqual(preferences);
+  });
+
   it("registers a client only once and persists no browser-global identity", async () => {
     const local = store();
     let registrations = 0;

@@ -1,18 +1,36 @@
-import { randomUUID, randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { calendarImportPreviewRequestSchema, calendarImportReportSchema, calendarFeedCreateRequestSchema } from "@suite/contracts";
+import {
+  randomUUID,
+  randomBytes,
+  createHash,
+  timingSafeEqual,
+} from "node:crypto";
+import {
+  calendarImportPreviewRequestSchema,
+  calendarImportReportSchema,
+  calendarFeedCreateRequestSchema,
+} from "@suite/contracts";
 import { parseIcsImport, serializeCalendarFeed } from "@suite/import-export";
-import { sendJson, sendError, readJson, sameOrigin, securityHeaders } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  securityHeaders,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 
-export const handleCalendar: RouteHandler = async (request, response, url, ctx) => {
-  const { stores: database, auth, config: _config, baikal: connector } = ctx;
+export const handleCalendar: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
+  const { stores: database, auth, baikal: connector } = ctx;
   const method = request.method ?? "GET";
   const timestamp = new Date().toISOString();
 
   const publicFeedMatch =
-    /^\/feeds\/([0-9a-f-]{36})\/([A-Za-z0-9_-]{43})\.ics$/.exec(
-      url.pathname,
-    );
+    /^\/feeds\/([0-9a-f-]{36})\/([A-Za-z0-9_-]{43})\.ics$/.exec(url.pathname);
   if (publicFeedMatch !== null) {
     if (method !== "GET" && method !== "HEAD") {
       response.writeHead(405, {
@@ -136,8 +154,9 @@ export const handleCalendar: RouteHandler = async (request, response, url, ctx) 
     return true;
   }
 
-  const importMatch =
-    /^\/api\/imports\/([0-9a-f-]{36})(?:\/(apply))?$/.exec(url.pathname);
+  const importMatch = /^\/api\/imports\/([0-9a-f-]{36})(?:\/(apply))?$/.exec(
+    url.pathname,
+  );
   if (importMatch !== null) {
     const session = auth.authenticate(request, method === "POST");
     if (session === undefined) {
@@ -250,8 +269,9 @@ export const handleCalendar: RouteHandler = async (request, response, url, ctx) 
     return true;
   }
 
-  const exportMatch =
-    /^\/api\/calendars\/([0-9a-f-]{36})\/export\.ics$/.exec(url.pathname);
+  const exportMatch = /^\/api\/calendars\/([0-9a-f-]{36})\/export\.ics$/.exec(
+    url.pathname,
+  );
   if (method === "GET" && exportMatch !== null) {
     const session = auth.authenticate(request, false);
     const calendarId = exportMatch[1] ?? "";
@@ -259,16 +279,8 @@ export const handleCalendar: RouteHandler = async (request, response, url, ctx) 
       sendError(response, 401, "AUTH_REQUIRED", "Owner session required");
       return true;
     }
-    if (
-      database.getOwnedCalendar(session.owner.id, calendarId) ===
-      undefined
-    ) {
-      sendError(
-        response,
-        404,
-        "CALENDAR_NOT_FOUND",
-        "Calendar not found",
-      );
+    if (database.getOwnedCalendar(session.owner.id, calendarId) === undefined) {
+      sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
       return true;
     }
     const feed = serializeCalendarFeed(
@@ -325,10 +337,8 @@ export const handleCalendar: RouteHandler = async (request, response, url, ctx) 
       );
       if (
         !parsed.success ||
-        database.getOwnedCalendar(
-          session.owner.id,
-          parsed.data.calendarId,
-        ) === undefined
+        database.getOwnedCalendar(session.owner.id, parsed.data.calendarId) ===
+          undefined
       ) {
         sendError(
           response,
@@ -345,9 +355,7 @@ export const handleCalendar: RouteHandler = async (request, response, url, ctx) 
         ownerId: session.owner.id,
         calendarId: parsed.data.calendarId,
         label: parsed.data.label,
-        secretHash: createHash("sha256")
-          .update(secret)
-          .digest("base64url"),
+        secretHash: createHash("sha256").update(secret).digest("base64url"),
         createdAt: timestamp,
         revokedAt: null,
       };
@@ -394,12 +402,7 @@ export const handleCalendar: RouteHandler = async (request, response, url, ctx) 
         timestamp,
       )
     )
-      sendError(
-        response,
-        404,
-        "FEED_NOT_FOUND",
-        "Calendar feed not found",
-      );
+      sendError(response, 404, "FEED_NOT_FOUND", "Calendar feed not found");
     else {
       response.writeHead(204, {
         ...securityHeaders,

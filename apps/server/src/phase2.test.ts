@@ -71,6 +71,7 @@ const register = async (
 const proof = (client: Client): Record<string, string> => ({
   "X-Suite-Client-Id": client.id,
   "X-Suite-Client-Credential": client.credential,
+  "X-Suite-Sync-Version": "2",
 });
 
 describe("Phase 2 HTTP integration", () => {
@@ -311,20 +312,75 @@ describe("Phase 2 HTTP integration", () => {
         );
         expect(subtaskCreate.status).toBe(201);
         const subtask = (await subtaskCreate.json()) as {
-          subtask: { id: string; revision: number };
+          subtask: { id: string; title: string; revision: number };
         };
+        const secondSubtaskCreate = await request(
+          server,
+          cookie,
+          session.csrfToken,
+          `/api/tasks/${taskId}/subtasks`,
+          { title: "Second step", position: 1 },
+        );
+        expect(secondSubtaskCreate.status).toBe(201);
+        const secondSubtask = (await secondSubtaskCreate.json()) as {
+          subtask: { id: string; title: string; revision: number };
+        };
+        const reordered = await fetch(
+          `${server.baseUrl}/api/tasks/${taskId}/subtasks`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Origin: server.baseUrl,
+              Cookie: cookie,
+              "X-CSRF-Token": session.csrfToken,
+            },
+            body: JSON.stringify({
+              items: [
+                {
+                  id: secondSubtask.subtask.id,
+                  revision: secondSubtask.subtask.revision,
+                },
+                { id: subtask.subtask.id, revision: subtask.subtask.revision },
+              ],
+            }),
+          },
+        );
+        expect(reordered.status).toBe(200);
+        expect(await reordered.json()).toMatchObject({
+          subtasks: [
+            { id: secondSubtask.subtask.id, position: 0, revision: 2 },
+            { id: subtask.subtask.id, position: 1, revision: 2 },
+          ],
+        });
+        const staleReorder = await fetch(
+          `${server.baseUrl}/api/tasks/${taskId}/subtasks`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Origin: server.baseUrl,
+              Cookie: cookie,
+              "X-CSRF-Token": session.csrfToken,
+            },
+            body: JSON.stringify({
+              items: [
+                { id: subtask.subtask.id, revision: 1 },
+                { id: secondSubtask.subtask.id, revision: 1 },
+              ],
+            }),
+          },
+        );
+        expect(staleReorder.status).toBe(412);
         expect(
           (
-            await mutate(
-              `/api/subtasks/${subtask.subtask.id}`,
-              "PATCH",
-              subtask.subtask.revision,
-              { completed: true, position: 1 },
-            )
+            await mutate(`/api/subtasks/${subtask.subtask.id}`, "PATCH", 2, {
+              completed: true,
+            })
           ).status,
         ).toBe(200);
         expect(
-          (await mutate(`/api/subtasks/${subtask.subtask.id}`, "DELETE", 2))
+          (await mutate(`/api/subtasks/${subtask.subtask.id}`, "DELETE", 3))
             .status,
         ).toBe(204);
         expect(

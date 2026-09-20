@@ -1,22 +1,28 @@
 import type { BaikalStatusResponse } from "@suite/contracts";
 import { baikalConnectRequestSchema } from "@suite/contracts";
-import { sendJson, sendError, readJson, sameOrigin, securityHeaders } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  securityHeaders,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { connectorStatus } from "./shared.ts";
 
-export const handleConnectors: RouteHandler = async (request, response, url, ctx) => {
-  const { stores: _database, auth, config: _config, baikal: connector, google } = ctx;
+export const handleConnectors: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
+  const { auth, baikal: connector, google } = ctx;
   const method = request.method ?? "GET";
 
   if (method === "GET" && url.pathname === "/api/connectors/baikal") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const result = await connector.status(session.owner.id);
@@ -46,12 +52,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -60,12 +61,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     const parsed = baikalConnectRequestSchema.safeParse(
@@ -103,12 +99,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
   if (method === "GET" && url.pathname === "/api/connectors/google") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     sendJson(response, 200, google.status(session.owner.id));
@@ -130,12 +121,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -144,12 +130,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     const authorization = google.begin(session.owner.id);
@@ -168,10 +149,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
     return true;
   }
 
-  if (
-    method === "GET" &&
-    url.pathname === "/api/connectors/google/callback"
-  ) {
+  if (method === "GET" && url.pathname === "/api/connectors/google/callback") {
     const state = url.searchParams.get("state");
     const code = url.searchParams.get("code");
     if (
@@ -210,10 +188,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
     return true;
   }
 
-  if (
-    method === "POST" &&
-    url.pathname === "/api/connectors/google/sync"
-  ) {
+  if (method === "POST" && url.pathname === "/api/connectors/google/sync") {
     if (!sameOrigin(request)) {
       sendError(
         response,
@@ -225,12 +200,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -239,12 +209,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     sendJson(response, 200, await google.synchronize(session.owner.id));
@@ -263,12 +228,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -277,12 +237,7 @@ export const handleConnectors: RouteHandler = async (request, response, url, ctx
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     sendJson(response, 200, await google.disconnect(session.owner.id));

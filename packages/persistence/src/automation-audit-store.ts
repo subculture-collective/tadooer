@@ -1,5 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { AutomationAuditRecord, AutomationOutcomeRecord } from "./index.js";
+import type {
+  AutomationAuditRecord,
+  AutomationOutcomeRecord,
+} from "./index.js";
 import type { AutomationAuditStore } from "./stores.js";
 
 export class SqliteAutomationAuditStore implements AutomationAuditStore {
