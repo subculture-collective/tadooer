@@ -178,6 +178,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   );
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
   const [localStore] = useState(() => new LocalStore());
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [tags, setTags] = useState<readonly Tag[]>([]);
@@ -590,17 +591,45 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  const calendarError = (error: unknown): void => {
+    setCalendarMessage(null);
+    if (
+      error instanceof ApiRequestError &&
+      error.status === 401 &&
+      error.code === "AUTH_REQUIRED"
+    ) {
+      setFormError(null);
+      setState({
+        kind: "login",
+        ...(state.kind === "authenticated"
+          ? { username: state.session.owner.username }
+          : {}),
+        message:
+          "Your Tadooer session expired. Sign in again, then retry the calendar action. Your Google connection and saved work have been kept.",
+      });
+    } else {
+      setFormError(messageFor(error));
+    }
+  };
+
+  const calendarSession = async (): Promise<SessionResponse> => {
+    const session = await resumeSession();
+    setState((current) =>
+      current.kind === "authenticated" ? { ...current, session } : current,
+    );
+    return session;
+  };
+
   const authorizeGoogle = async (): Promise<string> => {
     if (state.kind !== "authenticated") throw new Error("Sign in required");
     setBusy(true);
     setFormError(null);
     try {
-      const authorization = await beginGoogleAuthorization(
-        state.session.csrfToken,
-      );
+      const session = await calendarSession();
+      const authorization = await beginGoogleAuthorization(session.csrfToken);
       return authorization.authorizationUrl;
     } catch (error: unknown) {
-      setFormError(messageFor(error));
+      calendarError(error);
       throw error;
     } finally {
       setBusy(false);
@@ -625,15 +654,39 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     );
   };
 
-  const syncGoogleCalendar = async (): Promise<void> => {
+  const syncGoogleCalendar = async (full = false): Promise<void> => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
     setFormError(null);
+    setCalendarMessage(
+      full ? "Resyncing Google Calendar…" : "Syncing Google Calendar…",
+    );
     try {
-      await synchronizeGoogle(state.session.csrfToken);
+      const session = await calendarSession();
+      const result = await synchronizeGoogle(session.csrfToken, full);
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, google: result.status }
+          : current,
+      );
+      if (result.status.state === "reconnect_required") {
+        setCalendarMessage(
+          "Google authorization has expired or been revoked. Reconnect Google Calendar to resume syncing.",
+        );
+      } else if (result.status.state !== "connected") {
+        setCalendarMessage(
+          "Google Calendar could not finish syncing. The last saved projection has been kept. You can retry without disconnecting.",
+        );
+      } else {
+        setCalendarMessage(
+          full
+            ? "Google Calendar resynced successfully."
+            : "Google Calendar synced successfully.",
+        );
+      }
       await refreshGooglePlanning();
     } catch (error: unknown) {
-      setFormError(messageFor(error));
+      calendarError(error);
     } finally {
       setBusy(false);
     }
@@ -643,11 +696,36 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
     setFormError(null);
+    setCalendarMessage("Disconnecting Google Calendar…");
     try {
-      await disconnectGoogle(state.session.csrfToken);
+      const session = await calendarSession();
+      const result = await disconnectGoogle(session.csrfToken);
+      // Publish the completed mutation before refreshing unrelated planning reads.
+      setState((current) =>
+        current.kind === "authenticated" && current.google !== undefined
+          ? {
+              ...current,
+              google: {
+                ...current.google,
+                connected: false,
+                state: "disconnected",
+                providerId: null,
+                accountLabel: null,
+                grantedScopes: [],
+                calendars: [],
+                freshness: [],
+              },
+            }
+          : current,
+      );
+      setCalendarMessage(
+        result.remoteRevoked
+          ? "Google Calendar disconnected."
+          : "Google Calendar disconnected from Tadooer. Google did not confirm remote access revocation; you can remove access in your Google account.",
+      );
       await refreshGooglePlanning();
     } catch (error: unknown) {
-      setFormError(messageFor(error));
+      calendarError(error);
     } finally {
       setBusy(false);
     }
@@ -2240,6 +2318,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       )}
       {route === "connections" && (
         <ConnectionsPage
+          calendarMessage={calendarMessage}
           baikal={state.baikal}
           google={state.google}
           planningPreferences={state.planningPreferences}

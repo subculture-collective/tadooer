@@ -96,6 +96,8 @@ describe("Google planning surface", () => {
     expect(html).toContain("Primary");
     expect(html).toContain("Google projection is current");
     expect(html).toContain("Sync Google now");
+    expect(html).toContain("Resync Google Calendar");
+    expect(html).toContain("existing Google connection");
     expect(html).toContain("Disconnect Google");
     expect(html).toContain("Reminder: quiet");
   });

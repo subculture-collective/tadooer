@@ -118,3 +118,27 @@ Google provider state and encrypted credentials even if the remote request is
 unavailable. Removing the OAuth configuration file disables authorization and
 refresh, but it is not a substitute for revoking the grant or using the Suite's
 disconnect control.
+
+## Sync, resync, and session recovery
+
+Connections provides **Sync Google now** for incremental updates and **Resync
+Google Calendar** to reload calendars/events using the existing encrypted grant.
+Resync sends `POST /api/connectors/google/sync` with `{ "full": true }` under the
+same session, same-origin and CSRF protections. Existing clients may omit the
+body for incremental sync. Each calendar replaces its projection transactionally
+only after the complete fetch succeeds; a failed fetch retains the saved events.
+No Google calendar writes or new OAuth permissions are involved.
+
+Calendar actions first resume the current Tadooer session and use its current
+CSRF token. If the session has expired, the UI returns to sign-in and explains
+that the Google connection and saved work remain intact. The action is not
+silently replayed after login. A revoked Google grant is a separate condition
+and requires Google reconnection. Progress and completion appear on Connections;
+disconnect updates the connector state before refreshing planner information.
+If remote revocation fails, local disconnection still completes and the UI tells
+the owner to remove access in their Google account if desired.
+
+September 20 regression evidence: 186 tests and full repository verification
+passed. An isolated server-backed browser with synthetic Google/CalDAV providers
+verified full resync, session-expiry recovery without disconnection, login and
+retry, and visible local disconnect when Google revocation returned 503.

@@ -19,7 +19,7 @@ export interface SettingsPageProps {
   readonly plannerFreshness: string | undefined;
   readonly busy: boolean;
   readonly onAuthorizeGoogle: (() => Promise<string>) | undefined;
-  readonly onSyncGoogle: (() => Promise<void>) | undefined;
+  readonly onSyncGoogle: ((full?: boolean) => Promise<void>) | undefined;
   readonly onDisconnectGoogle: (() => Promise<void>) | undefined;
   readonly onSavePlanningPreferences:
     ((preferences: PlanningPreferences) => Promise<void>) | undefined;

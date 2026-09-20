@@ -8,6 +8,7 @@ import { GooglePlanning } from "../google-planning.tsx";
 import { CalendarMigration } from "../calendar-migration.tsx";
 
 export interface ConnectionsPageProps {
+  readonly calendarMessage?: string | null;
   readonly baikal: BaikalStatusResponse;
   readonly google: GoogleConnectorStatusResponse | undefined;
   readonly planningPreferences: PlanningPreferences | undefined;
@@ -15,13 +16,14 @@ export interface ConnectionsPageProps {
   readonly csrfToken: string;
   readonly busy: boolean;
   readonly onAuthorizeGoogle: (() => Promise<string>) | undefined;
-  readonly onSyncGoogle: (() => Promise<void>) | undefined;
+  readonly onSyncGoogle: ((full?: boolean) => Promise<void>) | undefined;
   readonly onDisconnectGoogle: (() => Promise<void>) | undefined;
   readonly onSavePlanningPreferences:
     ((preferences: PlanningPreferences) => Promise<void>) | undefined;
 }
 
 export const ConnectionsPage = ({
+  calendarMessage,
   baikal,
   google,
   planningPreferences,
@@ -35,6 +37,11 @@ export const ConnectionsPage = ({
 }: ConnectionsPageProps) => {
   return (
     <>
+      {calendarMessage && (
+        <p role="status" aria-live="polite">
+          {calendarMessage}
+        </p>
+      )}
       {google !== undefined &&
         planningPreferences !== undefined &&
         dayPlan !== undefined &&

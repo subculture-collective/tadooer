@@ -273,6 +273,7 @@ export class GoogleConnectorService {
   async synchronize(
     ownerId: string,
     now = new Date(),
+    full = false,
   ): Promise<GoogleSyncResponse> {
     const config = readConfiguration(this.configPath);
     const refreshToken = this.#refreshToken(ownerId);
@@ -352,10 +353,11 @@ export class GoogleConnectorService {
       let result = await syncGoogleEvents(
         grant.accessToken,
         calendar.id,
-        prior?.syncToken ?? null,
+        full ? null : (prior?.syncToken ?? null),
         this.fetcher,
       );
-      let reset = false;
+      let reset = full;
+      if (full) resetCalendars.push(collection.id);
       if (result.kind === "reset-required") {
         reset = true;
         resetCalendars.push(collection.id);

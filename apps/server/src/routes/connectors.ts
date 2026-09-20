@@ -1,5 +1,8 @@
 import type { BaikalStatusResponse } from "@suite/contracts";
-import { baikalConnectRequestSchema } from "@suite/contracts";
+import {
+  baikalConnectRequestSchema,
+  googleSyncRequestSchema,
+} from "@suite/contracts";
 import {
   sendJson,
   sendError,
@@ -212,7 +215,25 @@ export const handleConnectors: RouteHandler = async (
       sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
-    sendJson(response, 200, await google.synchronize(session.owner.id));
+    const input = googleSyncRequestSchema.safeParse(
+      request.headers["content-type"] === undefined
+        ? {}
+        : await readJson(request),
+    );
+    if (!input.success) {
+      sendError(
+        response,
+        400,
+        "INVALID_GOOGLE_SYNC",
+        "Invalid calendar sync options",
+      );
+      return true;
+    }
+    sendJson(
+      response,
+      200,
+      await google.synchronize(session.owner.id, new Date(), input.data.full),
+    );
     return true;
   }
 

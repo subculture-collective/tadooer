@@ -11,7 +11,7 @@ export interface GooglePlanningProps {
   readonly dayPlan: DayPlanResponse;
   readonly busy: boolean;
   readonly onAuthorize: () => Promise<string>;
-  readonly onSynchronize: () => Promise<void>;
+  readonly onSynchronize: (full?: boolean) => Promise<void>;
   readonly onDisconnect: () => Promise<void>;
   readonly onSavePreferences: (
     preferences: PlanningPreferences,
@@ -138,6 +138,11 @@ export const GooglePlanning = ({
                 );
               })}
             </ul>
+            <p className="hint">
+              Resync reloads your calendars and events using the existing Google
+              connection. Your saved projection stays available if the resync
+              fails.
+            </p>
             <div className="task-actions">
               <button
                 type="button"
@@ -146,6 +151,14 @@ export const GooglePlanning = ({
                 onClick={() => void onSynchronize()}
               >
                 Sync Google now
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() => void onSynchronize(true)}
+              >
+                Resync Google Calendar
               </button>
               <button
                 type="button"

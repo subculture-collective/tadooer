@@ -406,6 +406,11 @@ export const googleAuthorizationResponseSchema = z.object({
   authorizationUrl: z.url(),
   expiresAt: z.iso.datetime(),
 });
+export const googleSyncRequestSchema = z
+  .object({
+    full: z.boolean().default(false),
+  })
+  .strict();
 export const googleSyncResponseSchema = z.object({
   status: googleConnectorStatusResponseSchema,
   resetCalendars: z.array(entityIdSchema),

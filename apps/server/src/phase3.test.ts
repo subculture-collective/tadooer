@@ -55,6 +55,7 @@ const googleFixture = () => {
   let eventRound = 0;
   let invalidGrant = false;
   let revokeAttempted = false;
+  let failEvents = false;
   const fetcher: typeof fetch = async (input, init) => {
     await Promise.resolve();
     const url =
@@ -114,6 +115,7 @@ const googleFixture = () => {
       )
     ) {
       const syncToken = url.searchParams.get("syncToken");
+      if (failEvents) return new Response("", { status: 503 });
       if (eventRound === 0) {
         eventRound += 1;
         return Response.json({
@@ -186,6 +188,9 @@ const googleFixture = () => {
       invalidGrant = true;
     },
     revokeAttempted: () => revokeAttempted,
+    failEvents: (value: boolean) => {
+      failEvents = value;
+    },
   };
 };
 
@@ -382,6 +387,71 @@ describe("Phase 3 Google federation foundation", () => {
         expect(resetPlanner.events.map(({ summary }) => summary)).toEqual([
           "Reset appointment",
         ]);
+
+        // Explicit resync ignores a still-valid cursor and replaces only a
+        // successfully fetched calendar. Failed refreshes retain prior events.
+        const full = await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          "/api/connectors/google/sync",
+          "POST",
+          { full: true },
+        );
+        expect(full.status).toBe(200);
+        const fullResult = googleSyncResponseSchema.parse(await full.json());
+        expect(fullResult.resetCalendars).toHaveLength(1);
+        expect(fullResult.status.state).toBe("connected");
+        google.failEvents(true);
+        const failedFull = await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          "/api/connectors/google/sync",
+          "POST",
+          { full: true },
+        );
+        expect(
+          googleSyncResponseSchema.parse(await failedFull.json()).status.state,
+        ).toBe("stale");
+        const savedPlanner = plannerResponseSchema.parse(
+          await (
+            await fetch(
+              `${server.baseUrl}/api/planner?from=2026-08-07T00%3A00%3A00.000Z&to=2026-08-08T00%3A00%3A00.000Z`,
+              { headers: { Cookie: cookie } },
+            )
+          ).json(),
+        );
+        expect(savedPlanner.events.map(({ summary }) => summary)).toEqual([
+          "Reset appointment",
+        ]);
+        google.failEvents(false);
+        await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          "/api/connectors/google/sync",
+          "POST",
+          { full: true },
+        );
+        const invalidSync = await browserRequest(
+          server,
+          cookie,
+          csrfToken,
+          "/api/connectors/google/sync",
+          "POST",
+          { full: "yes" },
+        );
+        expect(invalidSync.status).toBe(400);
+        const anonymousSync = await browserRequest(
+          server,
+          "",
+          csrfToken,
+          "/api/connectors/google/sync",
+          "POST",
+          { full: true },
+        );
+        expect(anonymousSync.status).toBe(401);
 
         const invalidPreferences = await browserRequest(
           server,

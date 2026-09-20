@@ -207,10 +207,12 @@ export const beginGoogleAuthorization = (
 
 export const synchronizeGoogle = (
   csrfToken: string,
+  full = false,
 ): Promise<GoogleSyncResponse> =>
   request("/api/connectors/google/sync", googleSyncResponseSchema, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ full }),
   });
 
 export const disconnectGoogle = (
