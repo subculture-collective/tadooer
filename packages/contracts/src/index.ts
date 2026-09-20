@@ -1335,7 +1335,10 @@ export const automationTokenSchema = z
     id: entityIdSchema,
     ownerId: entityIdSchema,
     label: z.string().trim().min(1).max(100),
-    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    scopes: z
+      .array(automationTokenScopeSchema)
+      .min(1)
+      .max(automationTokenScopeSchema.options.length),
     createdAt: z.iso.datetime(),
     lastUsedAt: z.iso.datetime().nullable(),
     expiresAt: z.iso.datetime(),
@@ -1349,7 +1352,10 @@ export const automationTokenSchema = z
 export const createAutomationTokenRequestSchema = z
   .object({
     label: z.string().trim().min(1).max(100),
-    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    scopes: z
+      .array(automationTokenScopeSchema)
+      .min(1)
+      .max(automationTokenScopeSchema.options.length),
     expiresAt: z.iso.datetime(),
   })
   .strict()

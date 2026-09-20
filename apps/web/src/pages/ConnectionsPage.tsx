@@ -6,6 +6,7 @@ import type {
 } from "@suite/contracts";
 import { GooglePlanning } from "../google-planning.tsx";
 import { CalendarMigration } from "../calendar-migration.tsx";
+import { AssistantAccess } from "../components/AssistantAccess.tsx";
 import { SuperProductivityImport } from "../components/SuperProductivityImport.tsx";
 
 export interface ConnectionsPageProps {
@@ -38,6 +39,7 @@ export const ConnectionsPage = ({
 }: ConnectionsPageProps) => {
   return (
     <>
+      <AssistantAccess csrfToken={csrfToken} />
       <SuperProductivityImport csrfToken={csrfToken} />
       {calendarMessage && (
         <p role="status" aria-live="polite">

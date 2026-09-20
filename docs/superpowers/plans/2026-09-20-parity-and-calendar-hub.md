@@ -138,3 +138,13 @@ qualification. This is not a blocker for import, parity, or MCP implementation.
   Deleted tasks have a read-only recovery resource/tool. Deletion checks active
   focus and calendar links at preview and confirmation; old deletion replay does
   not delete a restored task again. Concrete previews name the affected task.
+- Connections now provides assistant-token creation with explicit permissions and
+  7/30/90-day expiry, one-time masked secret/copy/dismiss, metadata listing, and
+  reviewed revocation. Default permission is task read only. Token contracts allow
+  all currently defined scopes when individually selected; the obsolete limit of
+  eight scopes prevented one assistant from using the whole supported catalog.
+- Verification: 208 tests and four builds; installed stdio catalog has 28 tools
+  and passes delete/recovery/restore/replay. Browser created an all-scope token,
+  verified access, canceled revocation without effects, then confirmed revocation
+  and verified HTTP 401. The secret remained inside the browser test process.
+  Local visual evidence: `output/playwright/assistant-access/connections.png`.

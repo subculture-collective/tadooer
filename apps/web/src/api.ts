@@ -1,4 +1,10 @@
-import { superProductivityPreviewSchema } from "@suite/contracts";
+import {
+  automationTokenListResponseSchema,
+  createAutomationTokenRequestSchema,
+  createAutomationTokenResponseSchema,
+  type CreateAutomationTokenRequest,
+  superProductivityPreviewSchema,
+} from "@suite/contracts";
 import {
   apiErrorSchema,
   activeSessionCommandResponseSchema,
@@ -983,3 +989,20 @@ export const previewTaskImport = (rawJson: string, csrfToken: string) =>
     superProductivityPreviewSchema,
     { method: "POST", headers: { "X-CSRF-Token": csrfToken }, body: rawJson },
   );
+
+export const listAutomationTokens = () =>
+  request("/api/automation/tokens", automationTokenListResponseSchema);
+export const createAutomationToken = (
+  input: CreateAutomationTokenRequest,
+  csrfToken: string,
+) =>
+  request("/api/automation/tokens", createAutomationTokenResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(createAutomationTokenRequestSchema.parse(input)),
+  });
+export const revokeAutomationToken = (id: string, csrfToken: string) =>
+  requestEmpty(`/api/automation/tokens/${id}`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
+  });

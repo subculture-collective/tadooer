@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   apiErrorSchema,
+  automationTokenScopeSchema,
   automationConfirmationResponseSchema,
   automationPreviewResponseSchema,
   automationTaskResourceSchema,
@@ -652,12 +653,7 @@ describe("Assistant task changes", () => {
             await response.json(),
           ).token;
         };
-        const token = await issue([
-          "tasks:read",
-          "tasks:write",
-          "focus:read",
-          "focus:write",
-        ]);
+        const token = await issue([...automationTokenScopeSchema.options]);
         const readOnly = await issue(["tasks:read"]);
         const request = (path: string, body: unknown, credential = token) =>
           automationRequest(server, credential, path, "POST", body);
