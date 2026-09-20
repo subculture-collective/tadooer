@@ -46,9 +46,12 @@ docker compose --env-file "$compose_env_file" -f "$compose_file" exec -T suite s
 
 (
   cd "$backup_root"
+  checksum_file="$(mktemp)"
+  trap 'rm -f "$checksum_file"' 0 1 2 3 15
   find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 |
     sort -z |
-    xargs -0 sha256sum > SHA256SUMS
+    xargs -0 sha256sum > "$checksum_file"
+  mv "$checksum_file" SHA256SUMS
 )
 chmod -R go-rwx "$backup_root"
 
