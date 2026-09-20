@@ -26,7 +26,8 @@ const dateFor = (value: string): Date => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value))
     throw new Error(`Invalid calendar date: ${value}`);
   const date = new Date(`${value}T00:00:00.000Z`);
-  if (Number.isNaN(date.getTime())) throw new Error(`Invalid calendar date: ${value}`);
+  if (Number.isNaN(date.getTime()))
+    throw new Error(`Invalid calendar date: ${value}`);
   return date;
 };
 
@@ -46,20 +47,32 @@ const periodKeysThrough = (
     const allowed = new Set(schedule.cadence.weekdays);
     if (
       allowed.size === 0 ||
-      [...allowed].some((weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6)
+      [...allowed].some(
+        (weekday) => !Number.isInteger(weekday) || weekday < 0 || weekday > 6,
+      )
     )
       throw new Error("Weekly habits require weekdays from 0 through 6");
     const keys: string[] = [];
-    for (let current = schedule.startedOn; dateFor(current) <= end; current = addDays(current, 1)) {
-      if (allowed.has((dateFor(current).getUTCDay() + 6) % 7)) keys.push(current);
+    for (
+      let current = schedule.startedOn;
+      dateFor(current) <= end;
+      current = addDays(current, 1)
+    ) {
+      if (allowed.has((dateFor(current).getUTCDay() + 6) % 7))
+        keys.push(current);
     }
     return keys;
   }
-  const interval = schedule.cadence.kind === "daily" ? 1 : schedule.cadence.intervalDays;
+  const interval =
+    schedule.cadence.kind === "daily" ? 1 : schedule.cadence.intervalDays;
   if (!Number.isInteger(interval) || interval < 1)
     throw new Error("Custom habits require a positive intervalDays");
   const keys: string[] = [];
-  for (let current = schedule.startedOn; dateFor(current) <= end; current = addDays(current, interval))
+  for (
+    let current = schedule.startedOn;
+    dateFor(current) <= end;
+    current = addDays(current, interval)
+  )
     keys.push(current);
   return keys;
 };

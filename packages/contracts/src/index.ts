@@ -167,7 +167,10 @@ export const habitCadenceSchema = z.discriminatedUnion("kind", [
         message: "Weekly habit weekdays must be unique",
       }),
   }),
-  z.object({ kind: z.literal("custom"), intervalDays: z.number().int().min(1).max(365) }),
+  z.object({
+    kind: z.literal("custom"),
+    intervalDays: z.number().int().min(1).max(365),
+  }),
 ]);
 
 export const habitSchema = z.object({
@@ -885,6 +888,7 @@ export const coreTaskFieldSchema = z.enum([
   "estimateMinutes",
   "projectId",
   "tagIds",
+  "deadline",
 ]);
 
 export const taskFieldVersionsSchema = z.object({
@@ -894,6 +898,7 @@ export const taskFieldVersionsSchema = z.object({
   estimateMinutes: revisionSchema,
   projectId: revisionSchema,
   tagIds: revisionSchema,
+  deadline: revisionSchema,
 });
 
 export const syncTaskSnapshotSchema = z.object({
@@ -907,6 +912,7 @@ const syncPatchFieldsSchema = z
     title: z.string().trim().min(1).max(240).optional(),
     notes: z.string().max(20_000).optional(),
     estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
+    deadline: taskDeadlineSchema.nullable().optional(),
   })
   .strict()
   .refine((fields) => Object.keys(fields).length > 0, {
@@ -918,6 +924,7 @@ const syncPatchBaseVersionsSchema = z
     title: revisionSchema.optional(),
     notes: revisionSchema.optional(),
     estimateMinutes: revisionSchema.optional(),
+    deadline: revisionSchema.optional(),
   })
   .strict();
 
@@ -937,6 +944,7 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
         title: z.string().trim().min(1).max(240),
         notes: z.string().max(20_000),
         estimateMinutes: z.number().int().min(1).max(720).nullable(),
+        deadline: taskDeadlineSchema.nullable().optional(),
       })
       .strict(),
   }),
@@ -984,7 +992,7 @@ export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
     code: z.enum(["SYNC_FIELD_CONFLICT", "SYNC_RESOURCE_CONFLICT"]),
     taskId: entityIdSchema,
     taskRevision: revisionSchema,
-    conflictingFields: z.array(coreTaskFieldSchema).min(1).max(6).optional(),
+    conflictingFields: z.array(coreTaskFieldSchema).min(1).max(7).optional(),
   }),
   z.object({
     kind: z.literal("rejected"),

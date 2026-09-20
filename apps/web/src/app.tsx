@@ -1,3 +1,4 @@
+import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
   ActiveSession,
@@ -857,7 +858,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     task: Task,
   ): Promise<void> => {
     event.preventDefault();
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     const data = new FormData(event.currentTarget);
     setBusy(true);
     setFormError(null);
@@ -866,6 +867,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       await localStore.queueTaskPatch(task.id, {
         title: formValue(data, "title"),
         notes: formValue(data, "notes"),
+        deadline: deadlineFromForm(data),
         estimateMinutes:
           Number.isInteger(estimate) && estimate > 0 ? estimate : null,
       });
@@ -2046,7 +2048,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       commandTrigger={
         <CommandBar
           onNavigate={navigate}
-          onSyncNow={syncNow}
+          onSyncNow={() => void syncNow()}
           syncAvailable={networkOnline && state.client !== undefined}
         />
       }

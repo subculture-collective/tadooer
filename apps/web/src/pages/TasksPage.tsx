@@ -1,3 +1,4 @@
+import { DeadlineFields } from "../components/tasks/DeadlineFields.tsx";
 import type { SyntheticEvent } from "react";
 import type {
   BaikalStatusResponse,
@@ -222,6 +223,10 @@ export const TasksPage = ({
                     defaultValue={task.estimateMinutes ?? ""}
                   />
                 </label>
+                <DeadlineFields
+                  key={JSON.stringify(task.deadline)}
+                  deadline={task.deadline}
+                />
                 <button disabled={busy}>Save task</button>
               </form>
               <TimeBlockForm

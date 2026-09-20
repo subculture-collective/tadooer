@@ -147,6 +147,29 @@ describe("Phase 2 HTTP integration", () => {
             { cursor, operations, pullLimit: 100 },
             proof(client),
           );
+        const withoutVersion = await request(
+          server,
+          cookie,
+          session.csrfToken,
+          "/api/sync/round",
+          { invalid: "body" },
+          {
+            "X-Suite-Client-Id": first.id,
+            "X-Suite-Client-Credential": first.credential,
+          },
+        );
+        expect(withoutVersion.status).toBe(426);
+        // A reset must be decided before executing or recording any operation.
+        const invalidCursor = await sync(first, [create], "invalid-cursor");
+        expect(invalidCursor.status).toBe(409);
+        expect(await invalidCursor.json()).toMatchObject({
+          code: "SYNC_CURSOR_EXPIRED",
+        });
+        const afterReset = await fetch(`${server.baseUrl}/api/tasks`, {
+          headers: { Cookie: cookie },
+        });
+        expect(await afterReset.json()).toMatchObject({ tasks: [] });
+
         const created = await sync(first, [create]);
         expect(created.status).toBe(200);
         expect(
@@ -166,6 +189,75 @@ describe("Phase 2 HTTP integration", () => {
         expect(
           syncRoundResponseSchema.parse(await changedHash.json()).outcomes[0],
         ).toMatchObject({ kind: "rejected", code: "IDEMPOTENCY_CONFLICT" });
+
+        const deadlineTaskId = operationId("71");
+        const dated = await sync(first, [
+          {
+            ...create,
+            operationId: operationId("72"),
+            clientSequence: 20,
+            task: {
+              ...create.task,
+              id: deadlineTaskId,
+              deadline: { kind: "date", value: "2026-09-20" },
+            },
+          },
+        ]);
+        expect(dated.status).toBe(200);
+        const datedBody = syncRoundResponseSchema.parse(await dated.json());
+        const datedChange = datedBody.changes.find(
+          ({ entityId }) => entityId === deadlineTaskId,
+        );
+        expect(datedChange?.snapshot).toMatchObject({
+          value: {
+            task: { deadline: { kind: "date", value: "2026-09-20" } },
+            fieldVersions: { deadline: 1 },
+          },
+        });
+        const deadlinePatch = {
+          kind: "task.patch",
+          operationId: operationId("73"),
+          clientSequence: 21,
+          createdAt: create.createdAt,
+          requestHash: hash,
+          taskId: deadlineTaskId,
+          fields: {
+            deadline: { kind: "instant", value: "2026-09-20T18:00:00.000Z" },
+          },
+          baseFieldVersions: { deadline: 1 },
+        };
+        const updatedDeadline = await sync(
+          first,
+          [deadlinePatch],
+          datedBody.nextCursor,
+        );
+        expect(updatedDeadline.status).toBe(200);
+        const updatedDeadlineBody = syncRoundResponseSchema.parse(
+          await updatedDeadline.json(),
+        );
+        expect(updatedDeadlineBody.changes).toHaveLength(1);
+        expect(updatedDeadlineBody.changes[0]?.snapshot).toMatchObject({
+          value: {
+            task: { deadline: deadlinePatch.fields.deadline },
+            fieldVersions: { deadline: 2 },
+          },
+        });
+        const staleDeadline = {
+          ...deadlinePatch,
+          operationId: operationId("74"),
+          clientSequence: 22,
+          fields: { deadline: null },
+        };
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const conflict = await sync(second, [staleDeadline]);
+          expect(
+            syncRoundResponseSchema.parse(await conflict.json()).outcomes[0],
+          ).toMatchObject({
+            kind: "conflict",
+            code: "SYNC_FIELD_CONFLICT",
+            conflictingFields: ["deadline"],
+          });
+        }
 
         const titlePatch = {
           kind: "task.patch",

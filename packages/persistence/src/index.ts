@@ -21,6 +21,16 @@ interface InstallRow {
   readonly created_at: string;
 }
 
+export interface TaskDeadline {
+  readonly kind: "date" | "instant";
+  readonly value: string;
+}
+
+const deadlineColumns = (deadline: TaskDeadline | null) => ({
+  deadlineDate: deadline?.kind === "date" ? deadline.value : null,
+  deadlineAt: deadline?.kind === "instant" ? deadline.value : null,
+});
+
 interface TaskRow {
   readonly id: string;
   readonly owner_id: string;
@@ -1178,6 +1188,14 @@ const migrations: readonly Migration[] = [
       DELETE FROM sync_changes;
       UPDATE sync_owner_state
         SET epoch=lower(hex(randomblob(16))),next_sequence=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
+    `,
+  },
+  {
+    id: "0018_missing_deadline_field_versions",
+    sql: `
+      INSERT INTO task_field_versions (task_id,field,version)
+        SELECT id,'deadline',revision FROM tasks
+        WHERE id NOT IN (SELECT task_id FROM task_field_versions WHERE field='deadline');
     `,
   },
 ];
@@ -2582,7 +2600,11 @@ export class SuiteDatabase {
     requestHash: string,
     task: Omit<
       TaskRecord,
-      "ownerId" | "completedAt" | "deletedAt" | "plannedStart" | "estimateMinutes"
+      | "ownerId"
+      | "completedAt"
+      | "deletedAt"
+      | "plannedStart"
+      | "estimateMinutes"
     > &
       Partial<Pick<TaskRecord, "plannedStart" | "estimateMinutes">>,
   ): IdempotentTaskCreateResult {
@@ -2651,12 +2673,14 @@ export class SuiteDatabase {
         "estimateMinutes",
         "projectId",
         "tagIds",
+        "deadline",
       ])
         initialFieldVersion.run(created.id, field);
       const insertTag = this.#database.prepare(
         "INSERT INTO task_tags (task_id, tag_id) VALUES (?, ?)",
       );
-      for (const tagId of created.tagIds ?? []) insertTag.run(created.id, tagId);
+      for (const tagId of created.tagIds ?? [])
+        insertTag.run(created.id, tagId);
       this.#database
         .prepare(
           `INSERT INTO idempotency_records
@@ -2737,7 +2761,10 @@ export class SuiteDatabase {
       .prepare(
         "SELECT * FROM habits WHERE owner_id=? ORDER BY archived_at IS NOT NULL,created_at DESC,id DESC",
       )
-      .all(ownerId) as unknown as readonly Record<string, string | number | null>[];
+      .all(ownerId) as unknown as readonly Record<
+      string,
+      string | number | null
+    >[];
     return rows.map((row) => ({
       id: String(row.id),
       ownerId: String(row.owner_id),
@@ -2759,14 +2786,21 @@ export class SuiteDatabase {
           `INSERT INTO habit_occurrences (id,habit_id,period_key,completed_at,created_at)
            VALUES (?,?,?,?,?) ON CONFLICT(habit_id,period_key) DO NOTHING`,
         )
-        .run(record.id, record.habitId, record.periodKey, record.completedAt, record.createdAt)
-        .changes === 1
+        .run(
+          record.id,
+          record.habitId,
+          record.periodKey,
+          record.completedAt,
+          record.createdAt,
+        ).changes === 1
     );
   }
 
   listHabitOccurrences(habitId: string): readonly HabitOccurrenceRecord[] {
     const rows = this.#database
-      .prepare("SELECT * FROM habit_occurrences WHERE habit_id=? ORDER BY period_key,id")
+      .prepare(
+        "SELECT * FROM habit_occurrences WHERE habit_id=? ORDER BY period_key,id",
+      )
       .all(habitId) as unknown as readonly Record<string, string>[];
     return rows.map((row) => ({
       id: String(row.id),
@@ -2833,7 +2867,9 @@ export class SuiteDatabase {
         ...(patch.deadlineDate === undefined
           ? {}
           : { deadlineDate: patch.deadlineDate }),
-        ...(patch.deadlineAt === undefined ? {} : { deadlineAt: patch.deadlineAt }),
+        ...(patch.deadlineAt === undefined
+          ? {}
+          : { deadlineAt: patch.deadlineAt }),
       }),
       now,
     );
@@ -4701,11 +4737,16 @@ export class SuiteDatabase {
     readonly requestHash: string;
     readonly taskId: string;
     readonly baseVersions: Readonly<
-      Partial<Record<"title" | "notes" | "status" | "estimateMinutes", number>>
+      Partial<
+        Record<
+          "title" | "notes" | "status" | "estimateMinutes" | "deadline",
+          number
+        >
+      >
     >;
     readonly patch: Partial<
       Pick<TaskRecord, "title" | "notes" | "status" | "estimateMinutes">
-    >;
+    > & { readonly deadline?: TaskDeadline | null };
     readonly now: string;
   }): {
     readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
@@ -4728,6 +4769,16 @@ export class SuiteDatabase {
           previous.entity_id === null
             ? undefined
             : this.getTask(input.ownerId, String(previous.entity_id), true);
+        if (previous.state === "conflict") {
+          const fields = JSON.parse(
+            String(previous.conflict_fields ?? "[]"),
+          ) as string[];
+          return {
+            kind: "conflict",
+            fields,
+            ...(task === undefined ? {} : { task }),
+          };
+        }
         return { kind: "replayed", ...(task === undefined ? {} : { task }) };
       }
       const task = this.getTask(input.ownerId, input.taskId, true);
@@ -4771,6 +4822,9 @@ export class SuiteDatabase {
       const next = {
         ...task,
         ...input.patch,
+        ...(input.patch.deadline === undefined
+          ? {}
+          : deadlineColumns(input.patch.deadline)),
         ...(input.patch.status === undefined
           ? {}
           : {
@@ -4782,7 +4836,7 @@ export class SuiteDatabase {
       };
       this.#database
         .prepare(
-          "UPDATE tasks SET title=?,notes=?,status=?,completed_at=?,estimate_minutes=?,revision=?,updated_at=? WHERE owner_id=? AND id=?",
+          "UPDATE tasks SET title=?,notes=?,status=?,completed_at=?,estimate_minutes=?,deadline_date=?,deadline_at=?,revision=?,updated_at=? WHERE owner_id=? AND id=?",
         )
         .run(
           next.title,
@@ -4790,6 +4844,8 @@ export class SuiteDatabase {
           next.status,
           next.completedAt,
           next.estimateMinutes,
+          next.deadlineDate ?? null,
+          next.deadlineAt ?? null,
           next.revision,
           next.updatedAt,
           input.ownerId,
@@ -4894,7 +4950,7 @@ export class SuiteDatabase {
       | "plannedStart"
       | "projectId"
       | "tagIds"
-    >;
+    > & { readonly deadline?: TaskDeadline | null };
   }): {
     readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
     readonly task?: TaskRecord;
@@ -4938,6 +4994,7 @@ export class SuiteDatabase {
       }
       const task: TaskRecord = {
         ...input.task,
+        ...deadlineColumns(input.task.deadline ?? null),
         createdAt: input.now,
         updatedAt: input.now,
         ownerId: input.ownerId,
@@ -4949,7 +5006,7 @@ export class SuiteDatabase {
       };
       this.#database
         .prepare(
-          "INSERT INTO tasks (id,owner_id,title,notes,status,revision,created_at,updated_at,estimate_minutes) VALUES (?,?,?,?,?,?,?,?,?)",
+          "INSERT INTO tasks (id,owner_id,title,notes,status,revision,created_at,updated_at,estimate_minutes,deadline_date,deadline_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         )
         .run(
           task.id,
@@ -4961,6 +5018,8 @@ export class SuiteDatabase {
           input.now,
           task.updatedAt,
           task.estimateMinutes,
+          task.deadlineDate ?? null,
+          task.deadlineAt ?? null,
         );
       const field = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?)",
@@ -4972,6 +5031,7 @@ export class SuiteDatabase {
         "estimateMinutes",
         "projectId",
         "tagIds",
+        "deadline",
       ])
         field.run(task.id, name, task.revision);
       this.#database
@@ -5170,6 +5230,11 @@ export class SuiteDatabase {
         if (current[field] !== next[field])
           fieldVersions.run(taskId, field, next.revision);
       }
+      if (
+        current.deadlineDate !== next.deadlineDate ||
+        current.deadlineAt !== next.deadlineAt
+      )
+        fieldVersions.run(taskId, "deadline", next.revision);
       this.#appendSyncChangeInTransaction(
         ownerId,
         "task",
@@ -5443,6 +5508,7 @@ export class SuiteDatabase {
           "estimateMinutes",
           "projectId",
           "tagIds",
+          "deadline",
         ])
           insertField.run(taskId, field);
         for (const tagId of template.tagIds) insertTag.run(taskId, tagId);

@@ -1,5 +1,7 @@
 import {
   syncDiagnosticManifestSchema,
+  syncEntitySnapshotSchema,
+  syncOperationSchema,
   type ClientRegistrationResponse,
   type CoreTaskField,
   type SyncChange,
@@ -15,7 +17,7 @@ import {
 } from "@suite/contracts";
 
 const databaseName = "suite-local-v1";
-const databaseVersion = 1;
+const databaseVersion = 2;
 const metadataKey = "local-state";
 const planningPreferencesKey = "planning-preferences";
 const entityStore = "entities";
@@ -69,6 +71,8 @@ export interface LocalOutboxEntry {
 
 interface LocalMetadata extends LocalClientIdentity {
   readonly nextClientSequence: number;
+  readonly syncProtocolVersion: 2;
+  readonly resetRequired: boolean;
 }
 
 type RegisterClient = () => Promise<ClientRegistrationResponse>;
@@ -126,6 +130,7 @@ const taskFields: readonly CoreTaskField[] = [
   "estimateMinutes",
   "projectId",
   "tagIds",
+  "deadline",
 ];
 
 const initialFieldVersions = (): TaskFieldVersions => ({
@@ -135,6 +140,7 @@ const initialFieldVersions = (): TaskFieldVersions => ({
   estimateMinutes: 1,
   projectId: 1,
   tagIds: 1,
+  deadline: 1,
 });
 
 const isTaskSnapshot = (value: unknown): value is SyncTaskSnapshot =>
@@ -196,6 +202,8 @@ export class LocalStore {
       clientCredential: registered.clientCredential,
       cursor: registered.initialCursor,
       nextClientSequence: existing?.nextClientSequence ?? 1,
+      syncProtocolVersion: 2,
+      resetRequired: true,
     };
     const database = await this.#open();
     const transaction = database.transaction(metadataStore, "readwrite");
@@ -206,6 +214,22 @@ export class LocalStore {
 
   async clientIdentity(): Promise<LocalClientIdentity | undefined> {
     return this.#metadata();
+  }
+
+  async requiresSnapshot(): Promise<boolean> {
+    const metadata = await this.#metadata();
+    return metadata?.syncProtocolVersion !== 2 || metadata.resetRequired;
+  }
+
+  async markResetRequired(): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(metadataStore, "readwrite");
+    const metadata = transaction.objectStore(metadataStore);
+    const current = (await requestResult(metadata.get(metadataKey))) as
+      LocalMetadata | undefined;
+    if (current !== undefined)
+      metadata.put({ ...current, resetRequired: true }, metadataKey);
+    await transactionDone(transaction);
   }
 
   async savePlanningPreferences(
@@ -291,6 +315,7 @@ export class LocalStore {
     readonly title: string;
     readonly notes?: string;
     readonly estimateMinutes?: number | null;
+    readonly deadline?: Task["deadline"];
   }): Promise<SyncOperation> {
     const metadata = await this.#requiredMetadata();
     const taskId = this.#uuid();
@@ -307,6 +332,7 @@ export class LocalStore {
       deletedAt: null,
       plannedStart: null,
       estimateMinutes: input.estimateMinutes ?? null,
+      deadline: input.deadline ?? null,
       projectId: null,
       tagIds: [],
     };
@@ -316,6 +342,7 @@ export class LocalStore {
         title: task.title,
         notes: task.notes,
         estimateMinutes: task.estimateMinutes ?? null,
+        deadline: task.deadline ?? null,
       },
     });
     await this.#queueAndWriteTask(operation, {
@@ -332,17 +359,22 @@ export class LocalStore {
       readonly title?: string;
       readonly notes?: string;
       readonly estimateMinutes?: number | null;
+      readonly deadline?: Task["deadline"];
     },
   ): Promise<SyncOperation> {
     const snapshot = await this.#requiredTask(taskId);
     const changed = Object.keys(fields) as (
-      "title" | "notes" | "estimateMinutes"
+      "title" | "notes" | "estimateMinutes" | "deadline"
     )[];
     if (changed.length === 0)
       throw new Error("At least one task field is required");
     const metadata = await this.#requiredMetadata();
     const baseFieldVersions = Object.fromEntries(
-      changed.map((field) => [field, snapshot.fieldVersions[field]]),
+      changed.map((field) => [
+        field,
+        (snapshot.fieldVersions as Partial<TaskFieldVersions>)[field] ??
+          snapshot.task.revision,
+      ]),
     );
     const operation = await this.#operation(metadata, "task.patch", {
       taskId,
@@ -452,7 +484,10 @@ export class LocalStore {
       throw new Error("A registered client is required before applying sync");
     }
     metadataStoreHandle.put(
-      { ...metadata, cursor: response.nextCursor },
+      {
+        ...metadata,
+        cursor: response.nextCursor,
+      },
       metadataKey,
     );
     const diagnostics = transaction.objectStore(diagnosticStore);
@@ -466,6 +501,14 @@ export class LocalStore {
   }
 
   async replaceFromSnapshot(response: SyncSnapshotResponse): Promise<void> {
+    if (response.hasMore)
+      throw new Error(
+        "A complete snapshot is required before cache replacement",
+      );
+    // Validate every page before opening a write transaction. Aggregated snapshots
+    // may contain more than the wire page limit of 200 records.
+    for (const snapshot of response.snapshots)
+      syncEntitySnapshotSchema.parse(snapshot);
     const database = await this.#open();
     const transaction = database.transaction(
       [metadataStore, entityStore, outboxStore, conflictStore, diagnosticStore],
@@ -586,6 +629,9 @@ export class LocalStore {
                 ...(operation.fields.estimateMinutes === undefined
                   ? {}
                   : { estimateMinutes: operation.fields.estimateMinutes }),
+                ...(operation.fields.deadline === undefined
+                  ? {}
+                  : { deadline: operation.fields.deadline }),
                 updatedAt: now,
               }
             : operation.kind === "task.complete" ||
@@ -619,10 +665,14 @@ export class LocalStore {
     }
 
     metadataHandle.put(
-      { ...metadata, cursor: response.nextCursor },
+      {
+        ...metadata,
+        cursor: response.nextCursor,
+        syncProtocolVersion: 2,
+        resetRequired: false,
+      },
       metadataKey,
     );
-    transaction.objectStore(conflictStore).clear();
     const diagnostics = transaction.objectStore(diagnosticStore);
     diagnostics.clear();
     diagnostics.add({
@@ -696,10 +746,10 @@ export class LocalStore {
       kind,
       ...payload,
     };
-    const operation = {
+    const operation = syncOperationSchema.parse({
       ...operationBase,
       requestHash: await hash(operationBase),
-    } as SyncOperation;
+    });
     return operation;
   }
 
@@ -817,6 +867,18 @@ export class LocalStore {
         database.createObjectStore(conflictStore, { keyPath: "operationId" });
       if (!database.objectStoreNames.contains(diagnosticStore))
         database.createObjectStore(diagnosticStore, { autoIncrement: true });
+      const metadata = request.transaction?.objectStore(metadataStore);
+      if (metadata !== undefined) {
+        const previous = metadata.get(metadataKey);
+        previous.onsuccess = () => {
+          const value = previous.result as LocalMetadata | undefined;
+          if (value !== undefined)
+            metadata.put(
+              { ...value, syncProtocolVersion: 2, resetRequired: true },
+              metadataKey,
+            );
+        };
+      }
     };
     this.#database = await requestResult(request);
     return this.#database;

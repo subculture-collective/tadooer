@@ -37,12 +37,18 @@ const parseDate = (
   value: string,
   context: StructuredCaptureContext,
 ): CaptureDeadline => {
-  const [result, ...additional] = chrono.parse(value, {
-    instant: context.at,
-    timezone: context.timezoneOffsetMinutes,
-  }, { forwardDate: true });
+  const [result, ...additional] = chrono.parse(
+    value,
+    {
+      instant: context.at,
+      timezone: context.timezoneOffsetMinutes,
+    },
+    { forwardDate: true },
+  );
   if (result === undefined || additional.length > 0) {
-    throw new StructuredCaptureError(`Could not resolve time expression “${value}”`);
+    throw new StructuredCaptureError(
+      `Could not resolve time expression “${value}”`,
+    );
   }
   const hasExplicitTime =
     result.start.isCertain("hour") || result.start.isCertain("minute");
@@ -58,7 +64,9 @@ export const parseStructuredCapture = (
   const matches = [...input.matchAll(markerPattern)];
   const title = input.slice(0, matches[0]?.index ?? input.length).trim();
   if (title.length === 0) {
-    throw new StructuredCaptureError("A task title is required before capture markers");
+    throw new StructuredCaptureError(
+      "A task title is required before capture markers",
+    );
   }
 
   let projectName: string | undefined;
@@ -67,12 +75,14 @@ export const parseStructuredCapture = (
   let deadline: CaptureDeadline | undefined;
 
   for (const [index, match] of matches.entries()) {
-    const marker = match[2];
-    const start = (match.index ?? 0) + match[0].length;
+    const marker = match[2] ?? "";
+    const start = match.index + match[0].length;
     const end = matches[index + 1]?.index ?? input.length;
     const value = input.slice(start, end).trim();
     if (value.length === 0) {
-      throw new StructuredCaptureError(`Capture marker “${marker}” needs a value`);
+      throw new StructuredCaptureError(
+        `Capture marker “${marker}” needs a value`,
+      );
     }
     if (marker === "+") {
       if (projectName !== undefined) {
@@ -83,11 +93,15 @@ export const parseStructuredCapture = (
       tagNames.push(value);
     } else if (marker === "@") {
       if (plannedStart !== undefined) {
-        throw new StructuredCaptureError("Only one planned-time marker is allowed");
+        throw new StructuredCaptureError(
+          "Only one planned-time marker is allowed",
+        );
       }
       const parsed = parseDate(value, context);
       if (parsed.kind !== "instant") {
-        throw new StructuredCaptureError("A planned time must include a time of day");
+        throw new StructuredCaptureError(
+          "A planned time must include a time of day",
+        );
       }
       plannedStart = parsed.value;
     } else if (deadline !== undefined) {

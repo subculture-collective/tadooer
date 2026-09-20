@@ -7,6 +7,181 @@ import { withTemporaryDirectory } from "@suite/test-support";
 import { SuiteDatabase } from "./index.ts";
 
 describe("SuiteDatabase", () => {
+  it("repairs missing deadline versions without changing existing versions, tasks, or sync state", async () => {
+    await withTemporaryDirectory((directory) => {
+      const path = join(directory, "suite.sqlite");
+      let database = SuiteDatabase.open(path);
+      const now = "2026-09-19T12:00:00.000Z";
+      database.createOwner({
+        id: "owner",
+        username: "owner",
+        displayName: "Owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      for (const id of ["missing", "existing"]) {
+        database.createTaskIdempotently("owner", id, id, {
+          id,
+          title: id,
+          notes: "",
+          status: "open",
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+        database.patchTask("owner", id, 1, { title: `${id} updated` }, now);
+      }
+      const tasks = database.listTasks("owner");
+      const sync = database.getSyncState("owner");
+      database.close();
+      const legacy = new DatabaseSync(path);
+      legacy.exec(
+        "DELETE FROM schema_migrations WHERE id='0018_missing_deadline_field_versions'; DELETE FROM task_field_versions WHERE task_id='missing' AND field='deadline';",
+      );
+      legacy.close();
+      database = SuiteDatabase.open(path);
+      expect(database.getTaskFieldVersions("owner", "missing").deadline).toBe(
+        2,
+      );
+      expect(database.getTaskFieldVersions("owner", "existing").deadline).toBe(
+        1,
+      );
+      expect(database.listTasks("owner")).toEqual(tasks);
+      expect(database.getSyncState("owner")).toEqual(sync);
+      database.close();
+      database = SuiteDatabase.open(path);
+      expect(database.getTaskFieldVersions("owner", "missing").deadline).toBe(
+        2,
+      );
+      database.close();
+    });
+  });
+
+  it("syncs a deadline as one field across date, instant, clear, replay, and disjoint edits", async () => {
+    await withTemporaryDirectory((directory) => {
+      const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
+      const now = "2026-09-19T12:00:00.000Z";
+      database.createOwner({
+        id: "deadline-owner",
+        username: "deadline-owner",
+        displayName: "Owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      const base = {
+        ownerId: "deadline-owner",
+        clientId: "deadline-client",
+        now,
+      };
+      database.registerSyncClient({
+        id: base.clientId,
+        ownerId: base.ownerId,
+        label: "Browser",
+        credentialHash: "hash",
+        createdAt: now,
+        lastSeenAt: now,
+        revokedAt: null,
+      });
+      const created = database.applyTaskCreateSync({
+        ...base,
+        operationId: "create",
+        requestHash: "create-hash",
+        task: {
+          id: "deadline-task",
+          title: "Task",
+          notes: "",
+          status: "open",
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+          estimateMinutes: null,
+          deadline: { kind: "date", value: "2026-09-20" },
+        },
+      });
+      expect(created).toMatchObject({
+        kind: "applied",
+        task: { deadlineDate: "2026-09-20", deadlineAt: null },
+      });
+      database.patchTask(
+        base.ownerId,
+        "deadline-task",
+        1,
+        { title: "Renamed" },
+        now,
+      );
+      const patch = {
+        ...base,
+        operationId: "instant",
+        requestHash: "instant-hash",
+        taskId: "deadline-task",
+        baseVersions: { deadline: 1 },
+        patch: { deadline: { kind: "instant" as const, value: now } },
+      };
+      expect(database.applyTaskFieldSync(patch)).toMatchObject({
+        kind: "applied",
+        task: {
+          title: "Renamed",
+          revision: 3,
+          deadlineDate: null,
+          deadlineAt: now,
+        },
+      });
+      const cursor = database.getSyncState(base.ownerId);
+      expect(database.applyTaskFieldSync(patch)).toMatchObject({
+        kind: "replayed",
+        task: { deadlineAt: now },
+      });
+      expect(database.getSyncState(base.ownerId)).toEqual(cursor);
+      expect(
+        database.applyTaskFieldSync({
+          ...patch,
+          operationId: "stale",
+          patch: { deadline: null },
+        }),
+      ).toMatchObject({ kind: "conflict", fields: ["deadline"] });
+      expect(
+        database.applyTaskFieldSync({
+          ...patch,
+          operationId: "clear",
+          baseVersions: { deadline: 3 },
+          patch: { deadline: null },
+        }),
+      ).toMatchObject({
+        kind: "applied",
+        task: { deadlineDate: null, deadlineAt: null, revision: 4 },
+      });
+      database.patchTask(
+        base.ownerId,
+        "deadline-task",
+        4,
+        { deadlineDate: "2026-09-21", deadlineAt: null },
+        now,
+      );
+      expect(
+        database.getTaskFieldVersions(base.ownerId, "deadline-task").deadline,
+      ).toBe(5);
+      expect(
+        database.applyTaskFieldSync({
+          ...patch,
+          operationId: "online-conflict",
+          baseVersions: { deadline: 4 },
+        }),
+      ).toMatchObject({ kind: "conflict", fields: ["deadline"] });
+      expect(
+        database.applyTaskFieldSync({
+          ...patch,
+          ownerId: "other-owner",
+          operationId: "other",
+        }),
+      ).toMatchObject({ kind: "conflict" });
+      expect(database.fullSyncSnapshot(base.ownerId).tasks[0]).toMatchObject({
+        deadlineDate: "2026-09-21",
+        deadlineAt: null,
+      });
+      database.close();
+    });
+  });
+
   it("stores one immutable completion per habit period", async () => {
     await withTemporaryDirectory((directory) => {
       const database = SuiteDatabase.open(join(directory, "suite.sqlite"));
@@ -93,8 +268,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 17,
-        expectedMigrationCount: 17,
+        appliedMigrationCount: 18,
+        expectedMigrationCount: 18,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -113,8 +288,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(17);
-      expect(reopenedState.expectedMigrationCount).toBe(17);
+      expect(reopenedState.appliedMigrationCount).toBe(18);
+      expect(reopenedState.expectedMigrationCount).toBe(18);
     });
   });
 

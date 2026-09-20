@@ -225,6 +225,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                 estimateMinutes: versions.estimateMinutes ?? task.revision,
                 projectId: versions.projectId ?? task.revision,
                 tagIds: versions.tagIds ?? task.revision,
+                deadline: versions.deadline ?? task.revision,
               };
             })(),
             changeSequence: task.revision,
@@ -318,6 +319,30 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       );
       return true;
     }
+    const cursor =
+      parsed.data.cursor === null ? undefined : parseCursor(parsed.data.cursor);
+    const initialPage =
+      cursor === undefined && parsed.data.cursor !== null
+        ? {
+            resetRequired: true,
+            changes: [],
+            cursor: database.getSyncState(session.owner.id).cursor,
+          }
+        : database.pageSyncChanges(
+            session.owner.id,
+            cursor?.epoch ?? database.getSyncState(session.owner.id).epoch,
+            cursor?.sequence ?? 0,
+            parsed.data.pullLimit,
+          );
+    if (initialPage.resetRequired) {
+      sendJson(response, 409, {
+        code: "SYNC_CURSOR_EXPIRED",
+        message: "Sync cursor expired",
+        requestId: randomUUID(),
+        action: "replace_cache_from_snapshot",
+      });
+      return true;
+    }
     const outcomes = parsed.data.operations.map((operation) => {
       const now = new Date().toISOString();
       const result =
@@ -330,6 +355,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
               now,
               task: {
                 ...operation.task,
+                deadline: operation.task.deadline ?? null,
                 status: "open",
                 revision: 1,
                 createdAt: now,
@@ -409,6 +435,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                     "estimateMinutes",
                     "projectId",
                     "tagIds",
+                    "deadline",
                   ].includes(String(field)),
               )
             : undefined;
@@ -444,30 +471,12 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         changeSequence: database.getSyncState(session.owner.id).cursor,
       };
     });
-    const cursor =
-      parsed.data.cursor === null ? undefined : parseCursor(parsed.data.cursor);
-    const page =
-      cursor === undefined && parsed.data.cursor !== null
-        ? {
-            resetRequired: true,
-            changes: [],
-            cursor: database.getSyncState(session.owner.id).cursor,
-          }
-        : database.pageSyncChanges(
-            session.owner.id,
-            cursor?.epoch ?? database.getSyncState(session.owner.id).epoch,
-            cursor?.sequence ?? 0,
-            parsed.data.pullLimit,
-          );
-    if (page.resetRequired) {
-      sendJson(response, 409, {
-        code: "SYNC_CURSOR_EXPIRED",
-        message: "Sync cursor expired",
-        requestId: randomUUID(),
-        action: "replace_cache_from_snapshot",
-      });
-      return true;
-    }
+    const page = database.pageSyncChanges(
+      session.owner.id,
+      cursor?.epoch ?? database.getSyncState(session.owner.id).epoch,
+      cursor?.sequence ?? 0,
+      parsed.data.pullLimit,
+    );
     const body: SyncRoundResponse = {
       outcomes,
       changes: page.changes.map((change) => {
@@ -554,6 +563,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                         versions.estimateMinutes ?? task.revision,
                       projectId: versions.projectId ?? task.revision,
                       tagIds: versions.tagIds ?? task.revision,
+                      deadline: versions.deadline ?? task.revision,
                     },
                     changeSequence: change.sequence,
                   },

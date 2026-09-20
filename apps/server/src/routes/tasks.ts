@@ -107,7 +107,9 @@ export const handleTasks: RouteHandler = async (
         ...(parsed.data.projectId === undefined
           ? {}
           : { projectId: parsed.data.projectId }),
-        ...(parsed.data.tagIds === undefined ? {} : { tagIds: parsed.data.tagIds }),
+        ...(parsed.data.tagIds === undefined
+          ? {}
+          : { tagIds: parsed.data.tagIds }),
         ...(parsed.data.deadline?.kind === "date"
           ? { deadlineDate: parsed.data.deadline.value, deadlineAt: null }
           : parsed.data.deadline?.kind === "instant"
@@ -215,8 +217,14 @@ export const handleTasks: RouteHandler = async (
               : parsed.data.deadline === null
                 ? { deadlineDate: null, deadlineAt: null }
                 : parsed.data.deadline.kind === "date"
-                  ? { deadlineDate: parsed.data.deadline.value, deadlineAt: null }
-                  : { deadlineDate: null, deadlineAt: parsed.data.deadline.value }),
+                  ? {
+                      deadlineDate: parsed.data.deadline.value,
+                      deadlineAt: null,
+                    }
+                  : {
+                      deadlineDate: null,
+                      deadlineAt: parsed.data.deadline.value,
+                    }),
           },
           new Date().toISOString(),
         ),
