@@ -49,10 +49,10 @@
         "getPlanningPreferences",
         "updatePlanningPreferences"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": ["planning.day_plan", "planning.preferences"],
+      "status": "partial",
       "issue": 59,
-      "authority": "Owner timezone and preference revisions need explicit contracts before delegated writes.",
+      "authority": "Schedule read scope uses the same day-plan calculation and preferences as the browser; preference mutations remain #59.",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -64,10 +64,10 @@
         "getNotificationStatus",
         "sendTestNotification"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": ["notifications.preferences", "notifications.status"],
+      "status": "partial",
       "issue": 59,
-      "authority": "External notification delivery is a visible side effect; no secrets in status.",
+      "authority": "Dedicated notifications read scope exposes only redacted preferences/status; no delivery side effects. Mutations and test delivery remain #59.",
       "source": "apps/web/src/api.ts"
     },
     {

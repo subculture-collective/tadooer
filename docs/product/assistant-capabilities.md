@@ -32,8 +32,8 @@ explicit authority boundary rather than silently counting as covered.
 | Owner setup, browser sign-in/out and session recovery | owner-only | — | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Provision Baikal credentials, authorize Google, disconnect grants | owner-only | — | [#60](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/60) |
 | Connector health and explicit Google sync/resync | gap | — | [#60](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/60) |
-| Day plan and planning preferences | gap | — | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
-| Notification preferences, health and test delivery | gap | — | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
+| Day plan and planning preferences | partial | `planning.day_plan`, `planning.preferences` (reads) | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
+| Notification preferences, health and test delivery | partial | `notifications.preferences`, `notifications.status` (reads) | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
 | Active and deleted task inventory | covered | `tasks.list`, `tasks.deleted` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Plain or structured task capture | covered | `tasks.create` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Title, notes, dates and estimate edits | covered | `tasks.update` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |

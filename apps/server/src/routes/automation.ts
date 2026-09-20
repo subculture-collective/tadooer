@@ -1,3 +1,5 @@
+import { readDayPlan } from "../day-plan.ts";
+import { readNotificationStatus } from "../notification-status.ts";
 import { StructuredCaptureError } from "@suite/domain";
 import { createCapturedTask, resolveTaskCapture } from "../task-capture.ts";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
@@ -7,6 +9,7 @@ import type {
   AutomationTokenScope,
 } from "@suite/contracts";
 import {
+  dayPlanInputSchema,
   checklistResourceInputSchema,
   createAutomationTokenRequestSchema,
   automationPreviewCommandSchema,
@@ -298,7 +301,27 @@ export const handleAutomation: RouteHandler = async (
     const token = authenticateAutomation(request, response, database, scope);
     if (token === undefined) return true;
     let body: unknown;
-    if (resource === "habits.list")
+    if (resource === "planning.day_plan") {
+      const input = dayPlanInputSchema.safeParse({
+        at: url.searchParams.get("at"),
+      });
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_DAY_PLAN_TIME",
+          "Day-plan time must be an ISO timestamp",
+        );
+        return true;
+      }
+      body = await readDayPlan(ctx, token.ownerId, new Date(input.data.at));
+    } else if (resource === "planning.preferences")
+      body = database.getPlanningPreferences(token.ownerId);
+    else if (resource === "notifications.preferences")
+      body = database.getNotificationPreferences(token.ownerId);
+    else if (resource === "notifications.status")
+      body = readNotificationStatus(ctx, token.ownerId);
+    else if (resource === "habits.list")
       body = {
         habits: database.habits.list(token.ownerId),
         occurrences: database.habits.occurrences(token.ownerId),
