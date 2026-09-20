@@ -69,6 +69,16 @@ export class SqliteHabitStore {
     );
   }
 
+  hasOutcome(ownerId: string, actorId: string, operationId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM habit_operation_outcomes WHERE owner_id=? AND actor_id=? AND operation_id=?",
+        )
+        .get(ownerId, actorId, operationId) !== undefined
+    );
+  }
+
   apply(input: {
     readonly ownerId: string;
     readonly actorId: string;

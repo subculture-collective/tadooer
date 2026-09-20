@@ -156,13 +156,13 @@ changed by this increment.
 - Modify: `packages/contracts/src/index.ts`
 - Test: `apps/web/src/pages/HabitsPage.test.tsx`
 
-- [ ] Add Habits navigation, create form, archive control, completion action, and derived current/longest streak display.
-- [ ] Use server canonical occurrences and owner timezone; do not mutate a streak counter.
-- [ ] Add `habits:read`/`habits:write` automation scopes and preview/confirm operations.
-- [ ] Freeze resolved habit IDs and revisions in previews; revalidate at confirmation.
-- [ ] Test accessible controls, offline disabled state, replayed completion, and preview-confirm idempotency.
-- [ ] Run: `pnpm test -- apps/web/src/pages/HabitsPage.test.tsx apps/server/src/server.test.ts`
-- [ ] Commit: `feat: add habits workspace`
+- [x] Add Habits navigation, create form, archive control, completion action, and derived current/longest streak display.
+- [x] Use server canonical occurrences and owner timezone; do not mutate a streak counter.
+- [x] Add `habits:read`/`habits:write` automation scopes and preview/confirm operations.
+- [x] Freeze resolved habit IDs and revisions in previews; revalidate at confirmation.
+- [x] Test accessible controls, offline disabled state, replayed completion, and preview-confirm idempotency.
+- [x] Run: `pnpm test -- apps/web/src/pages/HabitsPage.test.tsx apps/server/src/server.test.ts`
+- [x] Commit: `feat: add habits workspace`
 
 ### Task 7: Final verification and review
 
@@ -195,3 +195,15 @@ migration 0019 stores those outcomes; all v2 responses explicitly carry version 
 Client habit queues preserve their operation IDs across restart/reset and cache
 only canonical occurrences. The complete repository gate passed: 180 tests in 54
 files plus format, lint, typechecks, and four builds. UI and automation remain next.
+
+### Habits workspace checkpoint — 2026-09-19
+
+Habits navigation now exposes daily, weekday, and interval creation, rename,
+archive/restore, canonical completion, and derived current/longest streaks. Offline
+controls are disabled; pending writes keep their original outbox operation and
+retry through Sync now. Automation exposes scoped habit reads and a habits.mutate
+preview/confirm command, freezes identity/revision, checks staleness, and replays
+canonical completion. Recovery also recognizes a habit mutation already committed
+before an interrupted automation confirmation. Full gate: 181 tests in 55 files,
+format/lint/types and all builds passed. Browser qualification follows structured
+capture so the integrated workspace can be exercised together.

@@ -1,3 +1,9 @@
+import {
+  type HabitListResponse,
+  type HabitCommand,
+  isHabitSyncOperation,
+} from "@suite/contracts";
+import { HabitsPage } from "./pages/HabitsPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
@@ -206,6 +212,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         (typeof window === "undefined" ? "/today" : window.location.pathname),
     ),
   );
+  const [habitLibrary, setHabitLibrary] = useState<HabitListResponse>({
+    habits: [],
+    occurrences: [],
+  });
+  const [habitPending, setHabitPending] = useState(false);
   const [taskQuery, setTaskQuery] = useState("");
   const [taskStatusFilter, setTaskStatusFilter] = useState<
     "all" | Task["status"]
@@ -293,6 +304,14 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       }
       let round = await engine.sync();
       while (round.hasMore) round = await engine.sync();
+      setHabitLibrary(await localStore.loadCachedHabits());
+      setHabitPending(
+        (await localStore.loadOutbox()).some(
+          ({ operation, state }) =>
+            isHabitSyncOperation(operation) &&
+            (state === "queued" || state === "sending"),
+        ),
+      );
       return {
         ...(await cachedTaskState()),
         client,
@@ -786,6 +805,25 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     } finally {
       setBusy(false);
     }
+  };
+
+  const submitHabit = async (command: HabitCommand): Promise<void> => {
+    if (state.kind !== "authenticated" || !navigator.onLine)
+      throw new Error("Connect to change habits");
+    const operation = await localStore.queueHabitCommand(command);
+    setHabitPending(true);
+    await syncAfterLocalMutation();
+    const entry = (await localStore.loadOutbox()).find(
+      (item) => item.operation.operationId === operation.operationId,
+    );
+    if (entry?.state !== "acknowledged")
+      throw new Error(
+        entry?.state === "conflicted"
+          ? "This habit changed elsewhere. Review the refreshed habit before trying again."
+          : entry?.state === "rejected"
+            ? "The habit change was rejected. Check the schedule and try again."
+            : "Saved for retry. Use Sync now to finish this change.",
+      );
   };
 
   const submitTask = async (
@@ -2130,6 +2168,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onChangeTaskStatus={changeTaskStatus}
           onRemoveTask={removeTask}
           onRecoverTask={recoverTask}
+        />
+      )}
+      {route === "habits" && (
+        <HabitsPage
+          library={habitLibrary}
+          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+          online={networkOnline}
+          pending={habitPending}
+          onCommand={submitHabit}
         />
       )}
       {route === "reuse" && (

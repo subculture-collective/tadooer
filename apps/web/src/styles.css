@@ -1266,3 +1266,45 @@ select:focus-visible {
     animation-duration: 0.01ms !important;
   }
 }
+
+.habit-create {
+  display: grid;
+  gap: 1rem;
+  margin-block: 1.25rem;
+  min-width: 0;
+}
+.habit-create label,
+.habit-card label {
+  display: grid;
+  gap: 0.4rem;
+}
+.habit-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.habit-weekdays label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.habit-weekdays input {
+  width: auto;
+}
+.habit-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 1rem;
+}
+.habit-card {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.habit-card form {
+  display: grid;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}

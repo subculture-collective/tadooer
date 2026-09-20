@@ -103,6 +103,7 @@ export const automationResourceEntries = automationCatalog.filter(
   (entry) => entry.kind === "resource",
 );
 export const requiredAutomationResources = [
+  "habits.list",
   "tasks.list",
   "schedule.get",
   "projects.list",

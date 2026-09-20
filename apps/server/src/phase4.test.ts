@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -206,6 +207,8 @@ describe("Phase 4 automation HTTP integration", () => {
               "schedule:write",
               "focus:read",
               "focus:write",
+              "habits:read",
+              "habits:write",
             ],
             expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           },
@@ -225,6 +228,98 @@ describe("Phase 4 automation HTTP integration", () => {
         expect(
           automationTaskResourceSchema.parse(await scopedRead.json()).tasks,
         ).toEqual([]);
+
+        const habitId = randomUUID();
+        const habitPreview = async (input: unknown) => {
+          const response = await automationRequest(
+            server,
+            credential.token,
+            "/api/automation/v1/previews",
+            "POST",
+            { operation: "habits.mutate", input },
+          );
+          expect(response.status).toBe(201);
+          return automationPreviewResponseSchema.parse(await response.json())
+            .preview;
+        };
+        const confirmHabit = (id: string, key: string) =>
+          automationRequest(
+            server,
+            credential.token,
+            `/api/automation/v1/previews/${id}/confirm`,
+            "POST",
+            { idempotencyKey: key },
+          );
+        const hp = await habitPreview({
+          kind: "habit.create",
+          habit: {
+            id: habitId,
+            title: "Walk daily",
+            cadence: { kind: "daily" },
+            startedOn: "2026-01-01",
+            timeZone: "UTC",
+          },
+        });
+        const beforeHabits = await automationRequest(
+          server,
+          credential.token,
+          "/api/automation/v1/resources/habits",
+          "GET",
+        );
+        expect(await beforeHabits.json()).toEqual({
+          habits: [],
+          occurrences: [],
+        });
+        expect((await confirmHabit(hp.id, "habit-create-001")).status).toBe(
+          200,
+        );
+        const completion = await habitPreview({
+          kind: "habit.complete",
+          habitId,
+          baseRevision: 1,
+          periodKey: "2026-01-01",
+        });
+        expect(completion.baseRevisions).toEqual([
+          { entityKind: "habit", entityId: habitId, revision: 1 },
+        ]);
+        const completed = automationConfirmationResponseSchema.parse(
+          await (
+            await confirmHabit(completion.id, "habit-complete-001")
+          ).json(),
+        );
+        const habitReplay = automationConfirmationResponseSchema.parse(
+          await (
+            await confirmHabit(completion.id, "habit-complete-001")
+          ).json(),
+        );
+        expect(habitReplay).toEqual({ ...completed, replayed: true });
+        const duplicate = await habitPreview({
+          kind: "habit.complete",
+          habitId,
+          baseRevision: 1,
+          periodKey: "2026-01-01",
+        });
+        const duplicateResult = automationConfirmationResponseSchema.parse(
+          await (await confirmHabit(duplicate.id, "habit-complete-002")).json(),
+        );
+        expect(duplicateResult.result).toEqual(completed.result);
+        const stale = await habitPreview({
+          kind: "habit.archive",
+          habitId,
+          baseRevision: 1,
+        });
+        const rename = await habitPreview({
+          kind: "habit.patch",
+          habitId,
+          baseRevision: 1,
+          fields: { title: "Walk outside" },
+        });
+        expect((await confirmHabit(rename.id, "habit-rename-001")).status).toBe(
+          200,
+        );
+        expect(
+          (await confirmHabit(stale.id, "habit-archive-stale")).status,
+        ).toBe(412);
 
         const previewInput = {
           operation: "tasks.create",

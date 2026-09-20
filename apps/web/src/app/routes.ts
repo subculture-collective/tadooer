@@ -4,6 +4,7 @@ export const workspaceRoutes = [
   "planner",
   "tasks",
   "reuse",
+  "habits",
   "connections",
   "settings",
 ] as const;

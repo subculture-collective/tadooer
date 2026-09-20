@@ -1319,6 +1319,8 @@ export const automationTokenScopeSchema = z.enum([
   "templates:write",
   "pools:read",
   "pools:write",
+  "habits:read",
+  "habits:write",
 ]);
 
 export const automationTokenSchema = z
@@ -1376,6 +1378,7 @@ export const automationOperationSchema = z.enum([
   "templates.instantiate",
   "template_sets.instantiate",
   "placeholders.resolve",
+  "habits.mutate",
 ]);
 
 const automationSessionCommandBaseSchema = z.object({
@@ -1398,8 +1401,11 @@ export const automationFocusCommandInputSchema = z.discriminatedUnion(
       automationSessionCommandBaseSchema.extend({
         operation: z.literal(
           operation as Exclude<
-            z.infer<typeof automationOperationSchema>,
-            "tasks.create" | "schedule.create_time_block" | "focus.start"
+            Extract<
+              z.infer<typeof automationOperationSchema>,
+              `focus.${string}`
+            >,
+            "focus.start"
           >,
         ),
       }),
@@ -1410,6 +1416,10 @@ export const automationFocusCommandInputSchema = z.discriminatedUnion(
 export const automationPreviewCommandSchema = z.discriminatedUnion(
   "operation",
   [
+    z.object({
+      operation: z.literal("habits.mutate"),
+      input: habitCommandSchema,
+    }),
     z.object({
       operation: z.literal("tasks.create"),
       input: createTaskRequestSchema,
@@ -1466,6 +1476,11 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
 const automationToolInputSchema = (
   operation: z.infer<typeof automationOperationSchema>,
 ): z.ZodType => {
+  if (operation === "habits.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: habitCommandSchema,
+    });
   if (operation === "tasks.create")
     return z.object({
       operation: z.literal("tasks.create"),
@@ -1518,6 +1533,7 @@ const automationToolInputSchema = (
 export const automationAffectedEntitySchema = z
   .object({
     entityKind: z.enum([
+      "habit",
       "task",
       "calendar",
       "active_session",
@@ -1535,6 +1551,7 @@ export const automationAffectedEntitySchema = z
 export const automationBaseRevisionSchema = z
   .object({
     entityKind: z.enum([
+      "habit",
       "task",
       "active_session",
       "template",
@@ -1574,7 +1591,16 @@ export const automationConfirmToolInputSchema = z
   .object({ previewId: entityIdSchema, idempotencyKey: idempotencyKeySchema })
   .strict();
 
+export const habitMutationResponseSchema = z
+  .object({
+    habit: habitSchema,
+    occurrence: habitOccurrenceSchema.nullable(),
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export const automationExecutionResultSchema = z.union([
+  habitMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
   taskMutationResponseSchema,
@@ -1626,6 +1652,17 @@ export interface AutomationCatalogEntry {
 // This is the only automation catalog. HTTP handlers and the stdio adapter must
 // import it instead of maintaining parallel operation lists.
 export const automationCatalog = [
+  {
+    id: "habits.list",
+    kind: "resource",
+    scopes: ["habits:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/habits",
+    mcpName: "suite.habits.list",
+    mcpUri: "suite://v1/habits",
+    inputSchema: z.object({}).strict(),
+    outputSchema: habitListResponseSchema,
+  },
   {
     id: "tasks.list",
     kind: "resource",
@@ -1718,15 +1755,17 @@ export const automationCatalog = [
     id,
     kind: "tool" as const,
     scopes: [
-      id === "tasks.create"
-        ? "tasks:write"
-        : id === "schedule.create_time_block"
-          ? "schedule:write"
-          : id.startsWith("templates.") || id.startsWith("template_sets.")
-            ? "templates:write"
-            : id === "placeholders.resolve"
-              ? "pools:write"
-              : "focus:write",
+      id === "habits.mutate"
+        ? "habits:write"
+        : id === "tasks.create"
+          ? "tasks:write"
+          : id === "schedule.create_time_block"
+            ? "schedule:write"
+            : id.startsWith("templates.") || id.startsWith("template_sets.")
+              ? "templates:write"
+              : id === "placeholders.resolve"
+                ? "pools:write"
+                : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -1743,6 +1782,7 @@ export const automationCatalog = [
       "focus:write",
       "templates:write",
       "pools:write",
+      "habits:write",
     ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",

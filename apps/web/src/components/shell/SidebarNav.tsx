@@ -1,5 +1,6 @@
 import {
   Cable,
+  Repeat,
   CalendarDays,
   Inbox,
   ListTodo,
@@ -16,6 +17,7 @@ const routeIcons: Readonly<Record<WorkspaceRoute, LucideIcon>> = {
   planner: CalendarDays,
   tasks: ListTodo,
   reuse: RotateCcw,
+  habits: Repeat,
   connections: Cable,
   settings: Settings,
 };

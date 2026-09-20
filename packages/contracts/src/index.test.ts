@@ -624,9 +624,14 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(21);
+    expect(automationCatalog).toHaveLength(23);
     expect(ids).toEqual(
-      expect.arrayContaining(["pools.list", "placeholders.resolve"]),
+      expect.arrayContaining([
+        "pools.list",
+        "placeholders.resolve",
+        "habits.list",
+        "habits.mutate",
+      ]),
     );
     for (const entry of automationCatalog) {
       expect(entry.apiPath).toMatch(/^\/api\/automation\/v1\//);

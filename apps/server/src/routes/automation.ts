@@ -272,7 +272,12 @@ export const handleAutomation: RouteHandler = async (
     const token = authenticateAutomation(request, response, database, scope);
     if (token === undefined) return true;
     let body: unknown;
-    if (resource === "tasks.list")
+    if (resource === "habits.list")
+      body = {
+        habits: database.habits.list(token.ownerId),
+        occurrences: database.habits.occurrences(token.ownerId),
+      };
+    else if (resource === "tasks.list")
       body = {
         tasks: database.listTasks(token.ownerId).map(taskResponse),
       };
@@ -453,7 +458,8 @@ export const handleAutomation: RouteHandler = async (
         | "project"
         | "choice_pool"
         | "planning_placeholder"
-        | "pool_item";
+        | "pool_item"
+        | "habit";
       entityId: string;
     }[] = [];
     const baseRevisions: {
@@ -465,11 +471,42 @@ export const handleAutomation: RouteHandler = async (
         | "project"
         | "choice_pool"
         | "planning_placeholder"
-        | "pool_item";
+        | "pool_item"
+        | "habit";
       entityId: string;
       revision: number;
     }[] = [];
-    if (command.operation === "schedule.create_time_block") {
+    if (command.operation === "habits.mutate") {
+      const input = command.input;
+      const habitId =
+        input.kind === "habit.create" ? input.habit.id : input.habitId;
+      const habit = database.habits
+        .list(token.ownerId)
+        .find(({ id }) => id === habitId);
+      if (
+        input.kind !== "habit.create" &&
+        habit?.revision !== input.baseRevision
+      ) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Habit changed or is unavailable",
+        );
+        return true;
+      }
+      if (input.kind === "habit.create" && habit !== undefined) {
+        sendError(response, 400, "INVALID_HABIT", "Habit already exists");
+        return true;
+      }
+      affected.push({ entityKind: "habit", entityId: habitId });
+      if (habit !== undefined)
+        baseRevisions.push({
+          entityKind: "habit",
+          entityId: habitId,
+          revision: habit.revision,
+        });
+    } else if (command.operation === "schedule.create_time_block") {
       const task = database.getTask(token.ownerId, command.input.taskId);
       if (task === undefined) {
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
@@ -864,8 +901,18 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
-    for (const [entityId, revision] of Object.entries(preview.baseRevisions)) {
+    const habitAlreadyApplied =
+      preview.operation === "habits.mutate" &&
+      database.habits.hasOutcome(
+        token.ownerId,
+        `automation:${token.id}`,
+        preview.id,
+      );
+    for (const [entityId, revision] of Object.entries(
+      habitAlreadyApplied ? {} : preview.baseRevisions,
+    )) {
       const current =
+        database.habits.list(token.ownerId).find(({ id }) => id === entityId) ??
         database.getTask(token.ownerId, entityId, true) ??
         database.getTaskTemplate(token.ownerId, entityId, true) ??
         database
@@ -907,7 +954,29 @@ export const handleAutomation: RouteHandler = async (
     const command = automationPreviewCommandSchema.parse(preview.input);
     const internalKey = `automation.${token.id}.${parsed.data.idempotencyKey}`;
     let result: AutomationConfirmationResponse["result"];
-    if (command.operation === "tasks.create") {
+    if (command.operation === "habits.mutate") {
+      const applied = database.habits.apply({
+        ownerId: token.ownerId,
+        actorId: `automation:${token.id}`,
+        operationId: preview.id,
+        command: command.input,
+        now: new Date().toISOString(),
+      });
+      if (applied.kind !== "applied" && applied.kind !== "replayed") {
+        sendError(
+          response,
+          applied.kind === "conflict" ? 412 : 400,
+          "INVALID_HABIT",
+          "Habit mutation cannot be applied",
+        );
+        return true;
+      }
+      result = {
+        habit: applied.habit,
+        occurrence: applied.occurrence,
+        replayed: applied.kind === "replayed",
+      };
+    } else if (command.operation === "tasks.create") {
       const now = new Date().toISOString();
       const created = database.createTaskIdempotently(
         token.ownerId,
