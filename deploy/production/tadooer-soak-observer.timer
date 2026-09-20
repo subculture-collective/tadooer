@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect Tadooer soak health and backup evidence every fifteen minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=tadooer-soak-observer.service
+
+[Install]
+WantedBy=timers.target

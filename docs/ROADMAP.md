@@ -4,6 +4,20 @@
 calendar-date commitment; movement between phases follows the feature
 prioritization policy and recorded exit evidence.
 
+## Current release checkpoint — September 20, 2026
+
+Production runs candidate `0.14.1-calendar`, application revision `a6983dc`,
+with 19 migrations. Deadline/offline sync, habits, structured capture, and
+calendar session recovery/full resync are deployed and verified. Google resync
+has been verified in the owner account; all 16 calendars are fresh. Monitoring
+now flows from the NUC agent to Dozor, with seven evaluated Tadooer alerts.
+
+The new seven-day soak is active from `2026-09-20T12:55:39.883Z`, pinned to
+`sha256:68438591510360e82e84d98e83d2825bce5134004a884a26e55c75403080548f`.
+No stable qualification is claimed. Older checkpoints below are historical.
+[Sprint 14](superpowers/plans/2026-09-20-sprint-14-daily-use-reliability.md)
+tracks the next development work separately from the frozen production candidate.
+
 ## Strategy
 
 Deliver contract-first vertical slices that are usable end to end. Every phase
@@ -505,10 +519,11 @@ recovery, authentication and non-duplication checks, and confirmation that
 Super Productivity stayed available. P0/P1 or any failed required observation
 blocks qualification.
 
-The production soak has not started because the clean production Suite still
-requires owner creation and explicit Baïkal/Google connection. No stable
-manifest or cutover recommendation is emitted before that setup and seven
-elapsed days. Super Productivity is not changed automatically.
+The current production soak started September 20, 2026 after owner/provider
+setup and deployment verification. The August ledger and a failed September
+collector run are preserved separately. Current-window health and backup
+evidence is collected automatically; explicit workflow observations and human
+sign-off remain required. Super Productivity is not changed automatically.
 
 ## Phase 13: Actionable Today Queue
 
