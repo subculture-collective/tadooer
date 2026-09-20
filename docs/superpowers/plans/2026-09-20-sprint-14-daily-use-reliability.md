@@ -50,7 +50,15 @@ produces an actionable state; successful writes remain visible when a later
 read fails; queued offline work survives sign-in. Focused failure tests plus
 server-backed browser checks and `pnpm verify` pass.
 
-### 2. Planner range and loading consistency — ready after item 1
+### 2. Planner range and loading consistency — implemented and verified
+
+September 20 implementation: server filters tasks by planned start in [from, to);
+latest navigation request wins, mismatched periods stay hidden, and load failures
+provide an explicit retry. Navigation uses local calendar days across DST.
+Full verification passed (195 tests, four builds); disposable browser verification
+delayed an older response behind a newer one, injected a 503, and recovered using
+Retry without displaying prior-period tasks. Source checks cover period endpoints,
+unscheduled/old tasks, and spring/fall DST.
 
 Production inspection showed an old planned task outside the selected week in
 Planned tasks. Audit `PlannerPage.tsx`, calendar-range helpers, `loadPlanner`,

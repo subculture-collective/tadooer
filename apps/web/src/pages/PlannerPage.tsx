@@ -11,6 +11,8 @@ interface PlannerPageProps {
   readonly planner: PlannerResponse | null;
   readonly timeZone: string;
   readonly busy: boolean;
+  readonly loading?: boolean;
+  readonly error?: string | null;
   readonly onLoadPlanner: (range: CalendarRange) => Promise<void>;
 }
 
@@ -34,6 +36,8 @@ export const PlannerPage = ({
   planner,
   timeZone,
   busy,
+  loading = false,
+  error = null,
   onLoadPlanner,
 }: PlannerPageProps) => {
   const [view, setView] = useState<CalendarView>("week");
@@ -42,6 +46,10 @@ export const PlannerPage = ({
     () => buildCalendarRange(view, anchor, timeZone),
     [anchor, timeZone, view],
   );
+  const matchesRange =
+    planner !== null &&
+    planner.window.from === range.from &&
+    planner.window.to === range.to;
 
   useEffect(() => {
     void onLoadPlanner(range);
@@ -67,7 +75,9 @@ export const PlannerPage = ({
             type="button"
             aria-label="Previous period"
             onClick={() =>
-              setAnchor((current) => shiftCalendarAnchor(view, current, -1))
+              setAnchor((current) =>
+                shiftCalendarAnchor(view, current, -1, timeZone),
+              )
             }
             disabled={busy}
           >
@@ -77,7 +87,9 @@ export const PlannerPage = ({
             type="button"
             aria-label="Next period"
             onClick={() =>
-              setAnchor((current) => shiftCalendarAnchor(view, current, 1))
+              setAnchor((current) =>
+                shiftCalendarAnchor(view, current, 1, timeZone),
+              )
             }
             disabled={busy}
           >
@@ -105,8 +117,28 @@ export const PlannerPage = ({
           {displayTime(range.from, timeZone)} —{" "}
           {displayTime(range.to, timeZone)}
         </p>
-        {planner === null ? (
-          <p className="muted">Loading calendar context…</p>
+        {loading && <p role="status">Loading the selected period…</p>}
+        {error !== null && (
+          <p role="alert">
+            Could not refresh this period: {error}.{" "}
+            {matchesRange
+              ? "Showing saved data for this period."
+              : "The previous period is hidden."}{" "}
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => void onLoadPlanner(range)}
+            >
+              Retry
+            </button>
+          </p>
+        )}
+        {planner === null || !matchesRange ? (
+          <p className="muted">
+            {error === null
+              ? "Waiting for calendar context for this period…"
+              : "No current data for the selected period."}
+          </p>
         ) : (
           <>
             <p className={`freshness freshness--${planner.freshness.state}`}>
