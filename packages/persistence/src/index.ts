@@ -3335,6 +3335,7 @@ export class SuiteDatabase {
     outcome: AutomationOutcomeRecord,
     audit: AutomationAuditRecord,
     now: string,
+    prepareResponse?: () => unknown,
   ): boolean {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3347,6 +3348,8 @@ export class SuiteDatabase {
         this.#database.exec("ROLLBACK;");
         return false;
       }
+      const response =
+        prepareResponse === undefined ? outcome.response : prepareResponse();
       this.#database
         .prepare(
           `INSERT INTO automation_operation_outcomes
@@ -3360,7 +3363,7 @@ export class SuiteDatabase {
           outcome.idempotencyKey,
           outcome.requestHash,
           outcome.previewId,
-          JSON.stringify(outcome.response),
+          JSON.stringify(response),
           outcome.createdAt,
         );
       this.#database
@@ -5236,7 +5239,7 @@ export class SuiteDatabase {
     update: (task: TaskRecord) => TaskRecord,
     now: string,
   ): ConditionalTaskResult {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    this.#database.exec("SAVEPOINT conditional_task;");
     try {
       const current = this.getTask(ownerId, taskId, true);
       if (
@@ -5245,11 +5248,11 @@ export class SuiteDatabase {
           ? current.deletedAt === null
           : current.deletedAt !== null)
       ) {
-        this.#database.exec("COMMIT;");
+        this.#database.exec("RELEASE SAVEPOINT conditional_task;");
         return { kind: "not-found" };
       }
       if (current.revision !== expectedRevision) {
-        this.#database.exec("COMMIT;");
+        this.#database.exec("RELEASE SAVEPOINT conditional_task;");
         return { kind: "precondition-failed", task: current };
       }
       const next = {
@@ -5306,10 +5309,12 @@ export class SuiteDatabase {
         next.revision,
         now,
       );
-      this.#database.exec("COMMIT;");
+      this.#database.exec("RELEASE SAVEPOINT conditional_task;");
       return { kind: "updated", task: next };
     } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT conditional_task; RELEASE SAVEPOINT conditional_task;",
+      );
       throw error;
     }
   }

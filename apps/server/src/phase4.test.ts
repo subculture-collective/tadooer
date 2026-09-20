@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -596,6 +597,196 @@ describe("Phase 4 automation HTTP integration", () => {
         expect(
           taskListResponseSchema.parse(await browserTasks.json()).tasks,
         ).toHaveLength(2);
+      } finally {
+        await server.close();
+      }
+    });
+  });
+});
+
+describe("Assistant task changes", () => {
+  it("previews edits and completion, rejects stale revisions, and replays exactly after restart", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      await mkdir(join(directory, "web"));
+      const config = configuration(directory);
+      let server = await startSuiteServer(config);
+      try {
+        const owner = {
+          username: "editor",
+          displayName: "Editor",
+          password: "a disposable sufficiently long password",
+        };
+        await fetch(`${server.baseUrl}/api/setup`, {
+          method: "POST",
+          headers: {
+            Origin: server.baseUrl,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(owner),
+        });
+        const login = await fetch(`${server.baseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: {
+            Origin: server.baseUrl,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(owner),
+        });
+        const cookie = login.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+        const { csrfToken } = (await login.json()) as { csrfToken: string };
+        const issue = async (scopes: string[]) => {
+          const response = await browserRequest(
+            server,
+            cookie,
+            csrfToken,
+            "/api/automation/tokens",
+            "POST",
+            {
+              label: "Task editor",
+              scopes,
+              expiresAt: new Date(Date.now() + 3600000).toISOString(),
+            },
+          );
+          expect(response.status).toBe(201);
+          return createAutomationTokenResponseSchema.parse(
+            await response.json(),
+          ).token;
+        };
+        const token = await issue(["tasks:read", "tasks:write"]);
+        const readOnly = await issue(["tasks:read"]);
+        const request = (path: string, body: unknown, credential = token) =>
+          automationRequest(server, credential, path, "POST", body);
+        const preview = async (operation: string, input: unknown) => {
+          const response = await request("/api/automation/v1/previews", {
+            operation,
+            input,
+          });
+          expect(response.status).toBe(201);
+          return automationPreviewResponseSchema.parse(await response.json())
+            .preview;
+        };
+        const confirm = (id: string, key = randomUUID()) =>
+          request(`/api/automation/v1/previews/${id}/confirm`, {
+            idempotencyKey: key,
+          });
+        const createdPreview = await preview("tasks.create", {
+          title: "Before",
+          notes: "Keep notes",
+        });
+        const created = automationConfirmationResponseSchema.parse(
+          await (await confirm(createdPreview.id)).json(),
+        );
+        if (!("task" in created.result)) throw new Error("Expected a task");
+        const original = created.result.task;
+        const editInput = {
+          taskId: original.id,
+          expectedRevision: original.revision,
+          patch: {
+            title: "After",
+            deadline: { kind: "date", value: "2026-10-01" },
+            plannedStart: "2026-09-22T14:00:00.000Z",
+            estimateMinutes: 45,
+          },
+        };
+        expect(
+          (
+            await request(
+              "/api/automation/v1/previews",
+              { operation: "tasks.update", input: editInput },
+              readOnly,
+            )
+          ).status,
+        ).toBe(403);
+        const edit = await preview("tasks.update", editInput);
+        const stale = await preview("tasks.set_completed", {
+          taskId: original.id,
+          expectedRevision: original.revision,
+          completed: true,
+        });
+        const before = automationTaskResourceSchema.parse(
+          await (
+            await automationRequest(
+              server,
+              token,
+              "/api/automation/v1/resources/tasks",
+              "GET",
+            )
+          ).json(),
+        );
+        expect(before.tasks[0]?.title).toBe("Before");
+        const fault = new DatabaseSync(config.databasePath);
+        fault.exec(`CREATE TRIGGER fail_assistant_receipt BEFORE INSERT ON automation_audit_log
+          WHEN NEW.phase='execute' AND NEW.operation='tasks.update'
+          BEGIN SELECT RAISE(ABORT, 'synthetic receipt failure'); END;`);
+        expect((await confirm(edit.id)).status).toBe(500);
+        const afterFailure = automationTaskResourceSchema.parse(
+          await (
+            await automationRequest(
+              server,
+              token,
+              "/api/automation/v1/resources/tasks",
+              "GET",
+            )
+          ).json(),
+        );
+        expect(afterFailure.tasks).toEqual(before.tasks);
+        expect(
+          (
+            fault
+              .prepare("SELECT consumed_at FROM automation_previews WHERE id=?")
+              .get(edit.id) as { consumed_at: unknown }
+          ).consumed_at,
+        ).toBeNull();
+        fault.exec("DROP TRIGGER fail_assistant_receipt");
+        fault.close();
+        const key = randomUUID();
+        const edited = automationConfirmationResponseSchema.parse(
+          await (await confirm(edit.id, key)).json(),
+        );
+        expect(edited.result).toMatchObject({
+          task: {
+            title: "After",
+            notes: "Keep notes",
+            revision: original.revision + 1,
+            estimateMinutes: 45,
+            deadline: { kind: "date", value: "2026-10-01" },
+          },
+        });
+        expect((await confirm(stale.id)).status).toBe(412);
+        await server.close();
+        server = await startSuiteServer(config);
+        const replay = automationConfirmationResponseSchema.parse(
+          await (await confirm(edit.id, key)).json(),
+        );
+        expect(replay).toEqual({ ...edited, replayed: true });
+        const completed = await preview("tasks.set_completed", {
+          taskId: original.id,
+          expectedRevision: original.revision + 1,
+          completed: true,
+        });
+        expect(
+          automationConfirmationResponseSchema.parse(
+            await (await confirm(completed.id)).json(),
+          ).result,
+        ).toMatchObject({
+          task: { status: "completed", revision: original.revision + 2 },
+        });
+        const reopened = await preview("tasks.set_completed", {
+          taskId: original.id,
+          expectedRevision: original.revision + 2,
+          completed: false,
+        });
+        expect(
+          automationConfirmationResponseSchema.parse(
+            await (await confirm(reopened.id)).json(),
+          ).result,
+        ).toMatchObject({
+          task: {
+            status: "open",
+            revision: original.revision + 3,
+            completedAt: null,
+          },
+        });
       } finally {
         await server.close();
       }

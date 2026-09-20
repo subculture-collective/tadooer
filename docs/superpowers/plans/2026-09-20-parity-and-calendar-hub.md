@@ -98,3 +98,32 @@ are not evidence that the user's real history was migrated.
   task reads, schedule query, preview with no write, confirmation plus replay
   producing exactly one task, and clean stderr. Full client installation,
   subscription runtime, and hosted OAuth remain unqualified.
+- Assistant task editing/completion/reopening now use scoped preview tools and
+  expected revisions. Their task mutation, sync change, preview consumption,
+  audit record, and replay response share one transaction. An injected audit
+  failure rolls everything back; stale confirmation is rejected and a successful
+  response replays exactly after restart. Full verification: 205 tests and four
+  builds. The installed stdio runtime now exposes 25 tools; edit and completion
+  were also exercised against the disposable server.
+- Client qualification blocker: the installed Claude 2.1.278 runtime reports
+  `loggedIn: false`, `authMethod: none`. Its plugin validator passes. The default
+  `~/.local/bin/claude` wrapper recursively resolves itself through mise; the
+  installed binary at `~/.local/share/mise/installs/claude/2.1.278/claude` works.
+  No desktop wrapper changes were made. Codex reports ChatGPT authentication,
+  but that status alone is not a completed client workflow. Sign into Claude
+  through its own terminal/browser flow before qualifying subscription-backed
+  reads and writes. Never provide the credentials in chat.
+
+## Resume after client sign-in
+
+1. Rebuild/install the runtime into a disposable prefix and provision a short-lived
+   scoped token on the disposable Tadooer instance.
+2. Load the plugin in each target client and exercise read, preview, rejected
+   approval, confirmed task edit, completion, and replay. Validate the skill's
+   consequential-action confirmation behavior separately from server contracts.
+3. Continue the remaining capability matrix and durable import/parity slices;
+   these remain implementation work, not delivered features. Qualify a real
+   Super Productivity export before migration. Google write consent and isolated
+   mapped calendars are required before live two-way bridge qualification.
+4. Keep production on its pinned soak candidate. This work has not been deployed
+   or used as evidence to qualify that candidate.

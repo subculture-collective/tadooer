@@ -1374,6 +1374,8 @@ export const automationTokenListResponseSchema = z
 
 export const automationOperationSchema = z.enum([
   "tasks.create",
+  "tasks.update",
+  "tasks.set_completed",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1420,12 +1422,35 @@ export const automationFocusCommandInputSchema = z.discriminatedUnion(
   ],
 );
 
+export const automationTaskUpdateInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    patch: taskPatchRequestSchema,
+  })
+  .strict();
+export const automationTaskCompletionInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    completed: z.boolean(),
+  })
+  .strict();
+
 export const automationPreviewCommandSchema = z.discriminatedUnion(
   "operation",
   [
     z.object({
       operation: z.literal("habits.mutate"),
       input: habitCommandSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.update"),
+      input: automationTaskUpdateInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.set_completed"),
+      input: automationTaskCompletionInputSchema,
     }),
     z.object({
       operation: z.literal("tasks.create"),
@@ -1487,6 +1512,16 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: habitCommandSchema,
+    });
+  if (operation === "tasks.update")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskUpdateInputSchema,
+    });
+  if (operation === "tasks.set_completed")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskCompletionInputSchema,
     });
   if (operation === "tasks.create")
     return z.object({
@@ -1764,7 +1799,7 @@ export const automationCatalog = [
     scopes: [
       id === "habits.mutate"
         ? "habits:write"
-        : id === "tasks.create"
+        : id.startsWith("tasks.")
           ? "tasks:write"
           : id === "schedule.create_time_block"
             ? "schedule:write"
