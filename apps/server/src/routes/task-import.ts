@@ -1,5 +1,8 @@
 import { prepareSuperProductivityImport } from "@suite/import-export";
-import { superProductivityPreviewSchema } from "@suite/contracts";
+import {
+  superProductivityPreviewSchema,
+  superProductivityImportLimits as limits,
+} from "@suite/contracts";
 import { readJson, sameOrigin, sendError, sendJson } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 
@@ -35,8 +38,8 @@ export const handleTaskImport: RouteHandler = async (
     sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
     return true;
   }
-  const input = await readJson(request);
   try {
+    const input = await readJson(request, limits.bytes);
     const { report, records } = prepareSuperProductivityImport(
       JSON.stringify(input),
     );
@@ -73,12 +76,14 @@ export const handleTaskImport: RouteHandler = async (
         );
       }
     }
-  } catch {
+  } catch (error: unknown) {
+    const tooLarge =
+      error instanceof Error && error.message === "BODY_TOO_LARGE";
     sendError(
       response,
-      400,
-      "INVALID_IMPORT",
-      "Expected a valid Super Productivity JSON export, up to 4 MiB. No data was changed.",
+      tooLarge ? 413 : 400,
+      tooLarge ? "BODY_TOO_LARGE" : "INVALID_IMPORT",
+      `Expected a valid Super Productivity JSON export, up to ${limits.label} and ${String(limits.records)} records. No data was changed.`,
     );
   }
   return true;

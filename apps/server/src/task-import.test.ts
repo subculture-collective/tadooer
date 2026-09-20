@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { withTemporaryDirectory } from "@suite/test-support";
 import {
+  superProductivityImportLimits as limits,
   sessionResponseSchema,
   superProductivityPreviewSchema,
   taskListResponseSchema,
@@ -84,6 +85,41 @@ it("requires owner authentication and CSRF for a non-mutating task import previe
           })
         ).status,
       ).toBe(400);
+      // Import routes accept exports beyond the ordinary API budget, but
+      // malformed/oversized preview and apply requests must not mutate state.
+      const large = JSON.stringify({
+        ...(JSON.parse(body) as Record<string, unknown>),
+        ignored: "x".repeat(6 * 1024 * 1024),
+      });
+      expect(
+        (
+          await fetch(path, {
+            method: "POST",
+            headers: authenticated,
+            body: large,
+          })
+        ).status,
+      ).toBe(200);
+      for (const suffix of ["preview", "apply"]) {
+        const rejected = await fetch(path.replace(/preview$/, suffix), {
+          method: "POST",
+          headers: authenticated,
+          body: body + " ".repeat(limits.bytes),
+        });
+        expect(rejected.status).toBe(413);
+        expect(await rejected.json()).toMatchObject({
+          code: "BODY_TOO_LARGE",
+        });
+        expect(
+          (
+            await fetch(path.replace(/preview$/, suffix), {
+              method: "POST",
+              headers: authenticated,
+              body: "{",
+            })
+          ).status,
+        ).toBe(400);
+      }
       const tasks = await fetch(`${server.baseUrl}/api/tasks`, {
         headers: { Cookie: cookie },
       });
