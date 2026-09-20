@@ -43,3 +43,5 @@ Load the copied plugin through your client's local plugin support. For Claude Co
 | Embedded subscription-backed assistant runtime                               | Not yet implemented                               |
 
 The shared server contract generates the MCP catalog. The workflow skill requires concrete review for bulk and destructive actions. Server authorization, revision checks, expiring previews, and idempotent confirmation remain authoritative; skill instructions alone are not a security boundary. No model API key or paid inference fallback is configured by this package.
+
+The [capability inventory](../../docs/product/assistant-capabilities.md) maps every browser API action to catalog support, missing operations, or an explicit authority boundary. Its drift checks require updates when APIs or catalog entries change.
