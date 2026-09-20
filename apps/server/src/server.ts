@@ -92,6 +92,35 @@ export const startSuiteServer = async (
       preferences,
       now,
     });
+    // Explicit test requests are independent of scheduled reminder preferences and
+    // calendar availability. Claim before sending; ambiguous delivery is terminal.
+    if (notificationPublisher !== undefined) {
+      for (const due of database.listDueNotificationTests(ownerId, now)) {
+        const claimed = database.claimNotificationDelivery(due.id, now);
+        if (claimed === undefined) continue;
+        const result = await notificationPublisher.publish({
+          message: "Tadooer test reminder",
+          click: `${config.publicOrigin ?? "http://localhost"}/settings`,
+        });
+        if (result.kind === "delivered")
+          database.finishNotificationDelivery(due.id, "delivered", null, now);
+        else if (result.kind === "retry" && claimed.attemptCount < 5) {
+          const minutes = [1, 5, 15, 30][claimed.attemptCount - 1] ?? 30;
+          database.deferNotificationDelivery(
+            due.id,
+            new Date(Date.parse(now) + minutes * 60_000).toISOString(),
+            result.errorCode,
+            now,
+          );
+        } else
+          database.finishNotificationDelivery(
+            due.id,
+            "failed",
+            result.kind === "retry" ? "NTFY_RETRY_EXHAUSTED" : result.errorCode,
+            now,
+          );
+      }
+    }
     if (!preferences.enabled || notificationPublisher === undefined) return;
     const planning = database.getPlanningPreferences(ownerId);
     const window = zonedDayWindow(now, planning.timeZone);
@@ -113,7 +142,8 @@ export const startSuiteServer = async (
         ? active.taskId
         : null;
     for (const due of database.listDueNotificationDeliveries(now)) {
-      if (due.taskId === null || due.kind === "test") continue;
+      if (due.ownerId !== ownerId || due.taskId === null || due.kind === "test")
+        continue;
       const claimed = database.claimNotificationDelivery(due.id, now);
       if (claimed === undefined) continue;
       const task = database.getTask(ownerId, due.taskId);

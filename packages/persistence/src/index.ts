@@ -2247,6 +2247,39 @@ export class SuiteDatabase {
     return Number(result.changes);
   }
 
+  queueNotificationTest(
+    ownerId: string,
+    id: string,
+    now: string,
+  ): NotificationDeliveryRecord {
+    this.#database
+      .prepare(
+        `INSERT INTO notification_deliveries
+       (id,owner_id,task_id,occurrence_start,reminder_kind,task_revision,state,due_at,next_attempt_at,attempt_count,error_code,created_at,updated_at,delivered_at)
+       VALUES (?,?,NULL,?,'test',NULL,'pending',?,?,0,NULL,?,?,NULL)`,
+      )
+      .run(id, ownerId, now, now, now, now, now);
+    const delivery = this.getNotificationDelivery(id);
+    if (delivery === undefined) throw new Error("Queued notification is missing");
+    return delivery;
+  }
+
+  listDueNotificationTests(
+    ownerId: string,
+    now: string,
+  ): readonly NotificationDeliveryRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM notification_deliveries WHERE owner_id=? AND reminder_kind='test'
+       AND state IN ('pending','retry') AND next_attempt_at<=? ORDER BY next_attempt_at,id LIMIT 25`,
+      )
+      .all(ownerId, now) as unknown as readonly Record<
+      string,
+      string | number | null
+    >[];
+    return rows.map((row) => this.#notificationDeliveryFromRow(row));
+  }
+
   recordNotificationTest(
     ownerId: string,
     delivered: boolean,
