@@ -43,18 +43,14 @@ export const handleChoicePools: RouteHandler = async (
     return false;
 
   // Handle template pool slots specially (under /api/templates/ but pool-related)
-  const slotMatch =
-    /^\/api\/templates\/([0-9a-f-]{36})\/pool-slots$/.exec(url.pathname);
+  const slotMatch = /^\/api\/templates\/([0-9a-f-]{36})\/pool-slots$/.exec(
+    url.pathname,
+  );
   if (method === "POST" && slotMatch !== null) {
     const mutating = true;
     const session = auth.authenticate(request, mutating);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -138,14 +134,10 @@ export const handleChoicePools: RouteHandler = async (
     sendJson(response, 200, {
       pools: pools.map(choicePoolResponse),
       items: pools.flatMap((pool) =>
-        database
-          .listChoicePoolItems(pool.id, true)
-          .map(choicePoolItemResponse),
+        database.listChoicePoolItems(pool.id, true).map(choicePoolItemResponse),
       ),
       history: pools.flatMap((pool) =>
-        database
-          .listChoicePoolHistory(pool.id)
-          .map(choicePoolHistoryResponse),
+        database.listChoicePoolHistory(pool.id).map(choicePoolHistoryResponse),
       ),
       placeholders: database
         .listPlanningPlaceholders(session.owner.id)
@@ -160,10 +152,7 @@ export const handleChoicePools: RouteHandler = async (
     const parsed = createChoicePoolRequestSchema.safeParse(
       await readJson(request),
     );
-    if (
-      !parsed.success ||
-      parsed.data.items.length < parsed.data.pickCount
-    ) {
+    if (!parsed.success || parsed.data.items.length < parsed.data.pickCount) {
       sendError(
         response,
         400,
@@ -200,9 +189,7 @@ export const handleChoicePools: RouteHandler = async (
     );
     sendJson(response, 201, {
       pool: choicePoolResponse(pool),
-      items: database
-        .listChoicePoolItems(pool.id)
-        .map(choicePoolItemResponse),
+      items: database.listChoicePoolItems(pool.id).map(choicePoolItemResponse),
     });
     return true;
   }
@@ -308,10 +295,7 @@ export const handleChoicePools: RouteHandler = async (
       );
       return true;
     }
-    const pool = database.getChoicePool(
-      session.owner.id,
-      parsed.data.poolId,
-    );
+    const pool = database.getChoicePool(session.owner.id, parsed.data.poolId);
     if (pool === undefined) {
       sendError(
         response,
@@ -353,16 +337,13 @@ export const handleChoicePools: RouteHandler = async (
   // ── GET /api/placeholders/:id/suggestion ────────────────────────────────
 
   const suggestionMatch =
-    /^\/api\/placeholders\/([0-9a-f-]{36})\/suggestion$/.exec(
-      url.pathname,
-    );
+    /^\/api\/placeholders\/([0-9a-f-]{36})\/suggestion$/.exec(url.pathname);
   if (method === "GET" && suggestionMatch !== null) {
     const placeholder = database.getPlanningPlaceholder(
       session.owner.id,
       suggestionMatch[1] ?? "",
     );
-    const logicalTime =
-      url.searchParams.get("at") ?? new Date().toISOString();
+    const logicalTime = url.searchParams.get("at") ?? new Date().toISOString();
     if (
       placeholder === undefined ||
       !Number.isFinite(Date.parse(logicalTime))

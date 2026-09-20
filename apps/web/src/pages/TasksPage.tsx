@@ -1,3 +1,4 @@
+import { DeadlineFields } from "../components/tasks/DeadlineFields.tsx";
 import type { SyntheticEvent } from "react";
 import type {
   BaikalStatusResponse,
@@ -7,6 +8,7 @@ import type {
   Task,
 } from "@suite/contracts";
 import { Field } from "../field.tsx";
+import { TimeBlockForm } from "../time-block-form.tsx";
 
 export interface TasksPageProps {
   readonly tasks: readonly Task[];
@@ -22,10 +24,9 @@ export interface TasksPageProps {
   readonly taskProjectFilter: string;
   readonly taskTagFilter: string;
   readonly busy: boolean;
+  readonly calendarActionsAvailable: boolean;
   readonly onTaskQueryChange: (query: string) => void;
-  readonly onTaskStatusFilterChange: (
-    filter: "all" | Task["status"],
-  ) => void;
+  readonly onTaskStatusFilterChange: (filter: "all" | Task["status"]) => void;
   readonly onTaskProjectFilterChange: (projectId: string) => void;
   readonly onTaskTagFilterChange: (tagId: string) => void;
   readonly onSubmitOrganization: (
@@ -57,7 +58,7 @@ export interface TasksPageProps {
   readonly onChangeTaskStatus: (
     task: Task,
     action: "complete" | "reopen",
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   readonly onRemoveTask: (task: Task) => Promise<void>;
   readonly onRecoverTask: (task: Task) => Promise<void>;
 }
@@ -75,6 +76,7 @@ export const TasksPage = ({
   taskProjectFilter,
   taskTagFilter,
   busy,
+  calendarActionsAvailable,
   onTaskQueryChange,
   onTaskStatusFilterChange,
   onTaskProjectFilterChange,
@@ -97,38 +99,24 @@ export const TasksPage = ({
         <h3 id="organization-title">Projects and tags</h3>
         <div className="task-actions">
           <form
-            onSubmit={(event) =>
-              void onSubmitOrganization(event, "project")
-            }
+            onSubmit={(event) => void onSubmitOrganization(event, "project")}
           >
-            <Field
-              label="New project"
-              name="title"
-              autoComplete="off"
-            />
+            <Field label="New project" name="title" autoComplete="off" />
             <button disabled={busy}>Add project</button>
           </form>
-          <form
-            onSubmit={(event) => void onSubmitOrganization(event, "tag")}
-          >
+          <form onSubmit={(event) => void onSubmitOrganization(event, "tag")}>
             <Field label="New tag" name="title" autoComplete="off" />
             <button disabled={busy}>Add tag</button>
           </form>
         </div>
       </section>
-      <div
-        className="task-filter-bar"
-        role="search"
-        aria-label="Filter tasks"
-      >
+      <div className="task-filter-bar" role="search" aria-label="Filter tasks">
         <label>
           Search
           <input
             type="search"
             value={taskQuery}
-            onChange={(event) =>
-              onTaskQueryChange(event.currentTarget.value)
-            }
+            onChange={(event) => onTaskQueryChange(event.currentTarget.value)}
           />
         </label>
         <label>
@@ -187,15 +175,13 @@ export const TasksPage = ({
           {visibleTasks.map((task) => (
             <li
               key={task.id}
-              className={
-                task.status === "completed" ? "task--completed" : ""
-              }
+              className={task.status === "completed" ? "task--completed" : ""}
             >
               <div className="task-heading">
                 <strong>{task.title}</strong>
                 <small>
-                  {task.status === "completed" ? "Completed" : "Open"}{" "}
-                  · Revision {task.revision}
+                  {task.status === "completed" ? "Completed" : "Open"} ·
+                  Revision {task.revision}
                 </small>
               </div>
               {task.notes !== "" && <span>{task.notes}</span>}
@@ -206,8 +192,7 @@ export const TasksPage = ({
               )}
               {task.plannedStart != null && (
                 <p className="planned-time">
-                  Planned{" "}
-                  {new Date(task.plannedStart).toLocaleString()} ·{" "}
+                  Planned {new Date(task.plannedStart).toLocaleString()} ·{" "}
                   {task.estimateMinutes} minutes
                 </p>
               )}
@@ -238,82 +223,30 @@ export const TasksPage = ({
                     defaultValue={task.estimateMinutes ?? ""}
                   />
                 </label>
+                <DeadlineFields
+                  key={JSON.stringify(task.deadline)}
+                  deadline={task.deadline}
+                />
                 <button disabled={busy}>Save task</button>
               </form>
-              <form
-                className="time-block"
-                onSubmit={(event) =>
-                  void onSubmitTimeBlock(event, task)
-                }
-              >
-                <label className="field">
-                  <span>Calendar</span>
-                  <select name="calendarId" required>
-                    {baikalCalendars
-                      .filter((calendar) => calendar.supportsEvents)
-                      .map((calendar) => (
-                        <option key={calendar.id} value={calendar.id}>
-                          {calendar.displayName}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Start</span>
-                  <input
-                    name="startsAt"
-                    type="datetime-local"
-                    required
-                  />
-                </label>
-                <label className="field">
-                  <span>Minutes</span>
-                  <input
-                    name="durationMinutes"
-                    type="number"
-                    min="1"
-                    max="720"
-                    defaultValue={task.estimateMinutes ?? 30}
-                    required
-                  />
-                </label>
-                <p className="hint">
-                  Manual placement stays explicit even when times
-                  overlap.
-                </p>
-                <button disabled={busy}>
-                  {task.plannedStart == null
-                    ? "Place in calendar"
-                    : "Move calendar block"}
-                </button>
-                {task.plannedStart != null && (
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    disabled={busy}
-                    onClick={() => void onRemoveTimeBlock(task)}
-                  >
-                    Remove calendar block
-                  </button>
-                )}
-              </form>
+              <TimeBlockForm
+                task={task}
+                calendars={baikalCalendars}
+                busy={busy}
+                available={calendarActionsAvailable}
+                onSubmit={onSubmitTimeBlock}
+                onRemove={onRemoveTimeBlock}
+              />
               <form
                 className="task-edit"
-                onSubmit={(event) =>
-                  void onSubmitTaskOrganization(event, task)
-                }
+                onSubmit={(event) => void onSubmitTaskOrganization(event, task)}
               >
                 <label className="field">
                   <span>Project</span>
-                  <select
-                    name="projectId"
-                    defaultValue={task.projectId ?? ""}
-                  >
+                  <select name="projectId" defaultValue={task.projectId ?? ""}>
                     <option value="">No project</option>
                     {projects
-                      .filter(
-                        (project) => project.archivedAt === null,
-                      )
+                      .filter((project) => project.archivedAt === null)
                       .map((project) => (
                         <option key={project.id} value={project.id}>
                           {project.title}
@@ -331,9 +264,7 @@ export const TasksPage = ({
                           type="checkbox"
                           name="tagIds"
                           value={tag.id}
-                          defaultChecked={task.tagIds?.includes(
-                            tag.id,
-                          )}
+                          defaultChecked={task.tagIds?.includes(tag.id)}
                         />
                         {tag.displayName}
                       </label>
@@ -344,33 +275,27 @@ export const TasksPage = ({
               <div>
                 <strong>Checklist</strong>
                 <ul>
-                  {(subtasks[task.id] ?? []).map((subtask) => (
+                  {(subtasks[task.id] ?? []).map((subtask, index, items) => (
                     <li key={subtask.id}>
                       {subtask.completed ? "✓" : "○"} {subtask.title}
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() =>
-                          void onChangeSubtask(subtask, "toggle")
-                        }
+                        onClick={() => void onChangeSubtask(subtask, "toggle")}
                       >
                         {subtask.completed ? "Reopen" : "Complete"}
                       </button>
                       <button
                         type="button"
-                        disabled={busy || subtask.position === 0}
-                        onClick={() =>
-                          void onChangeSubtask(subtask, "up")
-                        }
+                        disabled={busy || index === 0}
+                        onClick={() => void onChangeSubtask(subtask, "up")}
                       >
                         Move up
                       </button>
                       <button
                         type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          void onChangeSubtask(subtask, "down")
-                        }
+                        disabled={busy || index === items.length - 1}
+                        onClick={() => void onChangeSubtask(subtask, "down")}
                       >
                         Move down
                       </button>
@@ -378,20 +303,14 @@ export const TasksPage = ({
                         type="button"
                         className="btn-danger"
                         disabled={busy}
-                        onClick={() =>
-                          void onChangeSubtask(subtask, "delete")
-                        }
+                        onClick={() => void onChangeSubtask(subtask, "delete")}
                       >
                         Delete item
                       </button>
                     </li>
                   ))}
                 </ul>
-                <form
-                  onSubmit={(event) =>
-                    void onSubmitSubtask(event, task)
-                  }
-                >
+                <form onSubmit={(event) => void onSubmitSubtask(event, task)}>
                   <Field
                     label="New checklist item"
                     name="title"
@@ -414,15 +333,11 @@ export const TasksPage = ({
                   onClick={() =>
                     void onChangeTaskStatus(
                       task,
-                      task.status === "completed"
-                        ? "reopen"
-                        : "complete",
+                      task.status === "completed" ? "reopen" : "complete",
                     )
                   }
                 >
-                  {task.status === "completed"
-                    ? "Reopen"
-                    : "Complete"}
+                  {task.status === "completed" ? "Reopen" : "Complete"}
                 </button>
                 <button
                   className="btn-danger"
@@ -438,9 +353,7 @@ export const TasksPage = ({
         </ul>
       )}
       <details className="recovery">
-        <summary>
-          Recently deleted tasks ({recovery.length})
-        </summary>
+        <summary>Recently deleted tasks ({recovery.length})</summary>
         {recovery.length === 0 ? (
           <p className="muted">Nothing needs recovery.</p>
         ) : (

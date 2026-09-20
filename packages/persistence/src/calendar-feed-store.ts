@@ -1,5 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { CalendarFeedCapabilityRecord, CalendarProviderRecord, OwnedCalendarRecord } from "./index.js";
+import type {
+  CalendarFeedCapabilityRecord,
+  CalendarProviderRecord,
+  OwnedCalendarRecord,
+} from "./index.js";
 import type { CalendarFeedStore } from "./stores.js";
 
 export class SqliteCalendarFeedStore implements CalendarFeedStore {
@@ -44,9 +48,7 @@ export class SqliteCalendarFeedStore implements CalendarFeedStore {
   // listCalendarFeeds
   // -----------------------------------------------------------------------
 
-  listCalendarFeeds(
-    ownerId: string,
-  ): readonly CalendarFeedCapabilityRecord[] {
+  listCalendarFeeds(ownerId: string): readonly CalendarFeedCapabilityRecord[] {
     return (
       this.db
         .prepare(
@@ -60,11 +62,7 @@ export class SqliteCalendarFeedStore implements CalendarFeedStore {
   // revokeCalendarFeed
   // -----------------------------------------------------------------------
 
-  revokeCalendarFeed(
-    ownerId: string,
-    feedId: string,
-    now: string,
-  ): boolean {
+  revokeCalendarFeed(ownerId: string, feedId: string, now: string): boolean {
     return (
       this.db
         .prepare(

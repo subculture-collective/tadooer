@@ -32,7 +32,11 @@ import type {
   ActiveSessionIntervalRecord,
   ActiveSessionEventRecord,
 } from "@suite/persistence";
-import { suggestChoicePool, type ActiveSession, type SessionClock } from "@suite/domain";
+import {
+  suggestChoicePool,
+  type ActiveSession,
+  type SessionClock,
+} from "@suite/domain";
 import type { AuthService } from "../auth.ts";
 import type { ServerConfig } from "../config.ts";
 import type { BaikalConnectorService, ConnectorFailure } from "../connector.ts";
@@ -99,6 +103,7 @@ export const automationResourceEntries = automationCatalog.filter(
   (entry) => entry.kind === "resource",
 );
 export const requiredAutomationResources = [
+  "habits.list",
   "tasks.list",
   "schedule.get",
   "projects.list",
@@ -131,6 +136,12 @@ export const taskResponse = (task: TaskRecord): Task => ({
   completedAt: task.completedAt,
   deletedAt: task.deletedAt,
   plannedStart: task.plannedStart,
+  deadline:
+    task.deadlineDate == null
+      ? task.deadlineAt == null
+        ? null
+        : { kind: "instant", value: task.deadlineAt }
+      : { kind: "date", value: task.deadlineDate },
   estimateMinutes: task.estimateMinutes,
   projectId: task.projectId ?? null,
   tagIds: [...(task.tagIds ?? [])],
@@ -194,8 +205,12 @@ export const templateSetResponse = (set: {
   readonly archivedAt: string | null;
 }): TemplateSet => ({ ...set });
 
-export const choicePoolResponse = (pool: ChoicePool): ChoicePool => ({ ...pool });
-export const choicePoolItemResponse = (item: ChoicePoolItem): ChoicePoolItem => ({
+export const choicePoolResponse = (pool: ChoicePool): ChoicePool => ({
+  ...pool,
+});
+export const choicePoolItemResponse = (
+  item: ChoicePoolItem,
+): ChoicePoolItem => ({
   ...item,
 });
 export const choicePoolHistoryResponse = (
@@ -411,12 +426,7 @@ export const activeFromPersistence = (
     startedAt: interval.startedAt,
     endedAt: interval.endedAt,
     closedBy: interval.closedBy as
-      | "pause"
-      | "break"
-      | "complete"
-      | "takeover"
-      | "expiry"
-      | null,
+      "pause" | "break" | "complete" | "takeover" | "expiry" | null,
   })),
   events: events.map((event) => ({
     revision: event.revision,

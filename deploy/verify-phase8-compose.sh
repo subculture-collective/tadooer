@@ -16,10 +16,10 @@ build="$(curl --fail --silent "$base_url/api/build")"
 test "$(node -e 'console.log(JSON.parse(process.argv[1]).version)' "$build")" = "$version"
 test "$(node -e 'console.log(JSON.parse(process.argv[1]).revision)' "$build")" = "$revision"
 ready="$(curl --fail --silent "$base_url/api/ready")"
-test "$(node -e 'console.log(JSON.parse(process.argv[1]).migrationCount)' "$ready")" = "14"
+test "$(node -e 'console.log(JSON.parse(process.argv[1]).migrationCount)' "$ready")" = "19"
 metrics="$(curl --fail --silent "$base_url/api/metrics")"
 printf '%s\n' "$metrics" | grep -q '^suite_uptime_seconds '
-printf '%s\n' "$metrics" | grep -q '^suite_database_migrations 14$'
+printf '%s\n' "$metrics" | grep -q '^suite_database_migrations 19$'
 task_state="$(node deploy/phase0-task-smoke.mjs create "$base_url")"
 compose restart suite >/dev/null
 compose up -d --wait suite >/dev/null

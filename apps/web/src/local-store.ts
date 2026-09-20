@@ -1,5 +1,11 @@
 import {
   syncDiagnosticManifestSchema,
+  isHabitSyncOperation,
+  habitListResponseSchema,
+  type HabitCommand,
+  type HabitListResponse,
+  syncEntitySnapshotSchema,
+  syncOperationSchema,
   type ClientRegistrationResponse,
   type CoreTaskField,
   type SyncChange,
@@ -10,11 +16,14 @@ import {
   type SyncTaskSnapshot,
   type Task,
   type TaskFieldVersions,
+  type PlanningPreferences,
+  planningPreferencesSchema,
 } from "@suite/contracts";
 
 const databaseName = "suite-local-v1";
-const databaseVersion = 1;
+const databaseVersion = 2;
 const metadataKey = "local-state";
+const planningPreferencesKey = "planning-preferences";
 const entityStore = "entities";
 const metadataStore = "metadata";
 const outboxStore = "outbox";
@@ -22,6 +31,8 @@ const conflictStore = "conflicts";
 const diagnosticStore = "diagnostics";
 
 export type CachedEntityKind =
+  | "habit"
+  | "habit_occurrence"
   | "task"
   | "project"
   | "tag"
@@ -66,6 +77,8 @@ export interface LocalOutboxEntry {
 
 interface LocalMetadata extends LocalClientIdentity {
   readonly nextClientSequence: number;
+  readonly syncProtocolVersion: 2;
+  readonly resetRequired: boolean;
 }
 
 type RegisterClient = () => Promise<ClientRegistrationResponse>;
@@ -123,6 +136,7 @@ const taskFields: readonly CoreTaskField[] = [
   "estimateMinutes",
   "projectId",
   "tagIds",
+  "deadline",
 ];
 
 const initialFieldVersions = (): TaskFieldVersions => ({
@@ -132,6 +146,7 @@ const initialFieldVersions = (): TaskFieldVersions => ({
   estimateMinutes: 1,
   projectId: 1,
   tagIds: 1,
+  deadline: 1,
 });
 
 const isTaskSnapshot = (value: unknown): value is SyncTaskSnapshot =>
@@ -193,6 +208,8 @@ export class LocalStore {
       clientCredential: registered.clientCredential,
       cursor: registered.initialCursor,
       nextClientSequence: existing?.nextClientSequence ?? 1,
+      syncProtocolVersion: 2,
+      resetRequired: true,
     };
     const database = await this.#open();
     const transaction = database.transaction(metadataStore, "readwrite");
@@ -205,6 +222,48 @@ export class LocalStore {
     return this.#metadata();
   }
 
+  async requiresSnapshot(): Promise<boolean> {
+    const metadata = await this.#metadata();
+    return metadata?.syncProtocolVersion !== 2 || metadata.resetRequired;
+  }
+
+  async markResetRequired(): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(metadataStore, "readwrite");
+    const metadata = transaction.objectStore(metadataStore);
+    const current = (await requestResult(metadata.get(metadataKey))) as
+      LocalMetadata | undefined;
+    if (current !== undefined)
+      metadata.put({ ...current, resetRequired: true }, metadataKey);
+    await transactionDone(transaction);
+  }
+
+  async savePlanningPreferences(
+    preferences: PlanningPreferences,
+  ): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(metadataStore, "readwrite");
+    transaction
+      .objectStore(metadataStore)
+      .put(
+        planningPreferencesSchema.parse(preferences),
+        planningPreferencesKey,
+      );
+    await transactionDone(transaction);
+  }
+
+  async loadPlanningPreferences(): Promise<PlanningPreferences | undefined> {
+    const database = await this.#open();
+    const transaction = database.transaction(metadataStore, "readonly");
+    const value: unknown = await requestResult<unknown>(
+      transaction.objectStore(metadataStore).get(planningPreferencesKey),
+    );
+    await transactionDone(transaction);
+    return value === undefined
+      ? undefined
+      : planningPreferencesSchema.parse(value);
+  }
+
   async loadCachedEntities(): Promise<readonly CachedEntity[]> {
     const database = await this.#open();
     const transaction = database.transaction(entityStore, "readonly");
@@ -213,6 +272,48 @@ export class LocalStore {
     )) as CachedEntity[];
     await transactionDone(transaction);
     return records;
+  }
+
+  async loadCachedHabits(): Promise<HabitListResponse> {
+    const records = await this.loadCachedEntities();
+    return habitListResponseSchema.parse({
+      habits: records
+        .filter(({ entityKind }) => entityKind === "habit")
+        .map(({ value }) => value),
+      occurrences: records
+        .filter(({ entityKind }) => entityKind === "habit_occurrence")
+        .map(({ value }) => value),
+    });
+  }
+
+  async queueHabitCommand(command: HabitCommand): Promise<SyncOperation> {
+    const { kind, ...payload } = command;
+    const operation = await this.#operation(
+      await this.#requiredMetadata(),
+      kind,
+      payload,
+    );
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [metadataStore, outboxStore],
+      "readwrite",
+    );
+    const metadataHandle = transaction.objectStore(metadataStore);
+    const metadata = (await requestResult(
+      metadataHandle.get(metadataKey),
+    )) as LocalMetadata;
+    metadataHandle.put(
+      { ...metadata, nextClientSequence: metadata.nextClientSequence + 1 },
+      metadataKey,
+    );
+    transaction.objectStore(outboxStore).put({
+      operation,
+      state: "queued",
+      safeErrorCode: null,
+    } satisfies LocalOutboxEntry);
+    await transactionDone(transaction);
+    // Habit completion is visible only after the server supplies the canonical occurrence.
+    return operation;
   }
 
   async loadCachedTasks(
@@ -248,6 +349,31 @@ export class LocalStore {
     );
   }
 
+  /** Cache an acknowledged initial create without moving the sync cursor. */
+  async cacheCreatedTask(task: Task): Promise<void> {
+    if (task.revision !== 1) return;
+    const database = await this.#open();
+    const transaction = database.transaction(entityStore, "readwrite");
+    const entities = transaction.objectStore(entityStore);
+    const existing: unknown = await requestResult(
+      entities.get(entityKey("task", task.id)),
+    );
+    // A replay must not overwrite subsequent offline edits or a newer snapshot.
+    if (existing === undefined)
+      entities.put({
+        entityKind: "task",
+        id: task.id,
+        revision: 1,
+        changeSequence: 0,
+        value: {
+          task,
+          fieldVersions: initialFieldVersions(),
+          changeSequence: 0,
+        },
+      } satisfies CachedEntity);
+    await transactionDone(transaction);
+  }
+
   async loadConflicts(): Promise<readonly LocalConflict[]> {
     const database = await this.#open();
     const transaction = database.transaction(conflictStore, "readonly");
@@ -262,6 +388,7 @@ export class LocalStore {
     readonly title: string;
     readonly notes?: string;
     readonly estimateMinutes?: number | null;
+    readonly deadline?: Task["deadline"];
   }): Promise<SyncOperation> {
     const metadata = await this.#requiredMetadata();
     const taskId = this.#uuid();
@@ -278,6 +405,7 @@ export class LocalStore {
       deletedAt: null,
       plannedStart: null,
       estimateMinutes: input.estimateMinutes ?? null,
+      deadline: input.deadline ?? null,
       projectId: null,
       tagIds: [],
     };
@@ -287,6 +415,7 @@ export class LocalStore {
         title: task.title,
         notes: task.notes,
         estimateMinutes: task.estimateMinutes ?? null,
+        deadline: task.deadline ?? null,
       },
     });
     await this.#queueAndWriteTask(operation, {
@@ -303,17 +432,22 @@ export class LocalStore {
       readonly title?: string;
       readonly notes?: string;
       readonly estimateMinutes?: number | null;
+      readonly deadline?: Task["deadline"];
     },
   ): Promise<SyncOperation> {
     const snapshot = await this.#requiredTask(taskId);
     const changed = Object.keys(fields) as (
-      "title" | "notes" | "estimateMinutes"
+      "title" | "notes" | "estimateMinutes" | "deadline"
     )[];
     if (changed.length === 0)
       throw new Error("At least one task field is required");
     const metadata = await this.#requiredMetadata();
     const baseFieldVersions = Object.fromEntries(
-      changed.map((field) => [field, snapshot.fieldVersions[field]]),
+      changed.map((field) => [
+        field,
+        (snapshot.fieldVersions as Partial<TaskFieldVersions>)[field] ??
+          snapshot.task.revision,
+      ]),
     );
     const operation = await this.#operation(metadata, "task.patch", {
       taskId,
@@ -423,7 +557,10 @@ export class LocalStore {
       throw new Error("A registered client is required before applying sync");
     }
     metadataStoreHandle.put(
-      { ...metadata, cursor: response.nextCursor },
+      {
+        ...metadata,
+        cursor: response.nextCursor,
+      },
       metadataKey,
     );
     const diagnostics = transaction.objectStore(diagnosticStore);
@@ -437,6 +574,14 @@ export class LocalStore {
   }
 
   async replaceFromSnapshot(response: SyncSnapshotResponse): Promise<void> {
+    if (response.hasMore)
+      throw new Error(
+        "A complete snapshot is required before cache replacement",
+      );
+    // Validate every page before opening a write transaction. Aggregated snapshots
+    // may contain more than the wire page limit of 200 records.
+    for (const snapshot of response.snapshots)
+      syncEntitySnapshotSchema.parse(snapshot);
     const database = await this.#open();
     const transaction = database.transaction(
       [metadataStore, entityStore, outboxStore, conflictStore, diagnosticStore],
@@ -509,7 +654,7 @@ export class LocalStore {
           entityKind: snapshot.entityKind,
           id: value.id,
           value,
-          revision: value.revision,
+          revision: "revision" in value ? value.revision : 1,
           changeSequence: 0,
         } satisfies CachedEntity);
       }
@@ -521,6 +666,7 @@ export class LocalStore {
         (left, right) =>
           left.operation.clientSequence - right.operation.clientSequence,
       )) {
+      if (isHabitSyncOperation(operation)) continue;
       const taskId =
         operation.kind === "task.create" ? operation.task.id : operation.taskId;
       let snapshot = taskSnapshots.get(taskId);
@@ -557,6 +703,9 @@ export class LocalStore {
                 ...(operation.fields.estimateMinutes === undefined
                   ? {}
                   : { estimateMinutes: operation.fields.estimateMinutes }),
+                ...(operation.fields.deadline === undefined
+                  ? {}
+                  : { deadline: operation.fields.deadline }),
                 updatedAt: now,
               }
             : operation.kind === "task.complete" ||
@@ -590,10 +739,14 @@ export class LocalStore {
     }
 
     metadataHandle.put(
-      { ...metadata, cursor: response.nextCursor },
+      {
+        ...metadata,
+        cursor: response.nextCursor,
+        syncProtocolVersion: 2,
+        resetRequired: false,
+      },
       metadataKey,
     );
-    transaction.objectStore(conflictStore).clear();
     const diagnostics = transaction.objectStore(diagnosticStore);
     diagnostics.clear();
     diagnostics.add({
@@ -620,7 +773,13 @@ export class LocalStore {
       conflictCount: conflicts.length,
       operations: outbox.map(({ operation, state, safeErrorCode }) => ({
         operationId: operation.operationId,
-        entityId: "taskId" in operation ? operation.taskId : operation.task.id,
+        entityId: isHabitSyncOperation(operation)
+          ? operation.kind === "habit.create"
+            ? operation.habit.id
+            : operation.habitId
+          : "taskId" in operation
+            ? operation.taskId
+            : operation.task.id,
         kind: operation.kind,
         state,
         requestHash: operation.requestHash,
@@ -667,11 +826,14 @@ export class LocalStore {
       kind,
       ...payload,
     };
-    const operation = {
+    const normalized = syncOperationSchema.parse({
       ...operationBase,
-      requestHash: await hash(operationBase),
-    } as SyncOperation;
-    return operation;
+      requestHash: "a".repeat(43),
+    });
+    const payloadToHash = Object.fromEntries(
+      Object.entries(normalized).filter(([key]) => key !== "requestHash"),
+    );
+    return { ...normalized, requestHash: await hash(payloadToHash) };
   }
 
   async #queueAndWriteTask(
@@ -788,6 +950,18 @@ export class LocalStore {
         database.createObjectStore(conflictStore, { keyPath: "operationId" });
       if (!database.objectStoreNames.contains(diagnosticStore))
         database.createObjectStore(diagnosticStore, { autoIncrement: true });
+      const metadata = request.transaction?.objectStore(metadataStore);
+      if (metadata !== undefined) {
+        const previous = metadata.get(metadataKey);
+        previous.onsuccess = () => {
+          const value = previous.result as LocalMetadata | undefined;
+          if (value !== undefined)
+            metadata.put(
+              { ...value, syncProtocolVersion: 2, resetRequired: true },
+              metadataKey,
+            );
+        };
+      }
     };
     this.#database = await requestResult(request);
     return this.#database;

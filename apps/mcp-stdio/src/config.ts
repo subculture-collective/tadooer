@@ -1,5 +1,6 @@
 import { readFile, lstat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { homedir } from "node:os";
 import { automationTokenSecretSchema } from "@suite/contracts";
 
 export interface AdapterConfig {
@@ -81,8 +82,38 @@ const readOwnerOnlyToken = async (tokenFile: string): Promise<string> => {
 
 export const loadConfig = async (
   arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
 ): Promise<AdapterConfig> => {
-  const parsed = parseConfigArguments(arguments_);
+  let effectiveArguments = arguments_;
+  if (arguments_.length === 0) {
+    const configPath =
+      environment.TADOOER_MCP_CONFIG ??
+      resolve(
+        environment.XDG_CONFIG_HOME ?? resolve(homedir(), ".config"),
+        "tadooer",
+        "mcp.json",
+      );
+    const config: unknown = JSON.parse(await readFile(configPath, "utf8"));
+    if (
+      typeof config !== "object" ||
+      config === null ||
+      !("url" in config) ||
+      !("tokenFile" in config) ||
+      typeof config.url !== "string" ||
+      typeof config.tokenFile !== "string" ||
+      !isAbsolute(config.tokenFile)
+    )
+      throw new Error(
+        "MCP settings require a URL and an absolute token-file path",
+      );
+    effectiveArguments = [
+      "--url",
+      config.url,
+      "--token-file",
+      config.tokenFile,
+    ];
+  }
+  const parsed = parseConfigArguments(effectiveArguments);
   return {
     baseUrl: parsed.url,
     token: await readOwnerOnlyToken(parsed.tokenFile),

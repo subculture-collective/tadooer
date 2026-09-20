@@ -21,9 +21,13 @@
 | **Task Template** | Inert first-class record (title, notes, estimate, tags, suggested project, subtask blueprints). Never appears in active-task queries. |
 | **Template Set** | Ordered collection of active Task Templates. Not a Project Template. |
 | **Template Instantiation** | Atomic SQLite transaction creating independent tasks from a template or set, with source identity and immutable snapshot provenance. |
-| **Calendar Provider** | Qualified source of calendar data (Baïkal, Google). Each calendar has exactly one authoritative provider. |
+| **Calendar Provider** | A system that stores and serves a calendar. Unmapped calendars remain provider-owned; an explicitly mapped bridge uses Baïkal for accepted canonical state. |
 | **Connector** | Integration component that communicates with a Calendar Provider via CalDAV or Google API. Encrypted credentials stored alongside a mode-0600 AES-256-GCM key file; Baïkal automatic, Google OAuth. |
 | **Calendar Projection** | Bounded, cached read of calendar events in Suite SQLite. Never duplicates authoritative calendar resources. |
+| **Calendar Mapping** | An explicit pairing of one Google calendar with one Baïkal calendar; it never distributes events to unrelated calendars. |
+| **Accepted Calendar State** | The last reconciled event state accepted in Baïkal. An unacknowledged external edit remains pending rather than replacing this state silently. |
+| **Bridge Conflict** | Incompatible changes since the last accepted state, retained on both sides until explicitly resolved. |
+| **Calendar Tombstone** | Evidence that a previously mapped event was deleted, retained to prevent replay from resurrecting it. |
 | **Time Block** | Suite-created VEVENT linking a task to a calendar interval. At most one active block per task. |
 | **Active Session** | Server-authoritative focus/break session. At most one nonterminal per owner. 90-second lease, 30-second heartbeat, 24-hour hard expiry. |
 | **Controller / Follower** | One registered client controls the active session; others are read-only with explicit takeover. |

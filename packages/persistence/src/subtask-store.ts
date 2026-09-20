@@ -90,9 +90,7 @@ export class SqliteSubtaskStore implements SubtaskStore {
   deleteSubtask(ownerId: string, id: string): boolean {
     return (
       this.#database
-        .prepare(
-          "DELETE FROM subtasks WHERE owner_id=? AND id=?",
-        )
+        .prepare("DELETE FROM subtasks WHERE owner_id=? AND id=?")
         .run(ownerId, id).changes === 1
     );
   }
@@ -108,22 +106,12 @@ export class SqliteSubtaskStore implements SubtaskStore {
       .prepare(
         "UPDATE subtasks SET title=?,completed=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=?",
       )
-      .run(
-        title,
-        completed ? 1 : 0,
-        now,
-        ownerId,
-        subtaskId,
-      ).changes;
+      .run(title, completed ? 1 : 0, now, ownerId, subtaskId).changes;
     if (changed !== 1) return undefined;
     const row = this.#database
-      .prepare(
-        "SELECT * FROM subtasks WHERE owner_id=? AND id=?",
-      )
-      .get(ownerId, subtaskId) as unknown as Record<
-      string,
-      string | number
-    > | undefined;
+      .prepare("SELECT * FROM subtasks WHERE owner_id=? AND id=?")
+      .get(ownerId, subtaskId) as unknown as
+      Record<string, string | number> | undefined;
     if (row === undefined) return undefined;
     return {
       id: String(row.id),

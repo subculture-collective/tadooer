@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
+import { type IncomingMessage, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import type {
   ApiError,
@@ -154,17 +151,23 @@ export const clientAddress = (
   return normalizedAddress(forwarded.trim());
 };
 
-export const readJson = async (request: IncomingMessage): Promise<unknown> => {
+export const readJson = async (
+  request: IncomingMessage,
+  byteLimit = maxJsonBytes,
+): Promise<unknown> => {
   const contentType = request.headers["content-type"]?.split(";", 1)[0]?.trim();
   if (contentType !== "application/json") throw new Error("CONTENT_TYPE");
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of request) {
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk)
       ? chunk
       : Buffer.from(chunk as Uint8Array);
     bytes += buffer.byteLength;
-    if (bytes > maxJsonBytes) throw new Error("BODY_TOO_LARGE");
+    if (bytes > byteLimit) {
+      request.resume();
+      throw new Error("BODY_TOO_LARGE");
+    }
     chunks.push(buffer);
   }
   try {

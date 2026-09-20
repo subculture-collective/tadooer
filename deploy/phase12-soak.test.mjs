@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseManifest } from "./release-channel.mjs";
-import { qualifySoak } from "./phase12-soak.mjs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { startSoak, qualifySoak } from "./phase12-soak.mjs";
 
 const start = Date.parse("2026-08-08T12:00:00.000Z");
 const candidate = {
@@ -51,6 +54,24 @@ const completeLedger = () => ({
 });
 
 describe("Phase 12 soak qualification", () => {
+  it("refuses to replace an existing soak ledger", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "suite-soak-exclusive-"));
+    try {
+      const path = join(directory, "ledger.json");
+      await startSoak(path, candidate.candidate, candidate.startedAt);
+      const before = await readFile(path, "utf8");
+      await expect(
+        startSoak(
+          path,
+          candidate.candidate,
+          new Date(start + 1000).toISOString(),
+        ),
+      ).rejects.toThrow();
+      expect(await readFile(path, "utf8")).toBe(before);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it("refuses early, incomplete, and blocking soak evidence", () => {
     expect(() =>
       qualifySoak(

@@ -9,5 +9,9 @@
   },
   "devDependencies": {
     "@suite/test-support": "workspace:*"
+  },
+  "dependencies": {
+    "@suite/contracts": "workspace:*",
+    "@suite/domain": "workspace:*"
   }
 }

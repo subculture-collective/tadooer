@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import { IDBFactory } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
 import type {
   ClientRegistrationResponse,
@@ -13,6 +14,24 @@ const taskId = "4519c805-e478-486b-a918-616fc6d9ea98";
 const operationId = "afcab502-2199-43fd-b9d3-c8b556c6f25b";
 const generatedIds = [installationId, taskId, operationId] as const;
 
+it("retains acknowledged creates through failed refresh without overwriting offline edits", async () => {
+  const store = new LocalStore({ indexedDb: new IDBFactory() });
+  await store.ensureClient(() => Promise.resolve(registration));
+  const created = {
+    ...taskSnapshot().task,
+    title: "Acknowledged create",
+    revision: 1,
+  };
+  await store.cacheCreatedTask(created);
+  expect((await store.loadCachedTasks())[0]?.task.title).toBe(
+    "Acknowledged create",
+  );
+  await store.queueTaskPatch(created.id, { title: "Offline edit" });
+  await store.cacheCreatedTask(created);
+  expect((await store.loadCachedTasks())[0]?.task.title).toBe("Offline edit");
+  expect(await store.loadOutbox()).toHaveLength(1);
+});
+
 const registration: ClientRegistrationResponse = {
   client: {
     id: clientId,
@@ -23,6 +42,7 @@ const registration: ClientRegistrationResponse = {
     revokedAt: null,
   },
   clientCredential: "A".repeat(43),
+  protocolVersion: 2 as const,
   initialCursor: "sync-v1.epoch.0.tag",
 };
 
@@ -49,6 +69,7 @@ const taskSnapshot = (title = "Server task") => ({
     estimateMinutes: 2,
     projectId: 2,
     tagIds: 2,
+    deadline: 2,
   },
   changeSequence: 2,
 });
@@ -70,6 +91,7 @@ const response = (
   ],
   nextCursor: "sync-v1.epoch.2.tag",
   hasMore: false,
+  protocolVersion: 2 as const,
   serverTimestamp: "2026-08-06T16:01:00.000Z",
   ...overrides,
 });
@@ -99,6 +121,22 @@ afterEach(async () => {
 });
 
 describe("LocalStore", () => {
+  it("caches planning preferences without changing the IndexedDB schema", async () => {
+    const local = store();
+    const preferences = {
+      workingDays: [1, 2, 3, 4, 5],
+      workdayStart: "09:00",
+      workdayEnd: "17:00",
+      breakStart: "12:00",
+      breakEnd: "12:30",
+      timeZone: "America/Chicago",
+    };
+
+    expect(await local.loadPlanningPreferences()).toBeUndefined();
+    await local.savePlanningPreferences(preferences);
+    expect(await local.loadPlanningPreferences()).toEqual(preferences);
+  });
+
   it("registers a client only once and persists no browser-global identity", async () => {
     const local = store();
     let registrations = 0;
@@ -178,12 +216,247 @@ describe("LocalStore", () => {
       },
     ]);
 
+    const conflictBefore = await local.loadConflicts();
+    const outboxBefore = await local.loadOutbox();
+    await local.replaceFromSnapshot({
+      snapshots: [{ entityKind: "task", value: taskSnapshot() }],
+      nextCursor: "sync-v1.new-epoch.2.tag",
+      hasMore: false,
+      protocolVersion: 2 as const,
+      serverTimestamp: "2026-08-06T16:02:00.000Z",
+    });
+    expect(await local.loadConflicts()).toEqual(conflictBefore);
+    expect(await local.loadOutbox()).toEqual(outboxBefore);
+
     await local.queueTaskPatch(taskId, { title: "Reviewed resolution" });
     expect(await local.loadConflicts()).toEqual([]);
     expect((await local.loadOutbox()).map(({ state }) => state)).toEqual([
       "acknowledged",
       "queued",
     ]);
+  });
+
+  it("waits for canonical habit occurrences and preserves queued completions through reset", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    const habit = {
+      id: taskId,
+      ownerId,
+      title: "Read",
+      cadence: { kind: "daily" as const },
+      startedOn: "2026-08-06",
+      timeZone: "UTC",
+      revision: 1,
+      createdAt: "2026-08-06T12:00:00.000Z",
+      updatedAt: "2026-08-06T12:00:00.000Z",
+      archivedAt: null,
+    };
+    await local.replaceFromSnapshot({
+      protocolVersion: 2,
+      snapshots: [{ entityKind: "habit", value: habit }],
+      nextCursor: "sync-v1.epoch.1.tag",
+      hasMore: false,
+      serverTimestamp: habit.createdAt,
+    });
+    const queued = await local.queueHabitCommand({
+      kind: "habit.complete",
+      habitId: taskId,
+      baseRevision: 1,
+      periodKey: "2026-08-06",
+    });
+    expect((await local.loadCachedHabits()).occurrences).toEqual([]);
+    await local.close();
+    const reopened = store();
+    const occurrence = {
+      id: "a4f90881-652b-4411-b18b-5f5f643d20d6",
+      habitId: taskId,
+      periodKey: "2026-08-06",
+      completedAt: habit.createdAt,
+      createdAt: habit.createdAt,
+    };
+    await reopened.replaceFromSnapshot({
+      protocolVersion: 2,
+      snapshots: [
+        { entityKind: "habit", value: habit },
+        { entityKind: "habit_occurrence", value: occurrence },
+      ],
+      nextCursor: "sync-v1.next.2.tag",
+      hasMore: false,
+      serverTimestamp: habit.createdAt,
+    });
+    expect((await reopened.loadOutbox())[0]?.operation).toEqual(queued);
+    await reopened.applySyncRound({
+      protocolVersion: 2,
+      outcomes: [
+        {
+          kind: "applied",
+          operationId: queued.operationId,
+          entityId: occurrence.id,
+          entityRevision: 1,
+          changeSequence: 2,
+        },
+      ],
+      changes: [],
+      nextCursor: "sync-v1.next.2.tag",
+      hasMore: false,
+      serverTimestamp: habit.createdAt,
+    });
+    expect((await reopened.loadCachedHabits()).occurrences).toEqual([
+      occurrence,
+    ]);
+    expect((await reopened.loadOutbox())[0]?.state).toBe("acknowledged");
+  });
+
+  it("upgrades a v1 cache without changing client identity, sequence, outbox, or conflicts", async () => {
+    const now = "2026-09-19T12:00:00.000Z";
+    const legacy = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("suite-local-v1", 1);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore("metadata");
+        request.result.createObjectStore("entities", {
+          keyPath: ["entityKind", "id"],
+        });
+        request.result.createObjectStore("outbox", {
+          keyPath: "operation.operationId",
+        });
+        request.result.createObjectStore("conflicts", {
+          keyPath: "operationId",
+        });
+        request.result.createObjectStore("diagnostics", {
+          autoIncrement: true,
+        });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        reject(request.error ?? new Error("Failed to create v1 cache"));
+    });
+    const identity = {
+      installationId,
+      clientId,
+      clientCredential: registration.clientCredential,
+      cursor: registration.initialCursor,
+      nextClientSequence: 17,
+    };
+    const operation = {
+      kind: "task.create" as const,
+      operationId,
+      clientSequence: 16,
+      createdAt: now,
+      requestHash: "a".repeat(43),
+      task: {
+        id: taskId,
+        title: "Old outbox",
+        notes: "",
+        estimateMinutes: null,
+      },
+    };
+    const conflict = {
+      operationId: "other-operation",
+      taskId,
+      taskRevision: 2,
+      code: "SYNC_FIELD_CONFLICT",
+      conflictingFields: ["title"],
+    };
+    const write = legacy.transaction(
+      ["metadata", "outbox", "conflicts"],
+      "readwrite",
+    );
+    write.objectStore("metadata").put(identity, "local-state");
+    write
+      .objectStore("outbox")
+      .put({ operation, state: "sending", safeErrorCode: null });
+    write.objectStore("conflicts").put(conflict);
+    await new Promise<void>((resolve, reject) => {
+      write.oncomplete = () => resolve();
+      write.onerror = () =>
+        reject(write.error ?? new Error("Legacy cache write failed"));
+    });
+    legacy.close();
+    const local = store();
+    expect(await local.clientIdentity()).toMatchObject(identity);
+    expect(await local.requiresSnapshot()).toBe(true);
+    expect(await local.loadOutbox()).toEqual([
+      { operation, state: "sending", safeErrorCode: null },
+    ]);
+    expect(await local.loadConflicts()).toEqual([conflict]);
+    await local.replaceFromSnapshot({
+      snapshots: [],
+      nextCursor: "sync-v1.next.0.tag",
+      hasMore: false,
+      protocolVersion: 2 as const,
+      serverTimestamp: now,
+    });
+    expect(await local.requiresSnapshot()).toBe(false);
+    expect(await local.loadConflicts()).toEqual([conflict]);
+    expect((await local.loadOutbox())[0]?.operation).toEqual(operation);
+    expect(
+      (await local.queueTaskCreate({ title: "Next task" })).clientSequence,
+    ).toBe(17);
+  });
+
+  it("retains an offline deadline edit across restart and canonical snapshot reset", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    await local.applySyncRound(response());
+    const deadline = { kind: "date" as const, value: "2026-09-20" };
+    const operation = await local.queueTaskPatch(taskId, { deadline });
+    expect(operation).toMatchObject({
+      fields: { deadline },
+      baseFieldVersions: { deadline: 2 },
+    });
+    await local.close();
+    const reopened = store();
+    expect((await reopened.loadCachedTasks())[0]?.task.deadline).toEqual(
+      deadline,
+    );
+    await reopened.replaceFromSnapshot({
+      snapshots: [{ entityKind: "task", value: taskSnapshot() }],
+      nextCursor: "sync-v1.next.3.tag",
+      hasMore: false,
+      protocolVersion: 2 as const,
+      serverTimestamp: "2026-09-19T12:00:00.000Z",
+    });
+    expect((await reopened.loadCachedTasks())[0]?.task.deadline).toEqual(
+      deadline,
+    );
+    expect((await reopened.loadOutbox())[0]?.operation).toEqual(operation);
+  });
+
+  it("preserves cache and outbox when a snapshot is incomplete or invalid", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    await local.queueTaskCreate({ title: "Offline task" });
+    const tasks = await local.loadCachedTasks();
+    const outbox = await local.loadOutbox();
+    const identity = await local.clientIdentity();
+    const snapshot = {
+      snapshots: [{ entityKind: "task" as const, value: taskSnapshot() }],
+      nextCursor: "sync-v1.other.3.tag",
+      hasMore: true,
+      protocolVersion: 2 as const,
+      serverTimestamp: "2026-08-06T16:02:00.000Z",
+    };
+    await expect(local.replaceFromSnapshot(snapshot)).rejects.toThrow(
+      "complete snapshot",
+    );
+    await expect(
+      local.replaceFromSnapshot({
+        ...snapshot,
+        hasMore: false,
+        snapshots: [
+          {
+            entityKind: "task",
+            value: {
+              ...taskSnapshot(),
+              task: { ...taskSnapshot().task, id: "invalid" },
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow();
+    expect(await local.loadCachedTasks()).toEqual(tasks);
+    expect(await local.loadOutbox()).toEqual(outbox);
+    expect(await local.clientIdentity()).toEqual(identity);
   });
 
   it("atomically resets canonical state and reapplies the immutable outbox", async () => {
@@ -201,6 +474,7 @@ describe("LocalStore", () => {
       ],
       nextCursor: "sync-v1.epoch.3.tag",
       hasMore: false,
+      protocolVersion: 2 as const,
       serverTimestamp: "2026-08-06T16:02:00.000Z",
     });
 

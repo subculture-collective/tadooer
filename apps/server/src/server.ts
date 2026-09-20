@@ -4,7 +4,11 @@ import {
   type ServerResponse,
 } from "node:http";
 import { type AddressInfo } from "node:net";
-import { evaluateReminder, zonedDayWindow, type SessionClock } from "@suite/domain";
+import {
+  evaluateReminder,
+  zonedDayWindow,
+  type SessionClock,
+} from "@suite/domain";
 import { SuiteDatabase } from "@suite/persistence";
 import type { ServerConfig } from "./config.ts";
 import { AuthService } from "./auth.ts";
@@ -16,6 +20,7 @@ import type { RouteContext } from "./routes/shared.ts";
 import { handleHealth } from "./routes/health.ts";
 import { handleAuthSetup } from "./routes/auth-setup.ts";
 import { handleTasks } from "./routes/tasks.ts";
+import { handleTaskImport } from "./routes/task-import.ts";
 import { handlePlanner } from "./routes/planner.ts";
 import { handleConnectors } from "./routes/connectors.ts";
 import { handleSync } from "./routes/sync.ts";
@@ -28,6 +33,7 @@ import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
 import { handleAutomation } from "./routes/automation.ts";
 import { handleNotifications } from "./routes/notifications.ts";
+import { handleHabits } from "./routes/habits.ts";
 import { handleStatic } from "./routes/static.ts";
 
 export interface RunningSuiteServer {
@@ -224,7 +230,9 @@ export const startSuiteServer = async (
     handleCalendar,
     handleAutomation,
     handleNotifications,
+    handleHabits,
     handleTasks,
+    handleTaskImport,
     handlePlanner,
     handleProjects,
     handleTags,

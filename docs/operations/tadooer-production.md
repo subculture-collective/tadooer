@@ -60,8 +60,9 @@ generated `/srv/apps/productivity/data/tadooer/backups` directory in Restic.
 The script makes an online SQLite backup, copies the paired credential key and
 optional OAuth and ntfy publisher configurations, creates `SHA256SUMS`, and
 writes content-free node-exporter textfile metrics. Backup directories and secrets stay mode
-0700/0600. Prometheus scrapes Suite over the private `monitoring` network and
-loads the supplied alert rules. The secret-bearing coherent set is retained only
+0700/0600. The NUC Prometheus agent scrapes Suite over its private `monitoring` network
+and remote-writes to Dozor; Dozor loads the supplied alert rules. A direct
+Dozor-to-NUC application-port scrape is neither required nor opened. The secret-bearing coherent set is retained only
 inside the encrypted Restic workflow.
 
 An acceptance restore always uses an isolated Compose project, isolated ports,

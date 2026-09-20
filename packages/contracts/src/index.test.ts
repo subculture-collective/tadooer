@@ -28,6 +28,8 @@ import {
   projectSchema,
   syncDiagnosticManifestSchema,
   syncOperationSchema,
+  habitCommandSchema,
+  syncRoundResponseSchema,
   syncRoundRequestSchema,
   syncTaskSnapshotSchema,
   tagSchema,
@@ -43,6 +45,94 @@ const fixture = (name: string): unknown =>
   JSON.parse(
     readFileSync(new URL(`../test-fixtures/${name}`, import.meta.url), "utf8"),
   ) as unknown;
+
+describe("Habit protocol", () => {
+  it("rejects empty edits, mutable occurrences, and absent protocol version", () => {
+    const habitId = "00000000-0000-4000-8000-000000000001";
+    expect(
+      habitCommandSchema.safeParse({
+        kind: "habit.patch",
+        habitId,
+        baseRevision: 1,
+        fields: {},
+      }).success,
+    ).toBe(false);
+    for (const kind of ["habit_occurrence.patch", "habit_occurrence.delete"])
+      expect(habitCommandSchema.safeParse({ kind, habitId }).success).toBe(
+        false,
+      );
+    expect(
+      syncRoundResponseSchema.safeParse({
+        outcomes: [],
+        changes: [],
+        nextCursor: "cursor",
+        hasMore: false,
+        serverTimestamp: "2026-09-19T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("deadline sync contracts", () => {
+  it("accepts date, instant, and clearing deadlines but rejects planned-start writes", () => {
+    const base = {
+      operationId: "00000000-0000-4000-8000-000000000001",
+      clientSequence: 1,
+      createdAt: "2026-09-19T12:00:00.000Z",
+      requestHash: "a".repeat(43),
+    };
+    for (const deadline of [
+      null,
+      { kind: "date", value: "2026-09-20" },
+      { kind: "instant", value: base.createdAt },
+    ]) {
+      expect(
+        syncOperationSchema.safeParse({
+          ...base,
+          kind: "task.create",
+          task: {
+            id: base.operationId,
+            title: "Task",
+            notes: "",
+            estimateMinutes: null,
+            deadline,
+          },
+        }).success,
+      ).toBe(true);
+      expect(
+        syncOperationSchema.safeParse({
+          ...base,
+          kind: "task.patch",
+          taskId: base.operationId,
+          fields: { deadline },
+          baseFieldVersions: { deadline: 1 },
+        }).success,
+      ).toBe(true);
+    }
+    expect(
+      syncOperationSchema.safeParse({
+        ...base,
+        kind: "task.patch",
+        taskId: base.operationId,
+        fields: { plannedStart: base.createdAt },
+        baseFieldVersions: { plannedStart: 1 },
+      }).success,
+    ).toBe(false);
+    expect(
+      syncOperationSchema.safeParse({
+        ...base,
+        kind: "task.create",
+        task: {
+          id: base.operationId,
+          title: "Task",
+          notes: "",
+          estimateMinutes: null,
+          plannedStart: base.createdAt,
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("Suite contracts", () => {
   it("keeps notification preferences and delivery health strict and content-free", () => {
@@ -534,9 +624,16 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(21);
+    expect(automationCatalog).toHaveLength(28);
     expect(ids).toEqual(
-      expect.arrayContaining(["pools.list", "placeholders.resolve"]),
+      expect.arrayContaining([
+        "tasks.update",
+        "tasks.set_completed",
+        "pools.list",
+        "placeholders.resolve",
+        "habits.list",
+        "habits.mutate",
+      ]),
     );
     for (const entry of automationCatalog) {
       expect(entry.apiPath).toMatch(/^\/api\/automation\/v1\//);

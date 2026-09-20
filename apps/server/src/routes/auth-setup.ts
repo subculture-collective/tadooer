@@ -6,12 +6,23 @@ import {
   passwordMeetsPolicy,
   sessionCookie,
 } from "../auth.ts";
-import { sendJson, sendError, readJson, sameOrigin, clientAddress } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  clientAddress,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 
 const loginLimiter = new LoginRateLimiter();
 
-export const handleAuthSetup: RouteHandler = async (request, response, url, ctx) => {
+export const handleAuthSetup: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
   const { auth, config } = ctx;
   const method = request.method ?? "GET";
 
@@ -33,16 +44,9 @@ export const handleAuthSetup: RouteHandler = async (request, response, url, ctx)
       );
       return true;
     }
-    const parsed = ownerSetupRequestSchema.safeParse(
-      await readJson(request),
-    );
+    const parsed = ownerSetupRequestSchema.safeParse(await readJson(request));
     if (!parsed.success || !passwordMeetsPolicy(parsed.data.password)) {
-      sendError(
-        response,
-        400,
-        "INVALID_SETUP",
-        "Owner setup input is invalid",
-      );
+      sendError(response, 400, "INVALID_SETUP", "Owner setup input is invalid");
       return true;
     }
     const created = await auth.setup(parsed.data);
@@ -84,12 +88,7 @@ export const handleAuthSetup: RouteHandler = async (request, response, url, ctx)
     const limiterKey = `${clientAddress(request, config.trustedProxyCidrs ?? [])}:${parsed.data.username.toLowerCase()}`;
     if (!loginLimiter.allows(limiterKey)) {
       console.warn("auth.login.rate_limited");
-      sendError(
-        response,
-        429,
-        "LOGIN_RATE_LIMITED",
-        "Too many login attempts",
-      );
+      sendError(response, 429, "LOGIN_RATE_LIMITED", "Too many login attempts");
       return true;
     }
     const session = await auth.login(
@@ -118,12 +117,7 @@ export const handleAuthSetup: RouteHandler = async (request, response, url, ctx)
   if (method === "GET" && url.pathname === "/api/auth/session") {
     const session = auth.resume(request);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const body: SessionResponse = auth.response(session);

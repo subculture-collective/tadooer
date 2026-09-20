@@ -124,7 +124,8 @@ class AutomationApiClient {
     const client = createAutomationClient(
       `${destination.origin}${destination.pathname}`.replace(/\/$/, ""),
     );
-    const kind = http.method === "GET" ? ("resource" as const) : ("tool" as const);
+    const kind =
+      http.method === "GET" ? ("resource" as const) : ("tool" as const);
     const entry = {
       kind,
       apiPath: "",

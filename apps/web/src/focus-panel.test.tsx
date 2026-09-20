@@ -52,6 +52,26 @@ describe("FocusPanel", () => {
     expect(markup).toContain("Start focus");
   });
 
+  it("can omit the duplicate all-task start selector while retaining session controls", () => {
+    const terminal = renderToStaticMarkup(
+      <FocusPanel
+        tasks={[task]}
+        activeSession={null}
+        clientId={task.id}
+        busy={false}
+        online
+        onCommand={() => undefined}
+        showStartForm={false}
+      />,
+    );
+    expect(terminal).not.toContain("Focus task");
+    const running = render(
+      runningSession,
+      "1280d3ef-5f2f-4ac6-90ed-74e60b7157e6",
+    );
+    expect(running).toContain("Pause");
+  });
+
   it("renders owner-only controls for the controlling client", () => {
     const markup = render(
       runningSession,

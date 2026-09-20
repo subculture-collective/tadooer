@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ManualSessionClock } from "@suite/domain";
 import {
   activeSessionCommandResponseSchema,
+  habitListResponseSchema,
   apiErrorSchema,
   clientRegistrationResponseSchema,
   syncRoundResponseSchema,
@@ -71,6 +72,7 @@ const register = async (
 const proof = (client: Client): Record<string, string> => ({
   "X-Suite-Client-Id": client.id,
   "X-Suite-Client-Credential": client.credential,
+  "X-Suite-Sync-Version": "2",
 });
 
 describe("Phase 2 HTTP integration", () => {
@@ -146,6 +148,29 @@ describe("Phase 2 HTTP integration", () => {
             { cursor, operations, pullLimit: 100 },
             proof(client),
           );
+        const withoutVersion = await request(
+          server,
+          cookie,
+          session.csrfToken,
+          "/api/sync/round",
+          { invalid: "body" },
+          {
+            "X-Suite-Client-Id": first.id,
+            "X-Suite-Client-Credential": first.credential,
+          },
+        );
+        expect(withoutVersion.status).toBe(426);
+        // A reset must be decided before executing or recording any operation.
+        const invalidCursor = await sync(first, [create], "invalid-cursor");
+        expect(invalidCursor.status).toBe(409);
+        expect(await invalidCursor.json()).toMatchObject({
+          code: "SYNC_CURSOR_EXPIRED",
+        });
+        const afterReset = await fetch(`${server.baseUrl}/api/tasks`, {
+          headers: { Cookie: cookie },
+        });
+        expect(await afterReset.json()).toMatchObject({ tasks: [] });
+
         const created = await sync(first, [create]);
         expect(created.status).toBe(200);
         expect(
@@ -165,6 +190,133 @@ describe("Phase 2 HTTP integration", () => {
         expect(
           syncRoundResponseSchema.parse(await changedHash.json()).outcomes[0],
         ).toMatchObject({ kind: "rejected", code: "IDEMPOTENCY_CONFLICT" });
+
+        const deadlineTaskId = operationId("71");
+        const dated = await sync(first, [
+          {
+            ...create,
+            operationId: operationId("72"),
+            clientSequence: 20,
+            task: {
+              ...create.task,
+              id: deadlineTaskId,
+              deadline: { kind: "date", value: "2026-09-20" },
+            },
+          },
+        ]);
+        expect(dated.status).toBe(200);
+        const datedBody = syncRoundResponseSchema.parse(await dated.json());
+        const datedChange = datedBody.changes.find(
+          ({ entityId }) => entityId === deadlineTaskId,
+        );
+        expect(datedChange?.snapshot).toMatchObject({
+          value: {
+            task: { deadline: { kind: "date", value: "2026-09-20" } },
+            fieldVersions: { deadline: 1 },
+          },
+        });
+        const deadlinePatch = {
+          kind: "task.patch",
+          operationId: operationId("73"),
+          clientSequence: 21,
+          createdAt: create.createdAt,
+          requestHash: hash,
+          taskId: deadlineTaskId,
+          fields: {
+            deadline: { kind: "instant", value: "2026-09-20T18:00:00.000Z" },
+          },
+          baseFieldVersions: { deadline: 1 },
+        };
+        const updatedDeadline = await sync(
+          first,
+          [deadlinePatch],
+          datedBody.nextCursor,
+        );
+        expect(updatedDeadline.status).toBe(200);
+        const updatedDeadlineBody = syncRoundResponseSchema.parse(
+          await updatedDeadline.json(),
+        );
+        expect(updatedDeadlineBody.changes).toHaveLength(1);
+        expect(updatedDeadlineBody.changes[0]?.snapshot).toMatchObject({
+          value: {
+            task: { deadline: deadlinePatch.fields.deadline },
+            fieldVersions: { deadline: 2 },
+          },
+        });
+        const staleDeadline = {
+          ...deadlinePatch,
+          operationId: operationId("74"),
+          clientSequence: 22,
+          fields: { deadline: null },
+        };
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const conflict = await sync(second, [staleDeadline]);
+          expect(
+            syncRoundResponseSchema.parse(await conflict.json()).outcomes[0],
+          ).toMatchObject({
+            kind: "conflict",
+            code: "SYNC_FIELD_CONFLICT",
+            conflictingFields: ["deadline"],
+          });
+        }
+
+        const habitId = operationId("81");
+        const habitCreate = {
+          kind: "habit.create",
+          operationId: operationId("82"),
+          clientSequence: 30,
+          createdAt: create.createdAt,
+          requestHash: hash,
+          habit: {
+            id: habitId,
+            title: "Read",
+            cadence: { kind: "daily" },
+            startedOn: "2026-08-01",
+            timeZone: "America/Chicago",
+          },
+        };
+        const habitCreated = await sync(first, [habitCreate]);
+        expect(
+          syncRoundResponseSchema.parse(await habitCreated.json()).outcomes[0],
+        ).toMatchObject({ kind: "applied", entityId: habitId });
+        const complete = {
+          kind: "habit.complete",
+          operationId: operationId("83"),
+          clientSequence: 31,
+          createdAt: create.createdAt,
+          requestHash: hash,
+          habitId,
+          baseRevision: 1,
+          periodKey: "2026-08-21",
+        };
+        const completion = await sync(first, [complete]);
+        const completionBody = syncRoundResponseSchema.parse(
+          await completion.json(),
+        );
+        expect(completionBody.outcomes[0]).toMatchObject({
+          entityId: complete.operationId,
+        });
+        const duplicate = await sync(
+          second,
+          [{ ...complete, operationId: operationId("84") }],
+          completionBody.nextCursor,
+        );
+        const duplicateBody = syncRoundResponseSchema.parse(
+          await duplicate.json(),
+        );
+        expect(duplicateBody.outcomes[0]).toMatchObject({
+          entityId: complete.operationId,
+        });
+        expect(duplicateBody.changes).toEqual([]);
+        const habitList = habitListResponseSchema.parse(
+          await (
+            await fetch(`${server.baseUrl}/api/habits`, {
+              headers: { Cookie: cookie },
+            })
+          ).json(),
+        );
+        expect(habitList.occurrences).toHaveLength(1);
+        expect(habitList.habits[0]?.id).toBe(habitId);
 
         const titlePatch = {
           kind: "task.patch",
@@ -311,20 +463,75 @@ describe("Phase 2 HTTP integration", () => {
         );
         expect(subtaskCreate.status).toBe(201);
         const subtask = (await subtaskCreate.json()) as {
-          subtask: { id: string; revision: number };
+          subtask: { id: string; title: string; revision: number };
         };
+        const secondSubtaskCreate = await request(
+          server,
+          cookie,
+          session.csrfToken,
+          `/api/tasks/${taskId}/subtasks`,
+          { title: "Second step", position: 1 },
+        );
+        expect(secondSubtaskCreate.status).toBe(201);
+        const secondSubtask = (await secondSubtaskCreate.json()) as {
+          subtask: { id: string; title: string; revision: number };
+        };
+        const reordered = await fetch(
+          `${server.baseUrl}/api/tasks/${taskId}/subtasks`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Origin: server.baseUrl,
+              Cookie: cookie,
+              "X-CSRF-Token": session.csrfToken,
+            },
+            body: JSON.stringify({
+              items: [
+                {
+                  id: secondSubtask.subtask.id,
+                  revision: secondSubtask.subtask.revision,
+                },
+                { id: subtask.subtask.id, revision: subtask.subtask.revision },
+              ],
+            }),
+          },
+        );
+        expect(reordered.status).toBe(200);
+        expect(await reordered.json()).toMatchObject({
+          subtasks: [
+            { id: secondSubtask.subtask.id, position: 0, revision: 2 },
+            { id: subtask.subtask.id, position: 1, revision: 2 },
+          ],
+        });
+        const staleReorder = await fetch(
+          `${server.baseUrl}/api/tasks/${taskId}/subtasks`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Origin: server.baseUrl,
+              Cookie: cookie,
+              "X-CSRF-Token": session.csrfToken,
+            },
+            body: JSON.stringify({
+              items: [
+                { id: subtask.subtask.id, revision: 1 },
+                { id: secondSubtask.subtask.id, revision: 1 },
+              ],
+            }),
+          },
+        );
+        expect(staleReorder.status).toBe(412);
         expect(
           (
-            await mutate(
-              `/api/subtasks/${subtask.subtask.id}`,
-              "PATCH",
-              subtask.subtask.revision,
-              { completed: true, position: 1 },
-            )
+            await mutate(`/api/subtasks/${subtask.subtask.id}`, "PATCH", 2, {
+              completed: true,
+            })
           ).status,
         ).toBe(200);
         expect(
-          (await mutate(`/api/subtasks/${subtask.subtask.id}`, "DELETE", 2))
+          (await mutate(`/api/subtasks/${subtask.subtask.id}`, "DELETE", 3))
             .status,
         ).toBe(204);
         expect(

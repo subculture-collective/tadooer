@@ -14,7 +14,15 @@ export class SqliteTagStore implements TagStore {
   // Private helpers (copied exactly from SuiteDatabase in index.ts)
   // ---------------------------------------------------------------------------
 
-  #projectFromRow(row: Record<string, string | number | null>): { readonly id: string; readonly ownerId: string; readonly title: string; readonly revision: number; readonly createdAt: string; readonly updatedAt: string; readonly archivedAt: string | null } {
+  #projectFromRow(row: Record<string, string | number | null>): {
+    readonly id: string;
+    readonly ownerId: string;
+    readonly title: string;
+    readonly revision: number;
+    readonly createdAt: string;
+    readonly updatedAt: string;
+    readonly archivedAt: string | null;
+  } {
     return {
       id: String(row.id),
       ownerId: String(row.owner_id),
@@ -114,11 +122,7 @@ export class SqliteTagStore implements TagStore {
       );
   }
 
-  archiveTag(
-    ownerId: string,
-    id: string,
-    now: string,
-  ): TagRecord | undefined {
+  archiveTag(ownerId: string, id: string, now: string): TagRecord | undefined {
     const result = this.#database
       .prepare(
         "UPDATE tags SET archived_at = ?, revision = revision + 1, updated_at = ? WHERE owner_id = ? AND id = ? AND archived_at IS NULL",
@@ -174,8 +178,7 @@ export class SqliteTagStore implements TagStore {
         .prepare(
           "SELECT revision FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL",
         )
-        .get(ownerId, taskId) as unknown as
-        { revision: number } | undefined;
+        .get(ownerId, taskId) as unknown as { revision: number } | undefined;
       if (
         current === undefined ||
         (expectedRevision !== undefined &&

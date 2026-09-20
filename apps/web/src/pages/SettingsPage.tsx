@@ -19,14 +19,12 @@ export interface SettingsPageProps {
   readonly plannerFreshness: string | undefined;
   readonly busy: boolean;
   readonly onAuthorizeGoogle: (() => Promise<string>) | undefined;
-  readonly onSyncGoogle: (() => Promise<void>) | undefined;
+  readonly onSyncGoogle: ((full?: boolean) => Promise<void>) | undefined;
   readonly onDisconnectGoogle: (() => Promise<void>) | undefined;
   readonly onSavePlanningPreferences:
-    | ((preferences: PlanningPreferences) => Promise<void>)
-    | undefined;
+    ((preferences: PlanningPreferences) => Promise<void>) | undefined;
   readonly onSaveNotificationPreferences:
-    | ((preferences: NotificationPreferences) => Promise<void>)
-    | undefined;
+    ((preferences: NotificationPreferences) => Promise<void>) | undefined;
   readonly onTestNotification: (() => Promise<void>) | undefined;
   readonly onSyncNow: () => Promise<void>;
   readonly onExportDiagnostics: () => Promise<void>;

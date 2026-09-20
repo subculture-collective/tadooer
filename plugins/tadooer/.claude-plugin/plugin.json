@@ -1,0 +1,10 @@
+{
+  "name": "tadooer",
+  "version": "0.1.0",
+  "description": "Tadooer tasks, planning, focus, and habits through scoped MCP tools and workflow skills",
+  "author": {
+    "name": "Subcult"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

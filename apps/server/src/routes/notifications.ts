@@ -2,22 +2,25 @@ import { notificationPreferencesSchema } from "@suite/contracts";
 import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 
-export const handleNotifications: RouteHandler = async (request, response, url, ctx) => {
-  const { stores: database, auth, config, ntfy: notificationPublisher, triggerNotifications } = ctx;
+export const handleNotifications: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
+  const {
+    stores: database,
+    auth,
+    config,
+    ntfy: notificationPublisher,
+    triggerNotifications,
+  } = ctx;
   const method = request.method ?? "GET";
 
-  if (
-    method === "GET" &&
-    url.pathname === "/api/notifications/preferences"
-  ) {
+  if (method === "GET" && url.pathname === "/api/notifications/preferences") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     sendJson(
@@ -28,10 +31,7 @@ export const handleNotifications: RouteHandler = async (request, response, url, 
     return true;
   }
 
-  if (
-    method === "PUT" &&
-    url.pathname === "/api/notifications/preferences"
-  ) {
+  if (method === "PUT" && url.pathname === "/api/notifications/preferences") {
     if (!sameOrigin(request)) {
       sendError(
         response,
@@ -43,12 +43,7 @@ export const handleNotifications: RouteHandler = async (request, response, url, 
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -57,12 +52,7 @@ export const handleNotifications: RouteHandler = async (request, response, url, 
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     const parsed = notificationPreferencesSchema.safeParse(
@@ -91,20 +81,11 @@ export const handleNotifications: RouteHandler = async (request, response, url, 
   if (method === "GET" && url.pathname === "/api/notifications/status") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
-    const preferences = database.getNotificationPreferences(
-      session.owner.id,
-    );
-    const status = database.getNotificationDeliveryStatus(
-      session.owner.id,
-    );
+    const preferences = database.getNotificationPreferences(session.owner.id);
+    const status = database.getNotificationDeliveryStatus(session.owner.id);
     const last = status.lastDelivery;
     sendJson(response, 200, {
       configured: notificationPublisher !== undefined,
@@ -145,12 +126,7 @@ export const handleNotifications: RouteHandler = async (request, response, url, 
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -159,12 +135,7 @@ export const handleNotifications: RouteHandler = async (request, response, url, 
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
     if (notificationPublisher === undefined) {

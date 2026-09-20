@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   apiErrorSchema,
+  automationTokenScopeSchema,
   automationConfirmationResponseSchema,
   automationPreviewResponseSchema,
   automationTaskResourceSchema,
@@ -206,6 +209,8 @@ describe("Phase 4 automation HTTP integration", () => {
               "schedule:write",
               "focus:read",
               "focus:write",
+              "habits:read",
+              "habits:write",
             ],
             expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           },
@@ -226,9 +231,105 @@ describe("Phase 4 automation HTTP integration", () => {
           automationTaskResourceSchema.parse(await scopedRead.json()).tasks,
         ).toEqual([]);
 
+        const habitId = randomUUID();
+        const habitPreview = async (input: unknown) => {
+          const response = await automationRequest(
+            server,
+            credential.token,
+            "/api/automation/v1/previews",
+            "POST",
+            { operation: "habits.mutate", input },
+          );
+          expect(response.status).toBe(201);
+          return automationPreviewResponseSchema.parse(await response.json())
+            .preview;
+        };
+        const confirmHabit = (id: string, key: string) =>
+          automationRequest(
+            server,
+            credential.token,
+            `/api/automation/v1/previews/${id}/confirm`,
+            "POST",
+            { idempotencyKey: key },
+          );
+        const hp = await habitPreview({
+          kind: "habit.create",
+          habit: {
+            id: habitId,
+            title: "Walk daily",
+            cadence: { kind: "daily" },
+            startedOn: "2026-01-01",
+            timeZone: "UTC",
+          },
+        });
+        const beforeHabits = await automationRequest(
+          server,
+          credential.token,
+          "/api/automation/v1/resources/habits",
+          "GET",
+        );
+        expect(await beforeHabits.json()).toEqual({
+          habits: [],
+          occurrences: [],
+        });
+        expect((await confirmHabit(hp.id, "habit-create-001")).status).toBe(
+          200,
+        );
+        const completion = await habitPreview({
+          kind: "habit.complete",
+          habitId,
+          baseRevision: 1,
+          periodKey: "2026-01-01",
+        });
+        expect(completion.baseRevisions).toEqual([
+          { entityKind: "habit", entityId: habitId, revision: 1 },
+        ]);
+        const completed = automationConfirmationResponseSchema.parse(
+          await (
+            await confirmHabit(completion.id, "habit-complete-001")
+          ).json(),
+        );
+        const habitReplay = automationConfirmationResponseSchema.parse(
+          await (
+            await confirmHabit(completion.id, "habit-complete-001")
+          ).json(),
+        );
+        expect(habitReplay).toEqual({ ...completed, replayed: true });
+        const duplicate = await habitPreview({
+          kind: "habit.complete",
+          habitId,
+          baseRevision: 1,
+          periodKey: "2026-01-01",
+        });
+        const duplicateResult = automationConfirmationResponseSchema.parse(
+          await (await confirmHabit(duplicate.id, "habit-complete-002")).json(),
+        );
+        expect(duplicateResult.result).toEqual(completed.result);
+        const stale = await habitPreview({
+          kind: "habit.archive",
+          habitId,
+          baseRevision: 1,
+        });
+        const rename = await habitPreview({
+          kind: "habit.patch",
+          habitId,
+          baseRevision: 1,
+          fields: { title: "Walk outside" },
+        });
+        expect((await confirmHabit(rename.id, "habit-rename-001")).status).toBe(
+          200,
+        );
+        expect(
+          (await confirmHabit(stale.id, "habit-archive-stale")).status,
+        ).toBe(412);
+
         const previewInput = {
           operation: "tasks.create",
-          input: { title: "Created by confirmed automation", notes: "" },
+          input: {
+            title: "Created by confirmed automation !December 31, 2027",
+            notes: "",
+            structured: true,
+          },
         };
         const previewResponse = await automationRequest(
           server,
@@ -272,7 +373,10 @@ describe("Phase 4 automation HTTP integration", () => {
           replayed: false,
           result: {
             replayed: false,
-            task: { title: "Created by confirmed automation" },
+            task: {
+              title: "Created by confirmed automation",
+              deadline: { kind: "date", value: "2027-12-31" },
+            },
           },
         });
         if (!("task" in firstResult.result)) {
@@ -494,6 +598,278 @@ describe("Phase 4 automation HTTP integration", () => {
         expect(
           taskListResponseSchema.parse(await browserTasks.json()).tasks,
         ).toHaveLength(2);
+      } finally {
+        await server.close();
+      }
+    });
+  });
+});
+
+describe("Assistant task changes", () => {
+  it("previews edits and completion, rejects stale revisions, and replays exactly after restart", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      await mkdir(join(directory, "web"));
+      const config = configuration(directory);
+      let server = await startSuiteServer(config);
+      try {
+        const owner = {
+          username: "editor",
+          displayName: "Editor",
+          password: "a disposable sufficiently long password",
+        };
+        await fetch(`${server.baseUrl}/api/setup`, {
+          method: "POST",
+          headers: {
+            Origin: server.baseUrl,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(owner),
+        });
+        const login = await fetch(`${server.baseUrl}/api/auth/login`, {
+          method: "POST",
+          headers: {
+            Origin: server.baseUrl,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(owner),
+        });
+        const cookie = login.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+        const { csrfToken } = (await login.json()) as { csrfToken: string };
+        const issue = async (scopes: string[]) => {
+          const response = await browserRequest(
+            server,
+            cookie,
+            csrfToken,
+            "/api/automation/tokens",
+            "POST",
+            {
+              label: "Task editor",
+              scopes,
+              expiresAt: new Date(Date.now() + 3600000).toISOString(),
+            },
+          );
+          expect(response.status).toBe(201);
+          return createAutomationTokenResponseSchema.parse(
+            await response.json(),
+          ).token;
+        };
+        const token = await issue([...automationTokenScopeSchema.options]);
+        const readOnly = await issue(["tasks:read"]);
+        const request = (path: string, body: unknown, credential = token) =>
+          automationRequest(server, credential, path, "POST", body);
+        const preview = async (operation: string, input: unknown) => {
+          const response = await request("/api/automation/v1/previews", {
+            operation,
+            input,
+          });
+          expect(response.status).toBe(201);
+          return automationPreviewResponseSchema.parse(await response.json())
+            .preview;
+        };
+        const confirm = (id: string, key = randomUUID()) =>
+          request(`/api/automation/v1/previews/${id}/confirm`, {
+            idempotencyKey: key,
+          });
+        const createdPreview = await preview("tasks.create", {
+          title: "Before",
+          notes: "Keep notes",
+        });
+        const created = automationConfirmationResponseSchema.parse(
+          await (await confirm(createdPreview.id)).json(),
+        );
+        if (!("task" in created.result)) throw new Error("Expected a task");
+        const original = created.result.task;
+        const editInput = {
+          taskId: original.id,
+          expectedRevision: original.revision,
+          patch: {
+            title: "After",
+            deadline: { kind: "date", value: "2026-10-01" },
+            plannedStart: "2026-09-22T14:00:00.000Z",
+            estimateMinutes: 45,
+          },
+        };
+        expect(
+          (
+            await request(
+              "/api/automation/v1/previews",
+              { operation: "tasks.update", input: editInput },
+              readOnly,
+            )
+          ).status,
+        ).toBe(403);
+        const edit = await preview("tasks.update", editInput);
+        const stale = await preview("tasks.set_completed", {
+          taskId: original.id,
+          expectedRevision: original.revision,
+          completed: true,
+        });
+        const before = automationTaskResourceSchema.parse(
+          await (
+            await automationRequest(
+              server,
+              token,
+              "/api/automation/v1/resources/tasks",
+              "GET",
+            )
+          ).json(),
+        );
+        expect(before.tasks[0]?.title).toBe("Before");
+        const fault = new DatabaseSync(config.databasePath);
+        fault.exec(`CREATE TRIGGER fail_assistant_receipt BEFORE INSERT ON automation_audit_log
+          WHEN NEW.phase='execute' AND NEW.operation='tasks.update'
+          BEGIN SELECT RAISE(ABORT, 'synthetic receipt failure'); END;`);
+        expect((await confirm(edit.id)).status).toBe(500);
+        const afterFailure = automationTaskResourceSchema.parse(
+          await (
+            await automationRequest(
+              server,
+              token,
+              "/api/automation/v1/resources/tasks",
+              "GET",
+            )
+          ).json(),
+        );
+        expect(afterFailure.tasks).toEqual(before.tasks);
+        expect(
+          (
+            fault
+              .prepare("SELECT consumed_at FROM automation_previews WHERE id=?")
+              .get(edit.id) as { consumed_at: unknown }
+          ).consumed_at,
+        ).toBeNull();
+        fault.exec("DROP TRIGGER fail_assistant_receipt");
+        fault.close();
+        const key = randomUUID();
+        const edited = automationConfirmationResponseSchema.parse(
+          await (await confirm(edit.id, key)).json(),
+        );
+        expect(edited.result).toMatchObject({
+          task: {
+            title: "After",
+            notes: "Keep notes",
+            revision: original.revision + 1,
+            estimateMinutes: 45,
+            deadline: { kind: "date", value: "2026-10-01" },
+          },
+        });
+        expect((await confirm(stale.id)).status).toBe(412);
+        await server.close();
+        server = await startSuiteServer(config);
+        const replay = automationConfirmationResponseSchema.parse(
+          await (await confirm(edit.id, key)).json(),
+        );
+        expect(replay).toEqual({ ...edited, replayed: true });
+        const completed = await preview("tasks.set_completed", {
+          taskId: original.id,
+          expectedRevision: original.revision + 1,
+          completed: true,
+        });
+        expect(
+          automationConfirmationResponseSchema.parse(
+            await (await confirm(completed.id)).json(),
+          ).result,
+        ).toMatchObject({
+          task: { status: "completed", revision: original.revision + 2 },
+        });
+        const reopened = await preview("tasks.set_completed", {
+          taskId: original.id,
+          expectedRevision: original.revision + 2,
+          completed: false,
+        });
+        expect(
+          automationConfirmationResponseSchema.parse(
+            await (await confirm(reopened.id)).json(),
+          ).result,
+        ).toMatchObject({
+          task: {
+            status: "open",
+            revision: original.revision + 3,
+            completedAt: null,
+          },
+        });
+        const lifecycleInput = {
+          taskId: original.id,
+          expectedRevision: original.revision + 3,
+        };
+        expect(
+          (
+            await request(
+              "/api/automation/v1/previews",
+              { operation: "tasks.delete", input: lifecycleInput },
+              readOnly,
+            )
+          ).status,
+        ).toBe(403);
+        const deletion = await preview("tasks.delete", lifecycleInput);
+        const deleteKey = randomUUID();
+        const removed = automationConfirmationResponseSchema.parse(
+          await (await confirm(deletion.id, deleteKey)).json(),
+        );
+        expect(removed.result).toMatchObject({
+          task: { revision: original.revision + 4 },
+        });
+        if (!("task" in removed.result))
+          throw new Error("Expected deleted task");
+        expect(typeof removed.result.task.deletedAt).toBe("string");
+        const deletedRead = await automationRequest(
+          server,
+          token,
+          "/api/automation/v1/resources/tasks/deleted",
+          "GET",
+        );
+        expect(
+          automationTaskResourceSchema
+            .parse(await deletedRead.json())
+            .tasks.map((task) => task.id),
+        ).toEqual([original.id]);
+        const activeRead = await automationRequest(
+          server,
+          token,
+          "/api/automation/v1/resources/tasks",
+          "GET",
+        );
+        expect(
+          automationTaskResourceSchema.parse(await activeRead.json()).tasks,
+        ).toEqual([]);
+        const restore = await preview("tasks.restore", {
+          taskId: original.id,
+          expectedRevision: original.revision + 4,
+        });
+        const restored = automationConfirmationResponseSchema.parse(
+          await (await confirm(restore.id)).json(),
+        );
+        expect(restored.result).toMatchObject({
+          task: { deletedAt: null, revision: original.revision + 5 },
+        });
+        // Replaying an old deletion after restoration must not delete again.
+        expect(
+          automationConfirmationResponseSchema.parse(
+            await (await confirm(deletion.id, deleteKey)).json(),
+          ),
+        ).toEqual({ ...removed, replayed: true });
+        const pendingDelete = await preview("tasks.delete", {
+          taskId: original.id,
+          expectedRevision: original.revision + 5,
+        });
+        const start = await preview("focus.start", {
+          operation: "focus.start",
+          taskId: original.id,
+        });
+        expect((await confirm(start.id)).status).toBe(200);
+        const blocked = await confirm(pendingDelete.id);
+        expect(blocked.status).toBe(409);
+        expect(apiErrorSchema.parse(await blocked.json()).code).toBe(
+          "ACTIVE_SESSION_COMPLETE_REQUIRED",
+        );
+        const blockedPreview = await request("/api/automation/v1/previews", {
+          operation: "tasks.delete",
+          input: {
+            taskId: original.id,
+            expectedRevision: original.revision + 5,
+          },
+        });
+        expect(blockedPreview.status).toBe(409);
       } finally {
         await server.close();
       }

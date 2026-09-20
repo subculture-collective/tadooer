@@ -282,7 +282,10 @@ export class SqliteTaskStore implements TaskStore {
     tagId?: string,
   ): readonly TaskRecord[] {
     const like = `%${query}%`;
-    const conditions: string[] = ["t.owner_id = ?", "(t.title LIKE ? OR t.notes LIKE ?)"];
+    const conditions: string[] = [
+      "t.owner_id = ?",
+      "(t.title LIKE ? OR t.notes LIKE ?)",
+    ];
     const params: (string | null)[] = [ownerId, like, like];
 
     if (status !== undefined) {

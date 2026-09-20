@@ -1,4 +1,12 @@
 import {
+  taskImportApplyResponseSchema,
+  automationTokenListResponseSchema,
+  createAutomationTokenRequestSchema,
+  createAutomationTokenResponseSchema,
+  type CreateAutomationTokenRequest,
+  superProductivityPreviewSchema,
+} from "@suite/contracts";
+import {
   apiErrorSchema,
   activeSessionCommandResponseSchema,
   activeSessionCommandSchema,
@@ -87,6 +95,7 @@ import {
 } from "@suite/contracts";
 import { ApiRequestError } from "@suite/contracts";
 import { z } from "zod";
+import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
 import { SyncCursorResetRequired, type SyncTransport } from "./sync-engine.ts";
 
@@ -105,13 +114,15 @@ const request = async <T>(
   const body: unknown = await response.json();
   if (!response.ok) {
     const error = apiErrorSchema.safeParse(body);
-    throw new ApiRequestError(
+    const failure = new ApiRequestError(
       response.status,
       error.success ? error.data.code : "INVALID_RESPONSE",
       error.success
         ? error.data.message
         : "The server returned an invalid response",
     );
+    reportSessionFailure(failure);
+    throw failure;
   }
   return schema.parse(body);
 };
@@ -126,13 +137,15 @@ const requestEmpty = async (
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => undefined);
   const error = apiErrorSchema.safeParse(body);
-  throw new ApiRequestError(
+  const failure = new ApiRequestError(
     response.status,
     error.success ? error.data.code : "INVALID_RESPONSE",
     error.success
       ? error.data.message
       : "The server returned an invalid response",
   );
+  reportSessionFailure(failure);
+  throw failure;
 };
 
 const clientProofHeaders = (
@@ -207,10 +220,12 @@ export const beginGoogleAuthorization = (
 
 export const synchronizeGoogle = (
   csrfToken: string,
+  full = false,
 ): Promise<GoogleSyncResponse> =>
   request("/api/connectors/google/sync", googleSyncResponseSchema, {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ full }),
   });
 
 export const disconnectGoogle = (
@@ -405,6 +420,7 @@ export const syncRound = async (
       headers: {
         ...clientProofHeaders(client),
         "X-CSRF-Token": csrfToken,
+        "X-Suite-Sync-Version": "2",
       },
       body: JSON.stringify(input),
     });
@@ -428,7 +444,7 @@ const getSyncSnapshotPage = (
     `/api/sync/snapshot?offset=${String(offset)}`,
     syncSnapshotResponseSchema,
     {
-      headers: clientProofHeaders(client),
+      headers: { ...clientProofHeaders(client), "X-Suite-Sync-Version": "2" },
     },
   );
 
@@ -458,6 +474,7 @@ export const getSyncSnapshot = async (
       snapshots,
       nextCursor: page.nextCursor,
       hasMore: false,
+      protocolVersion: 2 as const,
       serverTimestamp: page.serverTimestamp,
     };
   }
@@ -539,6 +556,21 @@ const subtaskPatchSchema = z
   .refine((input) => Object.keys(input).length > 0, {
     message: "At least one subtask field is required",
   });
+const subtaskOrderSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.uuid(),
+        revision: z.number().int().positive(),
+      }),
+    )
+    .min(1)
+    .max(200)
+    .refine(
+      (items) => new Set(items.map(({ id }) => id)).size === items.length,
+      { message: "Checklist order cannot contain duplicate items" },
+    ),
+});
 
 export type OrganizationPatch = z.infer<typeof organizationPatchSchema>;
 export type SubtaskCreate = z.infer<typeof subtaskCreateSchema>;
@@ -665,6 +697,17 @@ export const patchSubtask = (
     headers: conditionalHeaders(revision, csrfToken),
     body: JSON.stringify(subtaskPatchSchema.parse(input)),
   }).then(({ subtask }) => subtask);
+
+export const reorderSubtasks = (
+  taskId: string,
+  items: readonly { readonly id: string; readonly revision: number }[],
+  csrfToken: string,
+): Promise<readonly Subtask[]> =>
+  request(`/api/tasks/${taskId}/subtasks`, subtaskListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(subtaskOrderSchema.parse({ items })),
+  }).then(({ subtasks }) => subtasks);
 
 export const deleteSubtask = (
   subtaskId: string,
@@ -940,3 +983,42 @@ export const revokeCalendarFeed = (id: string, csrfToken: string) =>
     method: "DELETE",
     headers: { "X-CSRF-Token": csrfToken },
   });
+
+export const previewTaskImport = (rawJson: string, csrfToken: string) =>
+  request(
+    "/api/imports/super-productivity/preview",
+    superProductivityPreviewSchema,
+    { method: "POST", headers: { "X-CSRF-Token": csrfToken }, body: rawJson },
+  );
+
+export const listAutomationTokens = () =>
+  request("/api/automation/tokens", automationTokenListResponseSchema);
+export const createAutomationToken = (
+  input: CreateAutomationTokenRequest,
+  csrfToken: string,
+) =>
+  request("/api/automation/tokens", createAutomationTokenResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(createAutomationTokenRequestSchema.parse(input)),
+  });
+export const revokeAutomationToken = (id: string, csrfToken: string) =>
+  requestEmpty(`/api/automation/tokens/${id}`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+
+export const applyTaskImport = (
+  rawJson: string,
+  inputHash: string,
+  csrfToken: string,
+) =>
+  request(
+    "/api/imports/super-productivity/apply",
+    taskImportApplyResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken, "X-Import-Hash": inputHash },
+      body: rawJson,
+    },
+  );

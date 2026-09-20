@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { sendJson, sendError, readJson, sameOrigin, expectedRevision } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  expectedRevision,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { taskResponse, tagResponse } from "./shared.ts";
 
@@ -7,32 +13,19 @@ export const handleTags: RouteHandler = async (request, response, url, ctx) => {
   const { stores: database, auth } = ctx;
   const method = request.method ?? "GET";
 
-  if (
-    method === "GET" &&
-    url.pathname === "/api/tags"
-  ) {
+  if (method === "GET" && url.pathname === "/api/tags") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
-    sendJson(
-      response,
-      200,
-      { tags: database.listTags(session.owner.id).map(tagResponse) },
-    );
+    sendJson(response, 200, {
+      tags: database.listTags(session.owner.id).map(tagResponse),
+    });
     return true;
   }
 
-  if (
-    method === "POST" &&
-    url.pathname === "/api/tags"
-  ) {
+  if (method === "POST" && url.pathname === "/api/tags") {
     const session = auth.authenticate(request, true);
     if (
       session === undefined ||
@@ -58,12 +51,7 @@ export const handleTags: RouteHandler = async (request, response, url, ctx) => {
       input.title.trim().length === 0 ||
       input.title.trim().length > 100
     ) {
-      sendError(
-        response,
-        400,
-        "INVALID_ORGANIZATION",
-        "A title is required",
-      );
+      sendError(response, 400, "INVALID_ORGANIZATION", "A title is required");
       return true;
     }
     const now = new Date().toISOString();
@@ -104,8 +92,7 @@ export const handleTags: RouteHandler = async (request, response, url, ctx) => {
     return true;
   }
 
-  const tagMatch =
-    /^\/api\/tags\/([0-9a-f-]{36})$/.exec(url.pathname);
+  const tagMatch = /^\/api\/tags\/([0-9a-f-]{36})$/.exec(url.pathname);
   if (method === "PATCH" && tagMatch !== null) {
     const session = auth.authenticate(request, true);
     if (
@@ -145,12 +132,7 @@ export const handleTags: RouteHandler = async (request, response, url, ctx) => {
     const now = new Date().toISOString();
     const id = tagMatch[1];
     if (id === undefined) {
-      sendError(
-        response,
-        404,
-        "NOT_FOUND",
-        "Organization record not found",
-      );
+      sendError(response, 404, "NOT_FOUND", "Organization record not found");
       return true;
     }
     let result;
@@ -200,8 +182,9 @@ export const handleTags: RouteHandler = async (request, response, url, ctx) => {
     return true;
   }
 
-  const taskTagsMatch =
-    /^\/api\/tasks\/([0-9a-f-]{36})\/tags$/.exec(url.pathname);
+  const taskTagsMatch = /^\/api\/tasks\/([0-9a-f-]{36})\/tags$/.exec(
+    url.pathname,
+  );
   if (method === "PUT" && taskTagsMatch !== null) {
     const session = auth.authenticate(request, true);
     if (
@@ -234,8 +217,7 @@ export const handleTags: RouteHandler = async (request, response, url, ctx) => {
     const result =
       Array.isArray(input.tagIds) &&
       input.tagIds.every(
-        (tagId) =>
-          typeof tagId === "string" && /^[0-9a-f-]{36}$/.test(tagId),
+        (tagId) => typeof tagId === "string" && /^[0-9a-f-]{36}$/.test(tagId),
       ) &&
       database.setTaskTags(
         session.owner.id,

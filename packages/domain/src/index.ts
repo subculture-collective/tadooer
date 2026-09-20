@@ -34,4 +34,10 @@ export interface AuthorizationContext {
 export * from "./active-session.ts";
 export * from "./choice-pool.ts";
 export * from "./day-planning.ts";
+export * from "./habits.ts";
 export * from "./notifications.ts";
+export * from "./structured-capture.ts";
+
+export * from "./calendar-freshness.ts";
+
+export * from "./calendar-bridge.ts";

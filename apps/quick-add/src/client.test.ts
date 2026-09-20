@@ -65,6 +65,7 @@ describe("quick-add automation HTTP client", () => {
         idempotencyKey: "capture-inbox-20260806",
         title: task.title,
         notes: task.notes,
+        structured: true,
       },
       `suite_at_${id}.${"A".repeat(43)}`,
     );
@@ -77,7 +78,7 @@ describe("quick-add automation HTTP client", () => {
     expect(calls[0]?.init.body).toBe(
       JSON.stringify({
         operation: "tasks.create",
-        input: { title: task.title, notes: task.notes },
+        input: { title: task.title, notes: task.notes, structured: true },
       }),
     );
     expect(calls[1]?.init.body).toBe(

@@ -791,19 +791,28 @@ export class SqliteSyncStore implements SyncStore {
     };
   }
 
-  #getActiveSession(ownerId: string): { readonly id: string; readonly taskId: string; readonly revision: number; readonly endedAt: string | null } | undefined {
+  #getActiveSession(ownerId: string):
+    | {
+        readonly id: string;
+        readonly taskId: string;
+        readonly revision: number;
+        readonly endedAt: string | null;
+      }
+    | undefined {
     const row = this.db
       .prepare(
         "SELECT id, task_id, revision, ended_at FROM active_sessions WHERE owner_id = ? ORDER BY ended_at IS NULL DESC, created_at DESC LIMIT 1",
       )
       .get(ownerId) as unknown as
       Record<string, string | number | null> | undefined;
-    return row === undefined ? undefined : {
-      id: String(row.id),
-      taskId: String(row.task_id),
-      revision: Number(row.revision),
-      endedAt: row.ended_at === null ? null : String(row.ended_at),
-    };
+    return row === undefined
+      ? undefined
+      : {
+          id: String(row.id),
+          taskId: String(row.task_id),
+          revision: Number(row.revision),
+          endedAt: row.ended_at === null ? null : String(row.ended_at),
+        };
   }
 
   // ---------------------------------------------------------------------------

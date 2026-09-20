@@ -6,9 +6,7 @@ describe("shared automation catalog mapping", () => {
   it("exposes every shared tool and read-only resource without a second declaration", () => {
     const catalog = loadMcpCatalog();
     expect(catalog.tools.map((tool) => tool.name)).toEqual(
-      automationCatalog
-        .filter((entry) => entry.kind === "tool")
-        .map((entry) => entry.mcpName),
+      automationCatalog.map((entry) => entry.mcpName),
     );
     expect(catalog.resources.map((resource) => resource.uri)).toEqual(
       automationCatalog
@@ -21,6 +19,9 @@ describe("shared automation catalog mapping", () => {
       method: "POST",
       path: "/api/automation/v1/previews/{previewId}/confirm",
     });
+    expect(
+      catalog.tools.find((tool) => tool.name === "suite.tasks.list")?.http,
+    ).toEqual({ method: "GET", path: "/api/automation/v1/resources/tasks" });
     const taskCreateSchema = JSON.stringify(
       catalog.tools.find((tool) => tool.name === "suite.tasks.create")
         ?.inputSchema,

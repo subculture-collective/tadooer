@@ -94,8 +94,13 @@ describe("Google planning surface", () => {
     );
     expect(html).toContain("owner@example.test");
     expect(html).toContain("Primary");
+    expect(html).toContain("Last successful sync:");
+    expect(html).toContain("2026-08-07T09:59:00.000Z");
+    expect(html).toContain("Google refresh is currently manual");
     expect(html).toContain("Google projection is current");
     expect(html).toContain("Sync Google now");
+    expect(html).toContain("Resync Google Calendar");
+    expect(html).toContain("existing Google connection");
     expect(html).toContain("Disconnect Google");
     expect(html).toContain("Reminder: quiet");
   });

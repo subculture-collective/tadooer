@@ -160,6 +160,7 @@ describe("Phase 2 API transport", () => {
               label: "This browser",
             },
             clientCredential: client.clientCredential,
+            protocolVersion: 2 as const,
             initialCursor: "sync-v1.epoch.1.tag",
           },
           201,
@@ -227,6 +228,7 @@ describe("Phase 2 API transport", () => {
                 : [],
             nextCursor: "sync-v1.epoch.2.tag",
             hasMore: calls.length === 1,
+            protocolVersion: 2 as const,
             serverTimestamp: "2026-08-06T16:00:00.000Z",
           }),
         );
@@ -276,6 +278,7 @@ describe("Phase 2 API transport", () => {
                 ? "sync-v1.epoch.3.tag"
                 : "sync-v1.epoch.2.tag",
             hasMore: firstPage,
+            protocolVersion: 2 as const,
             serverTimestamp: "2026-08-06T16:00:00.000Z",
           }),
         );

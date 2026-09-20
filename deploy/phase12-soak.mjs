@@ -103,7 +103,12 @@ export const startSoak = async (path, candidate, startedAt) => {
     startedAt,
     observations: [],
   });
-  await atomicWrite(path, ledger);
+  // A new run must never replace the evidence from an existing soak.
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(ledger, null, 2)}\n`, {
+    mode: 0o600,
+    flag: "wx",
+  });
   return ledger;
 };
 

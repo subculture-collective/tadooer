@@ -1,3 +1,4 @@
+export { superProductivityImportLimits } from "./import-limits.ts";
 import { z } from "zod";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
@@ -155,6 +156,108 @@ export const calendarEventIdentitySchema = z.object({
 
 export const taskStatusSchema = z.enum(["open", "completed"]);
 
+export const habitCadenceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("daily") }),
+  z.object({
+    kind: z.literal("weekly"),
+    weekdays: z
+      .array(z.number().int().min(0).max(6))
+      .min(1)
+      .max(7)
+      .refine((weekdays) => new Set(weekdays).size === weekdays.length, {
+        message: "Weekly habit weekdays must be unique",
+      }),
+  }),
+  z.object({
+    kind: z.literal("custom"),
+    intervalDays: z.number().int().min(1).max(365),
+  }),
+]);
+
+export const habitSchema = z.object({
+  id: entityIdSchema,
+  ownerId: entityIdSchema,
+  title: z.string().trim().min(1).max(240),
+  cadence: habitCadenceSchema,
+  startedOn: z.iso.date(),
+  timeZone: ianaTimeZoneSchema,
+  revision: revisionSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+});
+
+export const habitOccurrenceSchema = z.object({
+  id: entityIdSchema,
+  habitId: entityIdSchema,
+  periodKey: z.iso.date(),
+  completedAt: z.iso.datetime(),
+  createdAt: z.iso.datetime(),
+});
+
+export const createHabitRequestSchema = z.object({
+  title: z.string().trim().min(1).max(240),
+  cadence: habitCadenceSchema,
+  startedOn: z.iso.date(),
+  timeZone: ianaTimeZoneSchema,
+});
+
+// Schedule identity is immutable once created; edits do not reinterpret past occurrences.
+export const patchHabitRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240).optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "A habit edit is required",
+  });
+
+export const habitCommandSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("habit.create"),
+      habit: createHabitRequestSchema.extend({ id: entityIdSchema }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("habit.patch"),
+      habitId: entityIdSchema,
+      baseRevision: revisionSchema,
+      fields: patchHabitRequestSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.enum(["habit.archive", "habit.restore"]),
+      habitId: entityIdSchema,
+      baseRevision: revisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("habit.complete"),
+      habitId: entityIdSchema,
+      baseRevision: revisionSchema,
+      periodKey: z.iso.date(),
+    })
+    .strict(),
+]);
+
+export const completeHabitRequestSchema = z.object({
+  periodKey: z.iso.date(),
+});
+
+export const habitListResponseSchema = z.object({
+  habits: z.array(habitSchema),
+  occurrences: z.array(habitOccurrenceSchema),
+});
+
+export const taskDeadlineSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("date"), value: z.iso.date() }),
+  z.object({ kind: z.literal("instant"), value: z.iso.datetime() }),
+]);
+
 export const taskSchema = z.object({
   id: entityIdSchema,
   title: z.string().trim().min(1).max(240),
@@ -166,6 +269,7 @@ export const taskSchema = z.object({
   completedAt: z.iso.datetime().nullable().optional(),
   deletedAt: z.iso.datetime().nullable().optional(),
   plannedStart: z.iso.datetime().nullable().optional(),
+  deadline: taskDeadlineSchema.nullable().optional(),
   estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
   tagIds: z
@@ -178,8 +282,14 @@ export const taskSchema = z.object({
 });
 
 export const createTaskRequestSchema = z.object({
+  structured: z.boolean().optional(),
+  estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   title: z.string().trim().min(1).max(240),
   notes: z.string().max(20_000).default(""),
+  plannedStart: z.iso.datetime().nullable().optional(),
+  deadline: taskDeadlineSchema.nullable().optional(),
+  projectId: entityIdSchema.nullable().optional(),
+  tagIds: z.array(entityIdSchema).max(25).optional(),
 });
 
 export const taskMutationResponseSchema = z.object({
@@ -196,6 +306,7 @@ export const taskPatchRequestSchema = z
     title: z.string().trim().min(1).max(240).optional(),
     notes: z.string().max(20_000).optional(),
     plannedStart: z.iso.datetime().nullable().optional(),
+    deadline: taskDeadlineSchema.nullable().optional(),
     estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   })
   .refine((input) => Object.keys(input).length > 0, {
@@ -296,6 +407,11 @@ export const googleAuthorizationResponseSchema = z.object({
   authorizationUrl: z.url(),
   expiresAt: z.iso.datetime(),
 });
+export const googleSyncRequestSchema = z
+  .object({
+    full: z.boolean().default(false),
+  })
+  .strict();
 export const googleSyncResponseSchema = z.object({
   status: googleConnectorStatusResponseSchema,
   resetCalendars: z.array(entityIdSchema),
@@ -797,6 +913,7 @@ export const clientRegistrationRequestSchema = z
 export const clientCredentialSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 export const clientRegistrationResponseSchema = z.object({
+  protocolVersion: z.literal(2),
   client: clientIdentitySchema,
   clientCredential: clientCredentialSchema,
   initialCursor: z.string().min(1).max(512),
@@ -822,6 +939,7 @@ export const coreTaskFieldSchema = z.enum([
   "estimateMinutes",
   "projectId",
   "tagIds",
+  "deadline",
 ]);
 
 export const taskFieldVersionsSchema = z.object({
@@ -831,6 +949,7 @@ export const taskFieldVersionsSchema = z.object({
   estimateMinutes: revisionSchema,
   projectId: revisionSchema,
   tagIds: revisionSchema,
+  deadline: revisionSchema,
 });
 
 export const syncTaskSnapshotSchema = z.object({
@@ -844,6 +963,7 @@ const syncPatchFieldsSchema = z
     title: z.string().trim().min(1).max(240).optional(),
     notes: z.string().max(20_000).optional(),
     estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
+    deadline: taskDeadlineSchema.nullable().optional(),
   })
   .strict()
   .refine((fields) => Object.keys(fields).length > 0, {
@@ -855,6 +975,7 @@ const syncPatchBaseVersionsSchema = z
     title: revisionSchema.optional(),
     notes: revisionSchema.optional(),
     estimateMinutes: revisionSchema.optional(),
+    deadline: revisionSchema.optional(),
   })
   .strict();
 
@@ -865,7 +986,15 @@ const syncOperationBaseSchema = z.object({
   requestHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
 
+export const habitSyncOperationSchema = z.discriminatedUnion("kind", [
+  habitCommandSchema.options[0].extend(syncOperationBaseSchema.shape),
+  habitCommandSchema.options[1].extend(syncOperationBaseSchema.shape),
+  habitCommandSchema.options[2].extend(syncOperationBaseSchema.shape),
+  habitCommandSchema.options[3].extend(syncOperationBaseSchema.shape),
+]);
+
 export const syncOperationSchema = z.discriminatedUnion("kind", [
+  ...habitSyncOperationSchema.options,
   syncOperationBaseSchema.extend({
     kind: z.literal("task.create"),
     task: z
@@ -874,6 +1003,7 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
         title: z.string().trim().min(1).max(240),
         notes: z.string().max(20_000),
         estimateMinutes: z.number().int().min(1).max(720).nullable(),
+        deadline: taskDeadlineSchema.nullable().optional(),
       })
       .strict(),
   }),
@@ -921,7 +1051,7 @@ export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
     code: z.enum(["SYNC_FIELD_CONFLICT", "SYNC_RESOURCE_CONFLICT"]),
     taskId: entityIdSchema,
     taskRevision: revisionSchema,
-    conflictingFields: z.array(coreTaskFieldSchema).min(1).max(6).optional(),
+    conflictingFields: z.array(coreTaskFieldSchema).min(1).max(7).optional(),
   }),
   z.object({
     kind: z.literal("rejected"),
@@ -1048,6 +1178,11 @@ export const syncPlanningPlaceholderSnapshotSchema = z.object({
 });
 
 export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
+  z.object({ entityKind: z.literal("habit"), value: habitSchema }),
+  z.object({
+    entityKind: z.literal("habit_occurrence"),
+    value: habitOccurrenceSchema,
+  }),
   z.object({ entityKind: z.literal("task"), value: syncTaskSnapshotSchema }),
   z.object({ entityKind: z.literal("project"), value: projectSchema }),
   z.object({ entityKind: z.literal("tag"), value: tagSchema }),
@@ -1077,6 +1212,8 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
 export const syncChangeSchema = z.object({
   sequence: revisionSchema,
   entityKind: z.enum([
+    "habit",
+    "habit_occurrence",
     "task",
     "project",
     "tag",
@@ -1109,6 +1246,7 @@ export const syncRoundRequestSchema = z
   );
 
 export const syncRoundResponseSchema = z.object({
+  protocolVersion: z.literal(2),
   outcomes: z.array(syncOperationOutcomeSchema).max(100),
   changes: z.array(syncChangeSchema).max(200),
   nextCursor: syncCursorSchema,
@@ -1122,6 +1260,7 @@ export const syncCursorExpiredSchema = apiErrorSchema.extend({
 });
 
 export const syncSnapshotResponseSchema = z.object({
+  protocolVersion: z.literal(2),
   snapshots: z.array(syncEntitySnapshotSchema).max(200),
   nextCursor: syncCursorSchema,
   hasMore: z.boolean(),
@@ -1133,6 +1272,11 @@ export const syncDiagnosticOperationSchema = z
     operationId: entityIdSchema,
     entityId: entityIdSchema.nullable(),
     kind: z.enum([
+      "habit.create",
+      "habit.patch",
+      "habit.archive",
+      "habit.restore",
+      "habit.complete",
       "task.create",
       "task.patch",
       "task.complete",
@@ -1183,6 +1327,8 @@ export const automationTokenScopeSchema = z.enum([
   "templates:write",
   "pools:read",
   "pools:write",
+  "habits:read",
+  "habits:write",
 ]);
 
 export const automationTokenSchema = z
@@ -1190,7 +1336,10 @@ export const automationTokenSchema = z
     id: entityIdSchema,
     ownerId: entityIdSchema,
     label: z.string().trim().min(1).max(100),
-    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    scopes: z
+      .array(automationTokenScopeSchema)
+      .min(1)
+      .max(automationTokenScopeSchema.options.length),
     createdAt: z.iso.datetime(),
     lastUsedAt: z.iso.datetime().nullable(),
     expiresAt: z.iso.datetime(),
@@ -1204,7 +1353,10 @@ export const automationTokenSchema = z
 export const createAutomationTokenRequestSchema = z
   .object({
     label: z.string().trim().min(1).max(100),
-    scopes: z.array(automationTokenScopeSchema).min(1).max(8),
+    scopes: z
+      .array(automationTokenScopeSchema)
+      .min(1)
+      .max(automationTokenScopeSchema.options.length),
     expiresAt: z.iso.datetime(),
   })
   .strict()
@@ -1229,6 +1381,10 @@ export const automationTokenListResponseSchema = z
 
 export const automationOperationSchema = z.enum([
   "tasks.create",
+  "tasks.update",
+  "tasks.set_completed",
+  "tasks.delete",
+  "tasks.restore",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1240,6 +1396,7 @@ export const automationOperationSchema = z.enum([
   "templates.instantiate",
   "template_sets.instantiate",
   "placeholders.resolve",
+  "habits.mutate",
 ]);
 
 const automationSessionCommandBaseSchema = z.object({
@@ -1262,8 +1419,11 @@ export const automationFocusCommandInputSchema = z.discriminatedUnion(
       automationSessionCommandBaseSchema.extend({
         operation: z.literal(
           operation as Exclude<
-            z.infer<typeof automationOperationSchema>,
-            "tasks.create" | "schedule.create_time_block" | "focus.start"
+            Extract<
+              z.infer<typeof automationOperationSchema>,
+              `focus.${string}`
+            >,
+            "focus.start"
           >,
         ),
       }),
@@ -1271,9 +1431,50 @@ export const automationFocusCommandInputSchema = z.discriminatedUnion(
   ],
 );
 
+export const automationTaskUpdateInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    patch: taskPatchRequestSchema,
+  })
+  .strict();
+export const automationTaskLifecycleInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+  })
+  .strict();
+export const automationTaskCompletionInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    completed: z.boolean(),
+  })
+  .strict();
+
 export const automationPreviewCommandSchema = z.discriminatedUnion(
   "operation",
   [
+    z.object({
+      operation: z.literal("habits.mutate"),
+      input: habitCommandSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.delete"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.restore"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.update"),
+      input: automationTaskUpdateInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.set_completed"),
+      input: automationTaskCompletionInputSchema,
+    }),
     z.object({
       operation: z.literal("tasks.create"),
       input: createTaskRequestSchema,
@@ -1330,6 +1531,26 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
 const automationToolInputSchema = (
   operation: z.infer<typeof automationOperationSchema>,
 ): z.ZodType => {
+  if (operation === "habits.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: habitCommandSchema,
+    });
+  if (operation === "tasks.delete" || operation === "tasks.restore")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskLifecycleInputSchema,
+    });
+  if (operation === "tasks.update")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskUpdateInputSchema,
+    });
+  if (operation === "tasks.set_completed")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskCompletionInputSchema,
+    });
   if (operation === "tasks.create")
     return z.object({
       operation: z.literal("tasks.create"),
@@ -1382,6 +1603,7 @@ const automationToolInputSchema = (
 export const automationAffectedEntitySchema = z
   .object({
     entityKind: z.enum([
+      "habit",
       "task",
       "calendar",
       "active_session",
@@ -1399,6 +1621,7 @@ export const automationAffectedEntitySchema = z
 export const automationBaseRevisionSchema = z
   .object({
     entityKind: z.enum([
+      "habit",
       "task",
       "active_session",
       "template",
@@ -1438,7 +1661,16 @@ export const automationConfirmToolInputSchema = z
   .object({ previewId: entityIdSchema, idempotencyKey: idempotencyKeySchema })
   .strict();
 
+export const habitMutationResponseSchema = z
+  .object({
+    habit: habitSchema,
+    occurrence: habitOccurrenceSchema.nullable(),
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export const automationExecutionResultSchema = z.union([
+  habitMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
   taskMutationResponseSchema,
@@ -1491,6 +1723,17 @@ export interface AutomationCatalogEntry {
 // import it instead of maintaining parallel operation lists.
 export const automationCatalog = [
   {
+    id: "habits.list",
+    kind: "resource",
+    scopes: ["habits:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/habits",
+    mcpName: "suite.habits.list",
+    mcpUri: "suite://v1/habits",
+    inputSchema: z.object({}).strict(),
+    outputSchema: habitListResponseSchema,
+  },
+  {
     id: "tasks.list",
     kind: "resource",
     scopes: ["tasks:read"],
@@ -1498,6 +1741,17 @@ export const automationCatalog = [
     apiPath: "/api/automation/v1/resources/tasks",
     mcpName: "suite.tasks.list",
     mcpUri: "suite://v1/tasks",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationTaskResourceSchema,
+  },
+  {
+    id: "tasks.deleted",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tasks/deleted",
+    mcpName: "suite.tasks.deleted",
+    mcpUri: "suite://v1/tasks/deleted",
     inputSchema: z.object({}).strict(),
     outputSchema: automationTaskResourceSchema,
   },
@@ -1582,15 +1836,17 @@ export const automationCatalog = [
     id,
     kind: "tool" as const,
     scopes: [
-      id === "tasks.create"
-        ? "tasks:write"
-        : id === "schedule.create_time_block"
-          ? "schedule:write"
-          : id.startsWith("templates.") || id.startsWith("template_sets.")
-            ? "templates:write"
-            : id === "placeholders.resolve"
-              ? "pools:write"
-              : "focus:write",
+      id === "habits.mutate"
+        ? "habits:write"
+        : id.startsWith("tasks.")
+          ? "tasks:write"
+          : id === "schedule.create_time_block"
+            ? "schedule:write"
+            : id.startsWith("templates.") || id.startsWith("template_sets.")
+              ? "templates:write"
+              : id === "placeholders.resolve"
+                ? "pools:write"
+                : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -1607,6 +1863,7 @@ export const automationCatalog = [
       "focus:write",
       "templates:write",
       "pools:write",
+      "habits:write",
     ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",
@@ -1740,6 +1997,7 @@ export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
+export type HabitListResponse = z.infer<typeof habitListResponseSchema>;
 export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
 export type ConditionalRequestHeaders = z.infer<
   typeof conditionalRequestHeadersSchema
@@ -1872,3 +2130,63 @@ export type AutomationConfirmationResponse = z.infer<
 >;
 
 export { ApiRequestError, createAutomationClient } from "./http-client.ts";
+
+export type HabitCommand = z.infer<typeof habitCommandSchema>;
+export type HabitSyncOperation = z.infer<typeof habitSyncOperationSchema>;
+
+export const isHabitSyncOperation = (
+  operation: SyncOperation,
+): operation is HabitSyncOperation => operation.kind.startsWith("habit.");
+
+export type Habit = z.infer<typeof habitSchema>;
+export type HabitOccurrence = z.infer<typeof habitOccurrenceSchema>;
+
+export const superProductivityPreviewSchema = z.object({
+  source: z.literal("super_productivity"),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  canApply: z.boolean(),
+  totals: z.object({
+    tasks: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    archived: z.number().int().nonnegative(),
+    childTasks: z.number().int().nonnegative(),
+    projects: z.number().int().nonnegative(),
+    tags: z.number().int().nonnegative(),
+    repeatConfigurations: z.number().int().nonnegative(),
+    trackedMilliseconds: z.number().nonnegative(),
+  }),
+  tasks: z.array(
+    z.object({
+      sourceId: z.string(),
+      title: z.string(),
+      completed: z.boolean(),
+      archived: z.boolean(),
+      parentId: z.string().nullable(),
+      projectId: z.string().nullable(),
+      repeatConfigId: z.string().nullable(),
+      estimateMilliseconds: z.number().nonnegative(),
+      trackedMilliseconds: z.number().nonnegative(),
+      scheduledAt: z.iso.datetime().nullable(),
+      scheduledDay: z.string().nullable(),
+      deadlineAt: z.iso.datetime().nullable(),
+      deadlineDay: z.string().nullable(),
+    }),
+  ),
+  issues: z.array(
+    z.object({
+      code: z.string(),
+      sourceId: z.string().nullable(),
+      detail: z.string(),
+    }),
+  ),
+});
+export type SuperProductivityPreview = z.infer<
+  typeof superProductivityPreviewSchema
+>;
+
+export const taskImportApplyResponseSchema = z
+  .object({
+    created: z.number().int().nonnegative(),
+    existing: z.number().int().nonnegative(),
+  })
+  .strict();

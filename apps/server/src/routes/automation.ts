@@ -1,3 +1,5 @@
+import { StructuredCaptureError } from "@suite/domain";
+import { createCapturedTask, resolveTaskCapture } from "../task-capture.ts";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
@@ -68,10 +70,9 @@ function authenticateAutomation(
     return undefined;
   }
   const authorization = request.headers.authorization;
-  const match =
-    /^Bearer (suite_at_([0-9a-f-]{36})\.([A-Za-z0-9_-]{43}))$/.exec(
-      authorization ?? "",
-    );
+  const match = /^Bearer (suite_at_([0-9a-f-]{36})\.([A-Za-z0-9_-]{43}))$/.exec(
+    authorization ?? "",
+  );
   if (match === null) {
     sendError(
       response,
@@ -130,6 +131,28 @@ export const handleAutomation: RouteHandler = async (
 ) => {
   const { stores: database, auth, baikal: connector, sessionClock } = ctx;
   const method = request.method ?? "GET";
+  const deletionBlocked = (ownerId: string, taskId: string): boolean => {
+    const active = database.getActiveSession(ownerId);
+    if (active?.endedAt === null && active.taskId === taskId) {
+      sendError(
+        response,
+        409,
+        "ACTIVE_SESSION_COMPLETE_REQUIRED",
+        "Complete the active focus session before deleting this task",
+      );
+      return true;
+    }
+    if (database.getTaskCalendarBlock(ownerId, taskId) !== undefined) {
+      sendError(
+        response,
+        409,
+        "TIME_BLOCK_REMOVE_REQUIRED",
+        "Remove the calendar block before deleting this task",
+      );
+      return true;
+    }
+    return false;
+  };
 
   // GET/POST /api/automation/tokens
   if (url.pathname === "/api/automation/tokens") {
@@ -185,9 +208,7 @@ export const handleAutomation: RouteHandler = async (
         id,
         ownerId: session.owner.id,
         label: parsed.data.label,
-        secretHash: createHash("sha256")
-          .update(secret)
-          .digest("base64url"),
+        secretHash: createHash("sha256").update(secret).digest("base64url"),
         scopes: parsed.data.scopes,
         createdAt,
         lastUsedAt: null,
@@ -275,23 +296,29 @@ export const handleAutomation: RouteHandler = async (
     const token = authenticateAutomation(request, response, database, scope);
     if (token === undefined) return true;
     let body: unknown;
-    if (resource === "tasks.list")
+    if (resource === "habits.list")
+      body = {
+        habits: database.habits.list(token.ownerId),
+        occurrences: database.habits.occurrences(token.ownerId),
+      };
+    else if (resource === "tasks.list")
       body = {
         tasks: database.listTasks(token.ownerId).map(taskResponse),
       };
+    else if (resource === "tasks.deleted")
+      body = {
+        tasks: database.listDeletedTasks(token.ownerId).map(taskResponse),
+      };
     else if (resource === "projects.list")
       body = {
-        projects: database
-          .listProjects(token.ownerId)
-          .map(projectResponse),
+        projects: database.listProjects(token.ownerId).map(projectResponse),
       };
     else if (resource === "tags.list")
       body = { tags: database.listTags(token.ownerId).map(tagResponse) };
     else if (resource === "templates.list") {
       const query = templateSearchRequestSchema.safeParse({
         query: url.searchParams.get("query") ?? "",
-        includeArchived:
-          url.searchParams.get("includeArchived") === "true",
+        includeArchived: url.searchParams.get("includeArchived") === "true",
       });
       if (!query.success) {
         sendError(
@@ -325,9 +352,7 @@ export const handleAutomation: RouteHandler = async (
       const sets = database.listTemplateSets(token.ownerId);
       body = {
         sets: sets.map(templateSetResponse),
-        members: sets.flatMap((set) =>
-          database.listTemplateSetMembers(set.id),
-        ),
+        members: sets.flatMap((set) => database.listTemplateSetMembers(set.id)),
       };
     } else if (resource === "pools.list") {
       const pools = database.listChoicePools(token.ownerId, true);
@@ -385,9 +410,7 @@ export const handleAutomation: RouteHandler = async (
         events: events.map(calendarEventResponse),
         freshness: {
           state:
-            events.length === 0
-              ? ("unavailable" as const)
-              : ("stale" as const),
+            events.length === 0 ? ("unavailable" as const) : ("stale" as const),
           projectedAt: events[0]?.projectedAt ?? null,
           message:
             events.length === 0
@@ -429,7 +452,7 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
-    const command = parsed.data;
+    let command = parsed.data;
     const scope = automationScopeFor(command.operation);
     if (!token.scopes.includes(scope)) {
       database.appendAutomationAudit({
@@ -453,6 +476,24 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
+    if (command.operation === "tasks.create") {
+      try {
+        command = {
+          ...command,
+          input: resolveTaskCapture(
+            database,
+            token.ownerId,
+            command.input,
+            new Date().toISOString(),
+          ),
+        };
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
+    }
+    let taskSummary: string | undefined;
     const affected: {
       entityKind:
         | "task"
@@ -463,7 +504,8 @@ export const handleAutomation: RouteHandler = async (
         | "project"
         | "choice_pool"
         | "planning_placeholder"
-        | "pool_item";
+        | "pool_item"
+        | "habit";
       entityId: string;
     }[] = [];
     const baseRevisions: {
@@ -475,11 +517,88 @@ export const handleAutomation: RouteHandler = async (
         | "project"
         | "choice_pool"
         | "planning_placeholder"
-        | "pool_item";
+        | "pool_item"
+        | "habit";
       entityId: string;
       revision: number;
     }[] = [];
-    if (command.operation === "schedule.create_time_block") {
+    if (
+      command.operation === "tasks.update" ||
+      command.operation === "tasks.set_completed" ||
+      command.operation === "tasks.delete" ||
+      command.operation === "tasks.restore"
+    ) {
+      const task = database.getTask(
+        token.ownerId,
+        command.input.taskId,
+        command.operation === "tasks.restore",
+      );
+      if (
+        task === undefined ||
+        (command.operation === "tasks.restore" && task.deletedAt === null)
+      ) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      if (task.revision !== command.input.expectedRevision) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Task changed before preview",
+        );
+        return true;
+      }
+      if (
+        command.operation === "tasks.delete" &&
+        deletionBlocked(token.ownerId, task.id)
+      )
+        return true;
+      taskSummary =
+        command.operation === "tasks.delete"
+          ? `Delete task "${task.title}"; it remains available in recovery`
+          : command.operation === "tasks.restore"
+            ? `Restore task "${task.title}" from recovery`
+            : command.operation === "tasks.set_completed"
+              ? `${command.input.completed ? "Complete" : "Reopen"} task "${task.title}"`
+              : `Edit task "${task.title}": ${Object.keys(command.input.patch).join(", ")}`;
+      affected.push({ entityKind: "task", entityId: task.id });
+      baseRevisions.push({
+        entityKind: "task",
+        entityId: task.id,
+        revision: task.revision,
+      });
+    } else if (command.operation === "habits.mutate") {
+      const input = command.input;
+      const habitId =
+        input.kind === "habit.create" ? input.habit.id : input.habitId;
+      const habit = database.habits
+        .list(token.ownerId)
+        .find(({ id }) => id === habitId);
+      if (
+        input.kind !== "habit.create" &&
+        habit?.revision !== input.baseRevision
+      ) {
+        sendError(
+          response,
+          412,
+          "REVISION_CONFLICT",
+          "Habit changed or is unavailable",
+        );
+        return true;
+      }
+      if (input.kind === "habit.create" && habit !== undefined) {
+        sendError(response, 400, "INVALID_HABIT", "Habit already exists");
+        return true;
+      }
+      affected.push({ entityKind: "habit", entityId: habitId });
+      if (habit !== undefined)
+        baseRevisions.push({
+          entityKind: "habit",
+          entityId: habitId,
+          revision: habit.revision,
+        });
+    } else if (command.operation === "schedule.create_time_block") {
       const task = database.getTask(token.ownerId, command.input.taskId);
       if (task === undefined) {
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
@@ -489,12 +608,7 @@ export const handleAutomation: RouteHandler = async (
         database.getOwnedCalendar(token.ownerId, command.input.calendarId)
           ?.supportsEvents !== true
       ) {
-        sendError(
-          response,
-          404,
-          "CALENDAR_NOT_FOUND",
-          "Calendar not found",
-        );
+        sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
         return true;
       }
       affected.push(
@@ -515,8 +629,7 @@ export const handleAutomation: RouteHandler = async (
         .listProjects(token.ownerId)
         .find(
           ({ id, archivedAt }) =>
-            id === command.input.destinationProjectId &&
-            archivedAt === null,
+            id === command.input.destinationProjectId && archivedAt === null,
         );
       if (template === undefined) {
         sendError(
@@ -560,8 +673,7 @@ export const handleAutomation: RouteHandler = async (
         .listProjects(token.ownerId)
         .find(
           ({ id, archivedAt }) =>
-            id === command.input.destinationProjectId &&
-            archivedAt === null,
+            id === command.input.destinationProjectId && archivedAt === null,
         );
       if (set === undefined) {
         sendError(
@@ -711,9 +823,7 @@ export const handleAutomation: RouteHandler = async (
         })),
       );
     } else if (command.operation.startsWith("focus.")) {
-      const focusInput = automationFocusCommandInputSchema.parse(
-        command.input,
-      );
+      const focusInput = automationFocusCommandInputSchema.parse(command.input);
       if (focusInput.operation === "focus.start") {
         const task = database.getTask(token.ownerId, focusInput.taskId);
         if (task === undefined) {
@@ -756,7 +866,9 @@ export const handleAutomation: RouteHandler = async (
       id: randomUUID(),
       operation: command.operation,
       inputHash,
-      summary: `Confirm ${command.operation} affecting ${String(affected.length)} resource(s)`,
+      summary:
+        taskSummary ??
+        `Confirm ${command.operation} affecting ${String(affected.length)} resource(s)`,
       affected,
       baseRevisions,
       expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
@@ -769,10 +881,7 @@ export const handleAutomation: RouteHandler = async (
       input: command,
       affectedIds: affected.map(({ entityId }) => entityId),
       baseRevisions: Object.fromEntries(
-        baseRevisions.map(({ entityId, revision }) => [
-          entityId,
-          revision,
-        ]),
+        baseRevisions.map(({ entityId, revision }) => [entityId, revision]),
       ),
       consumedAt: null,
       createdAt: now.toISOString(),
@@ -795,8 +904,9 @@ export const handleAutomation: RouteHandler = async (
   }
 
   // POST /api/automation/v1/previews/:id/confirm
+  if (automationConfirmPath === undefined) return false;
   const automationConfirmPattern = new RegExp(
-    `^${automationConfirmPath!.replace("{previewId}", "([0-9a-f-]{36})")}$`,
+    `^${automationConfirmPath.replace("{previewId}", "([0-9a-f-]{36})")}$`,
   );
   const automationConfirm = automationConfirmPattern.exec(url.pathname);
   if (automationConfirm !== null && method === "POST") {
@@ -885,10 +995,18 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
+    const habitAlreadyApplied =
+      preview.operation === "habits.mutate" &&
+      database.habits.hasOutcome(
+        token.ownerId,
+        `automation:${token.id}`,
+        preview.id,
+      );
     for (const [entityId, revision] of Object.entries(
-      preview.baseRevisions,
+      habitAlreadyApplied ? {} : preview.baseRevisions,
     )) {
       const current =
+        database.habits.list(token.ownerId).find(({ id }) => id === entityId) ??
         database.getTask(token.ownerId, entityId, true) ??
         database.getTaskTemplate(token.ownerId, entityId, true) ??
         database
@@ -930,24 +1048,128 @@ export const handleAutomation: RouteHandler = async (
     const command = automationPreviewCommandSchema.parse(preview.input);
     const internalKey = `automation.${token.id}.${parsed.data.idempotencyKey}`;
     let result: AutomationConfirmationResponse["result"];
-    if (command.operation === "tasks.create") {
-      const now = new Date().toISOString();
-      const created = database.createTaskIdempotently(
+    let applyLocalTask:
+      (() => AutomationConfirmationResponse["result"]) | undefined;
+    if (
+      command.operation === "tasks.update" ||
+      command.operation === "tasks.set_completed" ||
+      command.operation === "tasks.delete" ||
+      command.operation === "tasks.restore"
+    ) {
+      const current = database.getTask(
         token.ownerId,
-        internalKey,
-        createHash("sha256")
-          .update(JSON.stringify(command.input))
-          .digest("hex"),
-        {
-          id: randomUUID(),
-          title: command.input.title,
-          notes: command.input.notes,
-          status: "open",
-          revision: 1,
-          createdAt: now,
-          updatedAt: now,
-        },
+        command.input.taskId,
+        command.operation === "tasks.restore",
       );
+      if (current === undefined) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      if (
+        command.operation === "tasks.delete" &&
+        deletionBlocked(token.ownerId, current.id)
+      )
+        return true;
+      result = { task: taskResponse(current), replayed: false };
+      // Execute inside the confirmation transaction so task, sync change,
+      // consumed preview, audit, and replay response commit or roll back together.
+      applyLocalTask = () => {
+        const now = new Date().toISOString();
+        const input = command.input;
+        let applied;
+        if (command.operation === "tasks.delete") {
+          applied = database.deleteTask(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            now,
+          );
+        } else if (command.operation === "tasks.restore") {
+          applied = database.restoreTask(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            now,
+          );
+        } else if (command.operation === "tasks.set_completed") {
+          applied = database.setTaskCompleted(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            command.input.completed,
+            now,
+          );
+        } else {
+          const { deadline, ...fields } = command.input.patch;
+          applied = database.patchTask(
+            token.ownerId,
+            input.taskId,
+            input.expectedRevision,
+            {
+              ...(fields.title === undefined ? {} : { title: fields.title }),
+              ...(fields.notes === undefined ? {} : { notes: fields.notes }),
+              ...(fields.plannedStart === undefined
+                ? {}
+                : { plannedStart: fields.plannedStart }),
+              ...(fields.estimateMinutes === undefined
+                ? {}
+                : { estimateMinutes: fields.estimateMinutes }),
+              ...(deadline === undefined
+                ? {}
+                : deadline === null
+                  ? { deadlineDate: null, deadlineAt: null }
+                  : deadline.kind === "date"
+                    ? { deadlineDate: deadline.value, deadlineAt: null }
+                    : { deadlineDate: null, deadlineAt: deadline.value }),
+            },
+            now,
+          );
+        }
+        if (applied.kind !== "updated")
+          throw new Error("Task changed during atomic confirmation");
+        return { task: taskResponse(applied.task), replayed: false };
+      };
+    } else if (command.operation === "habits.mutate") {
+      const applied = database.habits.apply({
+        ownerId: token.ownerId,
+        actorId: `automation:${token.id}`,
+        operationId: preview.id,
+        command: command.input,
+        now: new Date().toISOString(),
+      });
+      if (applied.kind !== "applied" && applied.kind !== "replayed") {
+        sendError(
+          response,
+          applied.kind === "conflict" ? 412 : 400,
+          "INVALID_HABIT",
+          "Habit mutation cannot be applied",
+        );
+        return true;
+      }
+      result = {
+        habit: applied.habit,
+        occurrence: applied.occurrence,
+        replayed: applied.kind === "replayed",
+      };
+    } else if (command.operation === "tasks.create") {
+      const now = new Date().toISOString();
+      let created;
+      try {
+        created = createCapturedTask(
+          database,
+          token.ownerId,
+          internalKey,
+          createHash("sha256")
+            .update(JSON.stringify(command.input))
+            .digest("hex"),
+          command.input,
+          now,
+        );
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
       if (created.kind === "conflict") {
         sendError(
           response,
@@ -974,12 +1196,7 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       if (calendar?.supportsEvents !== true) {
-        sendError(
-          response,
-          404,
-          "CALENDAR_NOT_FOUND",
-          "Calendar not found",
-        );
+        sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
         return true;
       }
       const existingBlock = database.getTaskCalendarBlock(
@@ -998,8 +1215,7 @@ export const handleAutomation: RouteHandler = async (
         );
         return true;
       }
-      const uid =
-        existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;
+      const uid = existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;
       const href =
         existingBlock?.eventHref ??
         `${calendar.href.replace(/\/$/, "")}/${randomUUID()}.ics`;
@@ -1049,10 +1265,7 @@ export const handleAutomation: RouteHandler = async (
         reservation.kind === "replayed" &&
         reservation.operation.state === "completed"
       ) {
-        const replayedTask = database.getTask(
-          token.ownerId,
-          input.taskId,
-        );
+        const replayedTask = database.getTask(token.ownerId, input.taskId);
         const block = database.getTaskCalendarBlock(
           token.ownerId,
           input.taskId,
@@ -1096,9 +1309,7 @@ export const handleAutomation: RouteHandler = async (
           const projection = await connector.projectEvents(
             token.ownerId,
             operation.calendarId,
-            new Date(
-              Date.parse(input.startsAt) - 3_600_000,
-            ).toISOString(),
+            new Date(Date.parse(input.startsAt) - 3_600_000).toISOString(),
             new Date(Date.parse(endsAt) + 3_600_000).toISOString(),
           );
           if (!projection.ok) remote = projection;
@@ -1110,8 +1321,7 @@ export const handleAutomation: RouteHandler = async (
                 candidate.event.summary === task.title &&
                 Date.parse(candidate.event.startsAt) ===
                   Date.parse(input.startsAt) &&
-                Date.parse(candidate.event.endsAt) ===
-                  Date.parse(endsAt) &&
+                Date.parse(candidate.event.endsAt) === Date.parse(endsAt) &&
                 !candidate.event.allDay,
             );
             remote =
@@ -1331,9 +1541,7 @@ export const handleAutomation: RouteHandler = async (
       result = placeholderResolutionResponse(resolved);
     } else {
       const before = database.getActiveSession(token.ownerId);
-      const focusInput = automationFocusCommandInputSchema.parse(
-        command.input,
-      );
+      const focusInput = automationFocusCommandInputSchema.parse(command.input);
       let next: ActiveSession;
       let expected: number | null;
       if (focusInput.operation === "focus.start") {
@@ -1396,12 +1604,7 @@ export const handleAutomation: RouteHandler = async (
         now: next.updatedAt,
       });
       if (applied.kind === "conflict" || applied.kind === "stale") {
-        sendError(
-          response,
-          409,
-          "ACTIVE_SESSION_CONFLICT",
-          "Session changed",
-        );
+        sendError(response, 409, "ACTIVE_SESSION_CONFLICT", "Session changed");
         return true;
       }
       result = {
@@ -1445,6 +1648,12 @@ export const handleAutomation: RouteHandler = async (
         createdAt: completedAt,
       },
       completedAt,
+      applyLocalTask === undefined
+        ? undefined
+        : () => {
+            body.result = applyLocalTask();
+            return body;
+          },
     );
     if (!completed) {
       const replay = database.getAutomationOutcome(

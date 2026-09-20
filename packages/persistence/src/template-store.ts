@@ -139,7 +139,10 @@ export class SqliteTemplateStore implements TemplateStore {
         .prepare(
           "SELECT * FROM task_templates WHERE owner_id=? AND (?=1 OR archived_at IS NULL) ORDER BY title COLLATE NOCASE,id",
         )
-        .all(ownerId, includeArchived ? 1 : 0) as unknown as readonly Record<string, string | number | null>[]
+        .all(ownerId, includeArchived ? 1 : 0) as unknown as readonly Record<
+        string,
+        string | number | null
+      >[]
     ).map((row) => this.#templateFromRow(row));
   }
 
@@ -322,9 +325,7 @@ export class SqliteTemplateStore implements TemplateStore {
     setId: string,
   ): TemplateSetRecord | undefined {
     const row = this.db
-      .prepare(
-        "SELECT * FROM template_sets WHERE owner_id=? AND id=?",
-      )
+      .prepare("SELECT * FROM template_sets WHERE owner_id=? AND id=?")
       .get(ownerId, setId) as unknown as
       Record<string, string | number | null> | undefined;
     return row === undefined
@@ -336,8 +337,7 @@ export class SqliteTemplateStore implements TemplateStore {
           revision: Number(row.revision),
           createdAt: String(row.created_at),
           updatedAt: String(row.updated_at),
-          archivedAt:
-            row.archived_at === null ? null : String(row.archived_at),
+          archivedAt: row.archived_at === null ? null : String(row.archived_at),
         };
   }
 
@@ -953,7 +953,9 @@ export class SqliteTemplateStore implements TemplateStore {
     });
   }
 
-  #listTemplatePoolSlotsInternal(templateId: string): readonly TemplatePoolSlotRecord[] {
+  #listTemplatePoolSlotsInternal(
+    templateId: string,
+  ): readonly TemplatePoolSlotRecord[] {
     return (
       this.db
         .prepare(
@@ -973,17 +975,15 @@ export class SqliteTemplateStore implements TemplateStore {
     }));
   }
 
-  #getTask(
-    ownerId: string,
-    taskId: string,
-  ): TaskRecord | undefined {
+  #getTask(ownerId: string, taskId: string): TaskRecord | undefined {
     const row = this.db
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
                 completed_at, deleted_at, planned_start, estimate_minutes
          FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL`,
       )
-      .get(ownerId, taskId) as unknown as Record<string, string | number | null> | undefined;
+      .get(ownerId, taskId) as unknown as
+      Record<string, string | number | null> | undefined;
     if (row === undefined) return undefined;
     const task: TaskRecord = {
       id: String(row.id),
@@ -996,8 +996,10 @@ export class SqliteTemplateStore implements TemplateStore {
       updatedAt: String(row.updated_at),
       completedAt: row.completed_at === null ? null : String(row.completed_at),
       deletedAt: row.deleted_at === null ? null : String(row.deleted_at),
-      plannedStart: row.planned_start === null ? null : String(row.planned_start),
-      estimateMinutes: row.estimate_minutes === null ? null : Number(row.estimate_minutes),
+      plannedStart:
+        row.planned_start === null ? null : String(row.planned_start),
+      estimateMinutes:
+        row.estimate_minutes === null ? null : Number(row.estimate_minutes),
     };
     const project = this.db
       .prepare("SELECT project_id FROM tasks WHERE owner_id = ? AND id = ?")
@@ -1050,8 +1052,7 @@ export class SqliteTemplateStore implements TemplateStore {
           revision: Number(row.revision),
           createdAt: String(row.created_at),
           updatedAt: String(row.updated_at),
-          archivedAt:
-            row.archived_at === null ? null : String(row.archived_at),
+          archivedAt: row.archived_at === null ? null : String(row.archived_at),
         };
   }
 
@@ -1070,8 +1071,7 @@ export class SqliteTemplateStore implements TemplateStore {
           revision: Number(row.revision),
           createdAt: String(row.created_at),
           updatedAt: String(row.updated_at),
-          archivedAt:
-            row.archived_at === null ? null : String(row.archived_at),
+          archivedAt: row.archived_at === null ? null : String(row.archived_at),
         };
   }
 }

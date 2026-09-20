@@ -32,7 +32,13 @@ export class SyncEngine {
   }
 
   async sync(pullLimit = 100): Promise<SyncRoundResponse> {
-    const client = await this.ensureClient();
+    let client = await this.ensureClient();
+    if (await this.store.requiresSnapshot()) {
+      await this.store.replaceFromSnapshot(
+        await this.transport.snapshot(client),
+      );
+      client = await this.ensureClient();
+    }
     const outbox = await this.store.loadOutbox();
     const request = {
       cursor: client.cursor,
@@ -46,6 +52,7 @@ export class SyncEngine {
       response = await this.transport.syncRound(client, request);
     } catch (error) {
       if (!(error instanceof SyncCursorResetRequired)) throw error;
+      await this.store.markResetRequired();
       await this.store.replaceFromSnapshot(
         await this.transport.snapshot(client),
       );

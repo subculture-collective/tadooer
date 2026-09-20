@@ -4,7 +4,28 @@
 calendar-date commitment; movement between phases follows the feature
 prioritization policy and recorded exit evidence.
 
+## Current release checkpoint — September 20, 2026
+
+Production runs candidate `0.14.1-calendar`, application revision `a6983dc`,
+with 19 migrations. Deadline/offline sync, habits, structured capture, and
+calendar session recovery/full resync are deployed and verified. Google resync
+has been verified in the owner account; all 16 calendars are fresh. Monitoring
+now flows from the NUC agent to Dozor, with seven evaluated Tadooer alerts.
+
+The new seven-day soak is active from `2026-09-20T12:55:39.883Z`, pinned to
+`sha256:68438591510360e82e84d98e83d2825bce5134004a884a26e55c75403080548f`.
+No stable qualification is claimed. Older checkpoints below are historical.
+[Sprint 14](superpowers/plans/2026-09-20-sprint-14-daily-use-reliability.md)
+tracks the next development work separately from the frozen production candidate.
+
 ## Strategy
+
+The [September 20 interview](discovery/2026-09-20-parity-assistants-calendar-hub.md)
+adds explicit Super Productivity parity, full-capability assistant plugins/MCP,
+and an opt-in Google/Baikal two-way calendar hub to the product direction.
+Subscription-backed embedded assistance is conditional on runtime qualification.
+These decisions supersede conflicting historical deferrals below; they are not
+claims of implementation or a change to the frozen soak candidate.
 
 Deliver contract-first vertical slices that are usable end to end. Every phase
 must leave a runnable, testable product state; phases are dependency order, not
@@ -505,16 +526,25 @@ recovery, authentication and non-duplication checks, and confirmation that
 Super Productivity stayed available. P0/P1 or any failed required observation
 blocks qualification.
 
-The production soak has not started because the clean production Suite still
-requires owner creation and explicit Baïkal/Google connection. No stable
-manifest or cutover recommendation is emitted before that setup and seven
-elapsed days. Super Productivity is not changed automatically.
+The current production soak started September 20, 2026 after owner/provider
+setup and deployment verification. The August ledger and a failed September
+collector run are preserved separately. Current-window health and backup
+evidence is collected automatically; explicit workflow observations and human
+sign-off remain required. Super Productivity is not changed automatically.
 
 ## Phase 13: Actionable Today Queue
 
-**Status:** Planned 2026-08-14 as the selected post-1.0 feature wave. Phase 9,
-11, and 12 production acceptance remains the active **Now** work; this selection
-does not waive the seven-day soak or stable `1.0.0` promotion gate.
+**Status:** Implementation and local qualification completed on 2026-08-21.
+Focused automated coverage, the repository gate, and authenticated local-browser
+validation are green. Production now runs candidate `0.13.0-phase13`, source
+revision `c262a46015bcb80226249315419ec354d353015c`, at immutable registry digest
+`sha256:e628a354f6a9dfda93d1b323b8a127ad23d683acb78f8ffbaa19b65137f62b2c`.
+Post-deploy public build/readiness, migration, security-boundary, login-render,
+and connector-projection checks passed. The production browser was not signed
+in, so the authenticated Today workflow remains qualified by the local
+server-backed browser pass rather than a post-deploy production interaction.
+This deployment does not start or complete the Phase 12 seven-day soak and does
+not promote stable `1.0.0`.
 
 ### Owner outcome
 
@@ -559,11 +589,20 @@ than being queued or simulated.
   ordering, completion exclusion, and 23/25-hour DST days.
 - Web tests prove queue hierarchy, future-task hiding, task-specific accessible
   actions, empty states, and authenticated/cold-offline composition.
-- Browser validation proves capture, schedule/move/remove, row-scoped focus,
-  complete/reopen, keyboard flow, visible offline boundaries, and responsive
-  behavior at desktop, tablet, and mobile widths.
+- Authenticated local-browser validation proved capture, schedule/move/remove,
+  row-scoped focus, complete/reopen, visible offline boundaries, a cold offline
+  reload, and responsive behavior at desktop, tablet, mobile, and 200% zoom.
+  Direct tab inspection also confirmed the semantic reading/focusable order;
+  the browser automation transport timed out during scripted keyboard stepping
+  and screenshot capture. The browser console had no warning or error entries.
 - Existing task sync, planner/reminder, Time Block, Active Session, and full
   repository verification gates remain green.
+- Before production deployment, the NUC created and checksum-verified a coherent
+  Suite backup. Post-deploy checks confirmed the exact Phase 13 image revision,
+  healthy migration 14, preserved owner and Baïkal/Google provider records,
+  10,540 Google event projections, expected `421` unknown-Host and `403`
+  hostile-Origin responses, a public sign-in surface, and a clean browser
+  console. Authenticated production Today actions were not exercised.
 
 Implementation details and task order are recorded in
 `docs/superpowers/plans/2026-08-14-actionable-today-queue.md`.

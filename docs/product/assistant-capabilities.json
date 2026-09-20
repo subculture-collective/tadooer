@@ -1,0 +1,469 @@
+{
+  "version": 1,
+  "rows": [
+    {
+      "id": "identity",
+      "action": "Owner setup, browser sign-in/out and session recovery",
+      "webApi": [
+        "getSetupStatus",
+        "setupOwner",
+        "login",
+        "resumeSession",
+        "logout"
+      ],
+      "catalog": [],
+      "status": "owner-only",
+      "issue": 39,
+      "authority": "Interactive identity proof must not be delegated using an automation bearer credential.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "connector-grants",
+      "action": "Provision Baikal credentials, authorize Google, disconnect grants",
+      "webApi": [
+        "connectBaikal",
+        "beginGoogleAuthorization",
+        "disconnectGoogle"
+      ],
+      "catalog": [],
+      "status": "owner-only",
+      "issue": 60,
+      "authority": "Fresh provider consent and secret entry remain interactive. Future delegated disconnect needs explicit consequential approval.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "connector-status",
+      "action": "Connector health and explicit Google sync/resync",
+      "webApi": [
+        "getBaikalStatus",
+        "getGoogleStatus",
+        "synchronizeGoogle"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 60,
+      "authority": "Proposed separate connector read/recovery scopes; existing grant permissions must not widen.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "planning",
+      "action": "Day plan and planning preferences",
+      "webApi": [
+        "getDayPlan",
+        "getPlanningPreferences",
+        "updatePlanningPreferences"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 59,
+      "authority": "Owner timezone and preference revisions need explicit contracts before delegated writes.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "notifications",
+      "action": "Notification preferences, health and test delivery",
+      "webApi": [
+        "getNotificationPreferences",
+        "updateNotificationPreferences",
+        "getNotificationStatus",
+        "sendTestNotification"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 59,
+      "authority": "External notification delivery is a visible side effect; no secrets in status.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "tasks-read",
+      "action": "Active and deleted task inventory",
+      "webApi": [
+        "getTasks",
+        "getRecoveryTasks"
+      ],
+      "catalog": [
+        "tasks.list",
+        "tasks.deleted"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Catalog read scopes; owner filtering and recovery visibility.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "tasks-create",
+      "action": "Plain or structured task capture",
+      "webApi": [
+        "createTask"
+      ],
+      "catalog": [
+        "tasks.create"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Preview resolves source input; caller idempotency key binds one creation.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "tasks-edit",
+      "action": "Title, notes, dates and estimate edits",
+      "webApi": [
+        "patchTask"
+      ],
+      "catalog": [
+        "tasks.update"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Exact expected task revision; atomic mutation/audit/receipt. Calendar-linked scheduling restrictions still apply.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "tasks-complete",
+      "action": "Complete and reopen tasks",
+      "webApi": [
+        "transitionTask"
+      ],
+      "catalog": [
+        "tasks.set_completed"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Expected revision and replay receipt; task completion is distinct from focus completion.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "tasks-delete",
+      "action": "Delete and restore tasks",
+      "webApi": [
+        "deleteTask",
+        "restoreTask"
+      ],
+      "catalog": [
+        "tasks.delete",
+        "tasks.restore"
+      ],
+      "status": "covered",
+      "issue": 33,
+      "authority": "Explicit consequential approval, expected revision and focus/calendar deletion guards.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "planner-read",
+      "action": "Bounded planner and calendar projection",
+      "webApi": [
+        "getPlanner"
+      ],
+      "catalog": [
+        "schedule.get"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Schedule read scope, requested range, provider-qualified identities and visible freshness.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "time-blocks",
+      "action": "Create, move and remove a task time block",
+      "webApi": [
+        "putTaskTimeBlock",
+        "removeTaskTimeBlock"
+      ],
+      "catalog": [
+        "schedule.create_time_block"
+      ],
+      "status": "partial",
+      "issue": 58,
+      "authority": "Create tool exists; move/remove need provider conditional revisions, durable outcomes and explicit removal approval.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "sync-internals",
+      "action": "Browser registration, cache snapshots and outbox transport",
+      "webApi": [
+        "registerSyncClient",
+        "syncRound",
+        "getSyncSnapshot",
+        "createSyncTransport"
+      ],
+      "catalog": [],
+      "status": "internal",
+      "issue": 19,
+      "authority": "Browser client proof and immutable outbox remain internal; assistants use domain operations instead of pretending to be browser clients.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "focus",
+      "action": "Focus/break lifecycle and takeover",
+      "webApi": [
+        "getActiveSession",
+        "commandActiveSession"
+      ],
+      "catalog": [
+        "active-session.get",
+        "focus.start",
+        "focus.pause",
+        "focus.resume",
+        "focus.start_break",
+        "focus.end_break",
+        "focus.complete",
+        "focus.takeover"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Server authoritative lease/revision; controller heartbeat is transport plumbing, not an additional user operation.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "organization-read",
+      "action": "Project and tag inventory",
+      "webApi": [
+        "getProjects",
+        "getTags"
+      ],
+      "catalog": [
+        "projects.list",
+        "tags.list"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Catalog read scopes with owner-scoped records.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "organization-write",
+      "action": "Project/tag lifecycle and task assignment",
+      "webApi": [
+        "createProject",
+        "createTag",
+        "patchProject",
+        "patchTag",
+        "assignTaskProject",
+        "assignTaskTags"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 55,
+      "authority": "Proposed project/tag write scopes and task assignment boundaries; revisions and atomic audit/replay required.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "checklists",
+      "action": "Checklist child create/edit/reorder/delete",
+      "webApi": [
+        "getSubtasks",
+        "createSubtask",
+        "patchSubtask",
+        "reorderSubtasks",
+        "deleteSubtask"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 56,
+      "authority": "Current checklist model only; future full task hierarchy remains #27.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "templates-read",
+      "action": "Template and set libraries",
+      "webApi": [
+        "getTemplateLibrary",
+        "getTemplateSets"
+      ],
+      "catalog": [
+        "templates.list",
+        "template-sets.list"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Catalog read scope and explicit library query semantics.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "templates-write",
+      "action": "Template authoring, archive, from-task and set creation",
+      "webApi": [
+        "createTemplate",
+        "createTemplateFromTask",
+        "patchTemplate",
+        "archiveTemplate",
+        "createTemplateSet"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 57,
+      "authority": "Library/source revisions, atomic membership and explicit archive approval.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "templates-use",
+      "action": "Instantiate a template or set",
+      "webApi": [
+        "instantiateTemplate",
+        "instantiateTemplateSet"
+      ],
+      "catalog": [
+        "templates.instantiate",
+        "template_sets.instantiate"
+      ],
+      "status": "covered",
+      "issue": 33,
+      "authority": "Freeze source revisions and destination; multi-task creation uses consequential approval policy.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "pools-read",
+      "action": "Choice pool library",
+      "webApi": [
+        "getChoicePools"
+      ],
+      "catalog": [
+        "pools.list"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "Catalog read scope; eligibility and policy data are not new task state.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "pools-write",
+      "action": "Pool authoring, slots, completion history and placeholder creation/suggestion",
+      "webApi": [
+        "createChoicePool",
+        "patchChoicePool",
+        "createTemplatePoolSlot",
+        "recordChoicePoolCompletion",
+        "createPlanningPlaceholder",
+        "suggestPlanningPlaceholder"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 57,
+      "authority": "History facts and explicit override audit must retain policy semantics and stable replay identities.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "pools-resolve",
+      "action": "Resolve a planning placeholder",
+      "webApi": [
+        "resolvePlanningPlaceholder"
+      ],
+      "catalog": [
+        "placeholders.resolve"
+      ],
+      "status": "covered",
+      "issue": 33,
+      "authority": "Expected placeholder/source revisions; atomic task creation, history and consumed preview.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "habits",
+      "action": "Habit lifecycle, canonical completion and metrics",
+      "webApi": [],
+      "catalog": [
+        "habits.list",
+        "habits.mutate"
+      ],
+      "status": "covered",
+      "issue": 39,
+      "authority": "UI uses immutable sync commands; assistant preview binds habit revision and period completion deduplicates.",
+      "source": "apps/web/src/pages/HabitsPage.tsx"
+    },
+    {
+      "id": "calendar-import",
+      "action": "Calendar import preview/apply",
+      "webApi": [
+        "previewCalendarImport",
+        "applyCalendarImport"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 60,
+      "authority": "Read-only preview; reviewed provenance, exact target, permissions and retry-safe apply.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "feeds",
+      "action": "Read-only calendar feed create/list/revoke",
+      "webApi": [
+        "listCalendarFeeds",
+        "createCalendarFeed",
+        "revokeCalendarFeed"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 60,
+      "authority": "Capability creation/revocation is consequential; never expose capability secrets in logs or read resources.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "task-import",
+      "action": "Super Productivity preview and reviewed apply",
+      "webApi": [
+        "previewTaskImport",
+        "applyTaskImport"
+      ],
+      "catalog": [],
+      "status": "gap",
+      "issue": 60,
+      "authority": "Hash-bound reviewed export, all-or-nothing transaction; real source export must not be echoed in tools.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "assistant-credentials",
+      "action": "Issue/list/revoke scoped assistant credentials",
+      "webApi": [
+        "listAutomationTokens",
+        "createAutomationToken",
+        "revokeAutomationToken"
+      ],
+      "catalog": [],
+      "status": "owner-only",
+      "issue": 34,
+      "authority": "An assistant may not mint broader credentials or grant itself permissions. Owner consent remains independent.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "confirm",
+      "action": "Execute approved catalog preview",
+      "webApi": [],
+      "catalog": [
+        "automation.confirm"
+      ],
+      "status": "internal",
+      "issue": 33,
+      "authority": "Confirmation resolves the stored operation scope; advertised write scopes are alternatives, not a demand for every scope. Approval policy and stale/replay checks remain server enforced.",
+      "source": "apps/server/src/routes/automation.ts"
+    },
+    {
+      "id": "future-parity",
+      "action": "Full hierarchy, archived history, recurrence and manual worklogs",
+      "webApi": [],
+      "catalog": [],
+      "status": "future",
+      "issue": 32,
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #27, #38, #41, #42.",
+      "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
+    },
+    {
+      "id": "future-bridge",
+      "action": "Calendar mapping/conflict/background bridge controls",
+      "webApi": [],
+      "catalog": [],
+      "status": "future",
+      "issue": 48,
+      "authority": "Require explicit mapped writable calendars and scoped consequential-action approval; no broad provider token reuse.",
+      "source": "docs/discovery/2026-09-20-parity-assistants-calendar-hub.md"
+    },
+    {
+      "id": "calendar-export",
+      "action": "Authenticated calendar ICS export",
+      "webApi": [],
+      "catalog": [],
+      "status": "gap",
+      "issue": 60,
+      "authority": "The UI downloads through an authenticated link outside api.ts; delegated export needs an explicit read scope and bounded content delivery.",
+      "source": "apps/web/src/calendar-migration.tsx"
+    }
+  ]
+}

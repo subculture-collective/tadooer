@@ -16,6 +16,23 @@ const response = (body: unknown): Response =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Phase 3 browser API", () => {
+  it("requests a full resync without disconnecting or authorizing again", async () => {
+    const fetcher = vi.fn(() =>
+      Promise.resolve(
+        response({ status: disconnectedStatus, resetCalendars: [] }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    await synchronizeGoogle("csrf-token", true);
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+      "/api/connectors/google/sync",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ full: true }),
+      }),
+    );
+  });
+
   it("uses CSRF-protected connector mutations and strict response contracts", async () => {
     const calls: { path: string; method: string; csrf: string | null }[] = [];
     vi.stubGlobal(

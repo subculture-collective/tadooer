@@ -1,24 +1,27 @@
 import { randomUUID } from "node:crypto";
 import type { PlannerResponse, DayPlanResponse } from "@suite/contracts";
-import { plannerWindowSchema, planningPreferencesSchema } from "@suite/contracts";
+import {
+  plannerWindowSchema,
+  planningPreferencesSchema,
+} from "@suite/contracts";
 import { buildCalmDay, zonedDayWindow } from "@suite/domain";
 import { sendJson, sendError, sameOrigin, readJson } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { taskResponse, calendarEventResponse } from "./shared.ts";
 
-export const handlePlanner: RouteHandler = async (request, response, url, ctx) => {
+export const handlePlanner: RouteHandler = async (
+  request,
+  response,
+  url,
+  ctx,
+) => {
   const { stores: database, auth, baikal: connector, google } = ctx;
   const method = request.method ?? "GET";
 
   if (method === "GET" && url.pathname === "/api/planner") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const window = plannerWindowSchema.safeParse({
@@ -92,8 +95,7 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
       for (const item of googleStatus.freshness) {
         if (
           item.lastSuccessfulSyncAt !== null &&
-          (projectedAt === null ||
-            item.lastSuccessfulSyncAt > projectedAt)
+          (projectedAt === null || item.lastSuccessfulSyncAt > projectedAt)
         )
           projectedAt = item.lastSuccessfulSyncAt;
       }
@@ -108,6 +110,12 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
       window: window.data,
       tasks: database
         .listTasks(session.owner.id)
+        .filter(
+          (task) =>
+            task.plannedStart !== null &&
+            Date.parse(task.plannedStart) >= Date.parse(window.data.from) &&
+            Date.parse(task.plannedStart) < Date.parse(window.data.to),
+        )
         .toSorted((left, right) => {
           const leftTime =
             left.plannedStart === null
@@ -143,12 +151,7 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
   if (method === "GET" && url.pathname === "/api/day-plan") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     const requestedAt = url.searchParams.get("at");
@@ -163,10 +166,7 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
       return true;
     }
     const preferences = database.getPlanningPreferences(session.owner.id);
-    const dayWindow = zonedDayWindow(
-      at.toISOString(),
-      preferences.timeZone,
-    );
+    const dayWindow = zonedDayWindow(at.toISOString(), preferences.timeZone);
     const tasks = database.listTasks(session.owner.id).map(taskResponse);
     const events = database.listCalendarEvents(
       session.owner.id,
@@ -213,9 +213,7 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
         return task === undefined ? [] : [task];
       }),
       nextTask:
-        calm.nextTaskId === null
-          ? null
-          : (byId.get(calm.nextTaskId) ?? null),
+        calm.nextTaskId === null ? null : (byId.get(calm.nextTaskId) ?? null),
       reminder: calm.reminder,
       freshness: calendarFresh
         ? {
@@ -239,19 +237,10 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
   if (method === "GET" && url.pathname === "/api/planning/preferences") {
     const session = auth.authenticate(request, false);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
-    sendJson(
-      response,
-      200,
-      database.getPlanningPreferences(session.owner.id),
-    );
+    sendJson(response, 200, database.getPlanningPreferences(session.owner.id));
     return true;
   }
 
@@ -267,12 +256,7 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
     }
     const session = auth.authenticate(request, true);
     if (session === undefined) {
-      sendError(
-        response,
-        401,
-        "AUTH_REQUIRED",
-        "Authentication required",
-      );
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
     }
     if (
@@ -281,17 +265,10 @@ export const handlePlanner: RouteHandler = async (request, response, url, ctx) =
         request.headers["x-csrf-token"] as string | undefined,
       )
     ) {
-      sendError(
-        response,
-        403,
-        "CSRF_INVALID",
-        "Valid CSRF token required",
-      );
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
-    const parsed = planningPreferencesSchema.safeParse(
-      await readJson(request),
-    );
+    const parsed = planningPreferencesSchema.safeParse(await readJson(request));
     if (!parsed.success) {
       sendError(
         response,
