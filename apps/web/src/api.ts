@@ -87,6 +87,7 @@ import {
 } from "@suite/contracts";
 import { ApiRequestError } from "@suite/contracts";
 import { z } from "zod";
+import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
 import { SyncCursorResetRequired, type SyncTransport } from "./sync-engine.ts";
 
@@ -105,13 +106,15 @@ const request = async <T>(
   const body: unknown = await response.json();
   if (!response.ok) {
     const error = apiErrorSchema.safeParse(body);
-    throw new ApiRequestError(
+    const failure = new ApiRequestError(
       response.status,
       error.success ? error.data.code : "INVALID_RESPONSE",
       error.success
         ? error.data.message
         : "The server returned an invalid response",
     );
+    reportSessionFailure(failure);
+    throw failure;
   }
   return schema.parse(body);
 };
@@ -126,13 +129,15 @@ const requestEmpty = async (
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => undefined);
   const error = apiErrorSchema.safeParse(body);
-  throw new ApiRequestError(
+  const failure = new ApiRequestError(
     response.status,
     error.success ? error.data.code : "INVALID_RESPONSE",
     error.success
       ? error.data.message
       : "The server returned an invalid response",
   );
+  reportSessionFailure(failure);
+  throw failure;
 };
 
 const clientProofHeaders = (

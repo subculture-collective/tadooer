@@ -1,4 +1,9 @@
 import { createTask } from "./api.ts";
+import { SessionRecovery } from "./components/SessionRecovery.tsx";
+import {
+  subscribeSessionFailure,
+  type SessionFailure,
+} from "./session-recovery.ts";
 import {
   type HabitListResponse,
   type HabitCommand,
@@ -177,6 +182,32 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     initialState ?? { kind: "loading" },
   );
   const [busy, setBusy] = useState(false);
+  const [sessionFailure, setSessionFailure] = useState<SessionFailure | null>(
+    null,
+  );
+  useEffect(
+    () =>
+      subscribeSessionFailure((failure) => {
+        if (state.kind === "authenticated") setSessionFailure(failure);
+      }),
+    [state.kind],
+  );
+  const recovery =
+    state.kind === "authenticated" && sessionFailure !== null ? (
+      <SessionRecovery
+        failure={sessionFailure}
+        username={state.session.owner.username}
+        onRecovered={(session) => {
+          setState((current) =>
+            current.kind === "authenticated"
+              ? { ...current, session }
+              : current,
+          );
+          setSessionFailure(null);
+          setFormError(null);
+        }}
+      />
+    ) : null;
   const [formError, setFormError] = useState<string | null>(null);
   const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
   const [localStore] = useState(() => new LocalStore());
@@ -599,14 +630,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       error.code === "AUTH_REQUIRED"
     ) {
       setFormError(null);
-      setState({
-        kind: "login",
-        ...(state.kind === "authenticated"
-          ? { username: state.session.owner.username }
-          : {}),
-        message:
-          "Your Tadooer session expired. Sign in again, then retry the calendar action. Your Google connection and saved work have been kept.",
-      });
+      setSessionFailure("expired");
     } else {
       setFormError(messageFor(error));
     }
@@ -1812,6 +1836,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     return (
       <div className="auth-centre">
         <div className="auth-card">
+          {recovery}
           {state.kind === "loading" && (
             <div style={{ textAlign: "center" }}>
               <div
@@ -2194,6 +2219,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         />
       }
     >
+      {recovery}
       {route === "today" && (
         <TodayPage
           dayPlan={state.dayPlan}

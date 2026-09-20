@@ -27,7 +27,16 @@ production repair requires a new immutable candidate and a fresh soak ledger.
 
 ## Ordered development backlog
 
-### 1. Consistent session recovery across online actions — ready
+### 1. Consistent session recovery across online actions — shared recovery implemented
+
+September 20 implementation: shared API failure notifications now surface inline
+session recovery for authenticated actions, preserving mounted drafts and IndexedDB.
+Recovery updates the session without replaying the failed action. Calendar actions
+use the same recovery UI. Full verification passed: 192 tests and four builds.
+Two disposable Chrome profiles verified expired-session login and stale-CSRF refresh,
+retained capture drafts, no mutation before explicit retry, and one create per retry.
+Remaining audit: successful writes followed by failed ancillary reads and offline
+outbox recovery across expiry. Browser snapshots are in local `.playwright-cli/`.
 
 Calendar actions now recover explicitly, but the other task/calendar/focus,
 settings, and automation UI paths need the same audit. Inspect `apps/web/src/api.ts`,
