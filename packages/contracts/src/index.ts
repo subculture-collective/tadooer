@@ -545,6 +545,28 @@ export const calendarEventConflictSchema = apiErrorSchema.extend({
   mappingId: entityIdSchema.nullable(),
 });
 
+export const projectCreateRequestSchema = z
+  .object({ title: z.string().trim().min(1).max(240) })
+  .strict();
+export const tagCreateRequestSchema = z
+  .object({ title: z.string().trim().min(1).max(100) })
+  .strict();
+const organizationFields = { archived: z.boolean().optional() };
+export const projectPatchRequestSchema = projectCreateRequestSchema
+  .partial()
+  .extend(organizationFields)
+  .strict()
+  .refine((input) => Object.keys(input).length > 0, {
+    message: "An organization edit is required",
+  });
+export const tagPatchRequestSchema = tagCreateRequestSchema
+  .partial()
+  .extend(organizationFields)
+  .strict()
+  .refine((input) => Object.keys(input).length > 0, {
+    message: "An organization edit is required",
+  });
+
 export const projectSchema = z.object({
   id: entityIdSchema,
   ownerId: entityIdSchema,
