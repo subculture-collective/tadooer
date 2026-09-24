@@ -22,7 +22,9 @@ jobs:
       - name: Activate the repository toolchain
         shell: bash
         run: |
-          npm install --global pnpm@11.15.1
+          npm install --prefix "$RUNNER_TEMP/suite-pnpm" --no-package-lock --ignore-scripts pnpm@11.15.1
+          export PATH="$RUNNER_TEMP/suite-pnpm/node_modules/.bin:$PATH"
+          echo "$RUNNER_TEMP/suite-pnpm/node_modules/.bin" >> "$GITHUB_PATH"
           test "$(node -p 'process.versions.node.split(".")[0]')" -ge 24
           test "$(pnpm --version)" = "11.15.1"
 
