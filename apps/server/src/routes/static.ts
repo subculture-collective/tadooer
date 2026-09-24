@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { resolve, join, normalize } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { sendError, securityHeaders } from "../http-utils.ts";
@@ -42,6 +44,25 @@ export const handleStatic: RouteHandler = async (
 
   if (!isInside(webRoot, file) || !existsSync(file)) {
     sendError(response, 404, "WEB_BUILD_NOT_FOUND", "Web build not found");
+    return true;
+  }
+
+  if (file === join(webRoot, "index.html")) {
+    const nonce = randomBytes(24).toString("base64");
+    const html = await readFile(file, "utf8");
+    const meta = `<meta name="style-nonce" content="${nonce}">`;
+    const body = html.includes("<head>")
+      ? html.replace("<head>", `<head>${meta}`)
+      : `${meta}${html}`;
+    response.writeHead(200, {
+      ...securityHeaders,
+      "Content-Security-Policy": securityHeaders[
+        "Content-Security-Policy"
+      ].replace("style-src 'self'", `style-src 'self' 'nonce-${nonce}'`),
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    response.end(method === "HEAD" ? undefined : body);
     return true;
   }
 

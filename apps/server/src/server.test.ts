@@ -177,7 +177,25 @@ describe("Suite HTTP server", () => {
         buildResponseSchema.parse(await build.json());
 
         const shell = await fetch(server.baseUrl);
-        expect(await shell.text()).toContain("Suite shell");
+        const shellHtml = await shell.text();
+        expect(shellHtml).toContain("Suite shell");
+        const nonce = /name="style-nonce" content="([^"]+)"/.exec(
+          shellHtml,
+        )?.[1];
+        expect(nonce).toBeTruthy();
+        if (nonce === undefined) throw new Error("Missing style nonce");
+        expect(shell.headers.get("content-security-policy")).toContain(
+          `style-src 'self' 'nonce-${nonce}'`,
+        );
+        expect(shell.headers.get("content-security-policy")).not.toContain(
+          "unsafe-inline",
+        );
+        expect(shell.headers.get("cache-control")).toBe("no-store");
+        const secondShell = await fetch(`${server.baseUrl}/planner`);
+        expect(secondShell.headers.get("content-security-policy")).not.toBe(
+          shell.headers.get("content-security-policy"),
+        );
+        expect(await secondShell.text()).toContain("Suite shell");
 
         const missingApi = await fetch(`${server.baseUrl}/api/nope`);
         expect(missingApi.status).toBe(404);

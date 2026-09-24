@@ -1,6 +1,6 @@
 # Suite design system
 
-Status: adopted 2026-09-23. Source of truth is `apps/web/src/styles.css`; this page explains the decisions the stylesheet encodes.
+Status: adopted 2026-09-23; component migration updated 2026-09-24. Source of truth is `apps/web/src/styles.css`; this page explains the decisions the stylesheet encodes.
 
 ## Direction
 
@@ -59,13 +59,13 @@ Density is tight. Controls are 30px tall. Task rows have 9px vertical padding. R
 
 ## Component rules
 
-- Unclassed `<button>` is the secondary button. `.btn-primary` is purple, `.btn-danger` is outlined red, `.btn-ghost` is text only.
-- `<form>` is a grid with a half-rem gap. Inline forms opt out with a class such as `.template-search` or `.offline-capture`.
-- `.field` stacks an uppercase label over a control. Labels without a `.field` wrapper stay sentence case.
-- `p[role="alert"]` renders as an error message and `p[role="status"]` as quiet secondary copy without needing a class.
-- Top-level `<section>` elements inside `.main` or `.today-page` are cards. Sections inside cards are not.
-- Task rows use the orange left border for overdue and a purple border plus tinted fill when the row's focus session is running.
-- The sidebar marks the active route with a two pixel purple bar and a purple icon.
+- Pages use `PageHeader`, `Card`, `SectionHeading`, and `EmptyState`; controls use the primitives in `components/ui`.
+- Use `Button` variants for primary, secondary, ghost, and destructive actions. Set `type="button"` for actions inside a form that do not submit it.
+- `NativeSelect` preserves native form submission. Named `Checkbox` controls inside forms retain their hidden native input for `FormData`.
+- Associate each `FieldLabel` with a unique control ID. The shared text-field helper generates IDs independently of the submitted field name.
+- Use `Alert` for feedback and `Badge` for compact state labels. Preserve explicit status and alert roles where they convey asynchronous updates.
+- Task rows retain their workflow-specific layout and overdue/focus indicators. Remove legacy CSS only after checking its consumers.
+- The Planner uses a day, three-day, or week time grid with separate all-day rows and overlap lanes. Each day follows the selected timezone, including DST. Tasks without estimates show an explicit 30-minute placeholder. The grid displays existing scheduling data; it does not add drag-to-reschedule.
 
 ## Cascade layers
 

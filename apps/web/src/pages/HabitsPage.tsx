@@ -5,6 +5,16 @@ import {
   type HabitListResponse,
 } from "@suite/contracts";
 import { deriveHabitMetrics, habitDateAt, habitDueOn } from "@suite/domain";
+import { Alert, AlertDescription } from "../components/ui/alert.tsx";
+import { Badge } from "../components/ui/badge.tsx";
+import { Button } from "../components/ui/button.tsx";
+import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
+import { Checkbox } from "../components/ui/checkbox.tsx";
+import { EmptyState } from "../components/ui/empty-state.tsx";
+import { Input } from "../components/ui/input.tsx";
+import { NativeSelect } from "../components/ui/native-select.tsx";
+import { PageHeader } from "../components/ui/page-header.tsx";
+import { SectionHeading } from "../components/ui/section-heading.tsx";
 
 const titleFrom = (data: FormData): string => {
   const value = data.get("title");
@@ -74,83 +84,110 @@ export const HabitsPage = ({
     if (saved) form.reset();
   };
   return (
-    <section className="panel" aria-labelledby="habits-heading">
-      <h1 id="habits-heading">Habits</h1>
-      <p>
-        Small actions, repeated. Completion history uses each habit’s timezone.
-      </p>
-      {!online && <p role="status">Connect to record or change habits.</p>}
-      {pending && (
-        <p role="status">
-          A habit change is waiting for sync. Use Sync now to retry it.
-        </p>
+    <section
+      className="mx-auto flex w-full max-w-5xl flex-col gap-6"
+      aria-labelledby="habits-heading"
+    >
+      <PageHeader
+        id="habits-heading"
+        title="Habits"
+        description="Small actions, repeated. Completion history uses each habit’s timezone."
+      />
+      {!online && (
+        <Alert variant="warning" role="status">
+          <AlertDescription>
+            Connect to record or change habits.
+          </AlertDescription>
+        </Alert>
       )}
-      {error !== null && <p role="alert">{error}</p>}
-      <form onSubmit={(event) => void create(event)}>
-        <fieldset disabled={disabled} className="habit-create">
-          <legend>Create a habit</legend>
-          <label className="field">
-            Habit name
-            <input
-              name="title"
-              required
-              maxLength={240}
-              placeholder="Take a walk"
-            />
-          </label>
-          <label className="field">
-            Repeat
-            <select
-              value={cadence}
-              onChange={(event) => setCadence(event.target.value)}
-            >
-              <option value="daily">Every day</option>
-              <option value="weekly">Selected weekdays</option>
-              <option value="custom">Every few days</option>
-            </select>
-          </label>
-          {cadence === "weekly" && (
-            <fieldset>
-              <legend>Weekdays</legend>
-              <div className="habit-weekdays">
-                {[
-                  "Monday",
-                  "Tuesday",
-                  "Wednesday",
-                  "Thursday",
-                  "Friday",
-                  "Saturday",
-                  "Sunday",
-                ].map((day, index) => (
-                  <label key={day}>
-                    <input type="checkbox" name="weekday" value={index} />
-                    {day}
-                  </label>
-                ))}
-              </div>
+      {pending && (
+        <Alert variant="info" role="status">
+          <AlertDescription>
+            A habit change is waiting for sync. Use Sync now to retry it.
+          </AlertDescription>
+        </Alert>
+      )}
+      {error !== null && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      <Card>
+        <CardHeader>
+          <SectionHeading title="Create a habit" />
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={(event) => void create(event)}>
+            <fieldset disabled={disabled} className="habit-create">
+              <legend>Create a habit</legend>
+              <label className="field">
+                Habit name
+                <Input
+                  name="title"
+                  required
+                  maxLength={240}
+                  placeholder="Take a walk"
+                />
+              </label>
+              <label className="field">
+                Repeat
+                <NativeSelect
+                  value={cadence}
+                  onChange={(event) => setCadence(event.target.value)}
+                >
+                  <option value="daily">Every day</option>
+                  <option value="weekly">Selected weekdays</option>
+                  <option value="custom">Every few days</option>
+                </NativeSelect>
+              </label>
+              {cadence === "weekly" && (
+                <fieldset>
+                  <legend>Weekdays</legend>
+                  <div className="habit-weekdays">
+                    {[
+                      "Monday",
+                      "Tuesday",
+                      "Wednesday",
+                      "Thursday",
+                      "Friday",
+                      "Saturday",
+                      "Sunday",
+                    ].map((day, index) => (
+                      <label key={day}>
+                        <Checkbox name="weekday" value={String(index)} />
+                        {day}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              )}
+              {cadence === "custom" && (
+                <label className="field">
+                  Interval in days
+                  <Input
+                    name="intervalDays"
+                    type="number"
+                    min={1}
+                    max={365}
+                    defaultValue={2}
+                    required
+                  />
+                </label>
+              )}
+              <p>
+                Starts today in {timeZone}. The schedule stays fixed after
+                creation.
+              </p>
+              <Button type="submit">Create habit</Button>
             </fieldset>
-          )}
-          {cadence === "custom" && (
-            <label className="field">
-              Interval in days
-              <input
-                name="intervalDays"
-                type="number"
-                min={1}
-                max={365}
-                defaultValue={2}
-                required
-              />
-            </label>
-          )}
-          <p>
-            Starts today in {timeZone}. The schedule stays fixed after creation.
-          </p>
-          <button type="submit">Create habit</button>
-        </fieldset>
-      </form>
+          </form>
+        </CardContent>
+      </Card>
       {library.habits.length === 0 && (
-        <p>No habits yet. Start with one action you want to repeat.</p>
+        <EmptyState
+          title="No habits yet."
+          description="Start with one action you want to repeat."
+        />
       )}
       <div className="habit-list">
         {library.habits.map((habit) => {
@@ -164,99 +201,111 @@ export const HabitsPage = ({
           const due = habitDueOn(habit, today);
           const metrics = deriveHabitMetrics(habit, occurrences, today);
           return (
-            <article
+            <Card
               className="habit-card"
               key={habit.id}
               aria-label={habit.title}
             >
-              <h2>{habit.title}</h2>
-              <p>
-                {habit.cadence.kind === "daily"
-                  ? "Every day"
-                  : habit.cadence.kind === "custom"
-                    ? `Every ${String(habit.cadence.intervalDays)} days`
-                    : habit.cadence.weekdays
-                        .map(
-                          (day) =>
-                            ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][
-                              day
-                            ],
-                        )
-                        .join(", ")}{" "}
-                · {habit.timeZone}
-                {habit.archivedAt !== null ? " · Archived" : ""}
-              </p>
-              <p>
-                Current streak: {metrics.currentStreak} · Longest streak:{" "}
-                {metrics.longestStreak} · Completed: {metrics.completedPeriods}
-              </p>
-              {habit.archivedAt === null && (
-                <>
-                  <button
-                    type="button"
-                    disabled={disabled || completed || !due}
-                    onClick={() =>
-                      void execute({
-                        kind: "habit.complete",
-                        habitId: habit.id,
-                        baseRevision: habit.revision,
-                        periodKey: today,
-                      })
-                    }
-                  >
-                    {completed
-                      ? "Completed today"
-                      : due
-                        ? "Complete today"
-                        : "Not scheduled today"}
-                  </button>
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const data = new FormData(event.currentTarget);
-                      void execute({
-                        kind: "habit.patch",
-                        habitId: habit.id,
-                        baseRevision: habit.revision,
-                        fields: { title: titleFrom(data) },
-                      });
-                    }}
-                  >
-                    <label className="field">
-                      Rename {habit.title}
-                      <input
-                        name="title"
-                        defaultValue={habit.title}
-                        key={habit.revision}
-                        required
-                        maxLength={240}
-                        disabled={disabled}
-                      />
-                    </label>
-                    <button disabled={disabled} type="submit">
-                      Save name
-                    </button>
-                  </form>
-                </>
-              )}
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() =>
-                  void execute({
-                    kind:
-                      habit.archivedAt === null
-                        ? "habit.archive"
-                        : "habit.restore",
-                    habitId: habit.id,
-                    baseRevision: habit.revision,
-                  })
-                }
-              >
-                {habit.archivedAt === null ? "Archive" : "Restore"}{" "}
-                {habit.title}
-              </button>
-            </article>
+              <CardHeader>
+                <SectionHeading
+                  as="h3"
+                  title={habit.title}
+                  actions={
+                    habit.archivedAt !== null ? (
+                      <Badge variant="secondary">Archived</Badge>
+                    ) : undefined
+                  }
+                />
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                <p>
+                  {habit.cadence.kind === "daily"
+                    ? "Every day"
+                    : habit.cadence.kind === "custom"
+                      ? `Every ${String(habit.cadence.intervalDays)} days`
+                      : habit.cadence.weekdays
+                          .map(
+                            (day) =>
+                              ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][
+                                day
+                              ],
+                          )
+                          .join(", ")}{" "}
+                  · {habit.timeZone}
+                </p>
+                <p>
+                  Current streak: {metrics.currentStreak} · Longest streak:{" "}
+                  {metrics.longestStreak} · Completed:{" "}
+                  {metrics.completedPeriods}
+                </p>
+                {habit.archivedAt === null && (
+                  <>
+                    <Button
+                      type="button"
+                      disabled={disabled || completed || !due}
+                      onClick={() =>
+                        void execute({
+                          kind: "habit.complete",
+                          habitId: habit.id,
+                          baseRevision: habit.revision,
+                          periodKey: today,
+                        })
+                      }
+                    >
+                      {completed
+                        ? "Completed today"
+                        : due
+                          ? "Complete today"
+                          : "Not scheduled today"}
+                    </Button>
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const data = new FormData(event.currentTarget);
+                        void execute({
+                          kind: "habit.patch",
+                          habitId: habit.id,
+                          baseRevision: habit.revision,
+                          fields: { title: titleFrom(data) },
+                        });
+                      }}
+                    >
+                      <label className="field">
+                        Rename {habit.title}
+                        <Input
+                          name="title"
+                          defaultValue={habit.title}
+                          key={habit.revision}
+                          required
+                          maxLength={240}
+                          disabled={disabled}
+                        />
+                      </label>
+                      <Button disabled={disabled} type="submit">
+                        Save name
+                      </Button>
+                    </form>
+                  </>
+                )}
+                <Button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() =>
+                    void execute({
+                      kind:
+                        habit.archivedAt === null
+                          ? "habit.archive"
+                          : "habit.restore",
+                      habitId: habit.id,
+                      baseRevision: habit.revision,
+                    })
+                  }
+                >
+                  {habit.archivedAt === null ? "Archive" : "Restore"}{" "}
+                  {habit.title}
+                </Button>
+              </CardContent>
+            </Card>
           );
         })}
       </div>

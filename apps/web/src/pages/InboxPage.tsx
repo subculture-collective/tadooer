@@ -6,6 +6,10 @@ import type {
 import type { SyntheticEvent } from "react";
 import { TaskCaptureForm } from "../components/tasks/TaskCaptureForm.tsx";
 import { TaskListItem } from "../components/tasks/TaskListItem.tsx";
+import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
+import { EmptyState } from "../components/ui/empty-state.tsx";
+import { PageHeader } from "../components/ui/page-header.tsx";
+import { SectionHeading } from "../components/ui/section-heading.tsx";
 
 interface InboxPageProps {
   readonly tasks: readonly Task[];
@@ -50,46 +54,51 @@ export const InboxPage = ({
   );
 
   return (
-    <div className="today-page">
-      <header className="today-header">
-        <p className="step">Capture and clarify</p>
-        <h1>Inbox</h1>
-        <p>Unscheduled tasks waiting for a decision.</p>
-      </header>
+    <div className="today-page mx-auto flex w-full max-w-5xl flex-col gap-6">
+      <PageHeader
+        eyebrow="Capture and clarify"
+        title="Inbox"
+        description="Unscheduled tasks waiting for a decision."
+      />
       <TaskCaptureForm busy={busy} onSubmit={onSubmitTask} />
       {inboxTasks.length === 0 ? (
-        <p className="muted">
-          Inbox zero. Capture the next thing when it arrives.
-        </p>
+        <EmptyState
+          title="Inbox zero"
+          description="Capture the next thing when it arrives."
+        />
       ) : (
-        <section
+        <Card
           className="today-section today-planning"
           aria-labelledby="inbox-list-title"
         >
-          <h2 id="inbox-list-title">To clarify</h2>
-          <ul>
-            {inboxTasks.map((task) => (
-              <TaskListItem
-                key={task.id}
-                task={task}
-                state="planning"
-                at={new Date().toISOString()}
-                timeZone="UTC"
-                activeSession={activeSession}
-                calendars={calendars}
-                busy={busy}
-                calendarActionsAvailable={calendarActionsAvailable}
-                focusActionsAvailable={focusActionsAvailable}
-                onStartFocus={onStartFocus}
-                onChangeTaskStatus={async (taskToChange, action) => {
-                  await onChangeTaskStatus(taskToChange, action);
-                }}
-                onSubmitTimeBlock={onSubmitTimeBlock}
-                onRemoveTimeBlock={onRemoveTimeBlock}
-              />
-            ))}
-          </ul>
-        </section>
+          <CardHeader>
+            <SectionHeading id="inbox-list-title" title="To clarify" />
+          </CardHeader>
+          <CardContent>
+            <ul>
+              {inboxTasks.map((task) => (
+                <TaskListItem
+                  key={task.id}
+                  task={task}
+                  state="planning"
+                  at={new Date().toISOString()}
+                  timeZone="UTC"
+                  activeSession={activeSession}
+                  calendars={calendars}
+                  busy={busy}
+                  calendarActionsAvailable={calendarActionsAvailable}
+                  focusActionsAvailable={focusActionsAvailable}
+                  onStartFocus={onStartFocus}
+                  onChangeTaskStatus={async (taskToChange, action) => {
+                    await onChangeTaskStatus(taskToChange, action);
+                  }}
+                  onSubmitTimeBlock={onSubmitTimeBlock}
+                  onRemoveTimeBlock={onRemoveTimeBlock}
+                />
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

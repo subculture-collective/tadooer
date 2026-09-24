@@ -1,3 +1,7 @@
+import { useId } from "react";
+import { Field as FieldRoot, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+
 export const Field = ({
   label,
   name,
@@ -14,16 +18,20 @@ export const Field = ({
   readonly minLength?: number;
   readonly defaultValue?: string;
   readonly required?: boolean;
-}) => (
-  <label className="field">
-    <span>{label}</span>
-    <input
-      name={name}
-      type={type}
-      autoComplete={autoComplete}
-      minLength={minLength}
-      defaultValue={defaultValue}
-      required={required}
-    />
-  </label>
-);
+}) => {
+  const id = useId();
+  return (
+    <FieldRoot className="field">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
+        name={name}
+        type={type}
+        autoComplete={autoComplete}
+        minLength={minLength}
+        defaultValue={defaultValue}
+        required={required}
+      />
+    </FieldRoot>
+  );
+};

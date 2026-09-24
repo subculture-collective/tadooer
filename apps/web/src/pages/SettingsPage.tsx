@@ -7,6 +7,10 @@ import type {
 } from "@suite/contracts";
 import { GooglePlanning } from "../google-planning.tsx";
 import { NotificationSettings } from "../notification-settings.tsx";
+import { Button } from "../components/ui/button.tsx";
+import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
+import { PageHeader } from "../components/ui/page-header.tsx";
+import { SectionHeading } from "../components/ui/section-heading.tsx";
 
 export interface SettingsPageProps {
   readonly google: GoogleConnectorStatusResponse | undefined;
@@ -50,7 +54,11 @@ export const SettingsPage = ({
   onExportDiagnostics,
 }: SettingsPageProps) => {
   return (
-    <>
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+      <PageHeader
+        title="Settings"
+        description="Control planning, notifications, synchronization, and diagnostic data."
+      />
       {google !== undefined &&
         planningPreferences !== undefined &&
         dayPlan !== undefined &&
@@ -83,42 +91,50 @@ export const SettingsPage = ({
             onTest={onTestNotification}
           />
         )}
-      <button
+      <Button
         type="button"
-        className="btn-ghost"
+        variant="outline"
         disabled={busy}
         onClick={() => void onSyncNow()}
       >
         Sync now
-      </button>
-      <section aria-labelledby="settings-health-title">
-        <h3 id="settings-health-title">Client and service health</h3>
-        <dl className="settings-health">
-          <div>
-            <dt>Task sync</dt>
-            <dd>{syncStatus ?? "offline"}</dd>
-          </div>
-          <div>
-            <dt>Client</dt>
-            <dd>{clientId ?? "Not registered"}</dd>
-          </div>
-          <div>
-            <dt>Calendar freshness</dt>
-            <dd>{plannerFreshness ?? "unavailable"}</dd>
-          </div>
-        </dl>
-        <p className="hint">
-          Automation credentials remain separately scoped and revocable;
-          connector secrets are never returned to this page.
-        </p>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => void onExportDiagnostics()}
-        >
-          Export redacted sync diagnostics
-        </button>
-      </section>
-    </>
+      </Button>
+      <Card aria-labelledby="settings-health-title">
+        <CardHeader>
+          <SectionHeading
+            as="h3"
+            id="settings-health-title"
+            title="Client and service health"
+          />
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <dl className="settings-health">
+            <div>
+              <dt>Task sync</dt>
+              <dd>{syncStatus ?? "offline"}</dd>
+            </div>
+            <div>
+              <dt>Client</dt>
+              <dd>{clientId ?? "Not registered"}</dd>
+            </div>
+            <div>
+              <dt>Calendar freshness</dt>
+              <dd>{plannerFreshness ?? "unavailable"}</dd>
+            </div>
+          </dl>
+          <p className="hint">
+            Automation credentials remain separately scoped and revocable;
+            connector secrets are never returned to this page.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void onExportDiagnostics()}
+          >
+            Export redacted sync diagnostics
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 };

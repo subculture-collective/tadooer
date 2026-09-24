@@ -1,5 +1,8 @@
 import type { SyntheticEvent } from "react";
 import type { BaikalStatusResponse, Task } from "@suite/contracts";
+import { Button } from "./components/ui/button.tsx";
+import { Input } from "./components/ui/input.tsx";
+import { NativeSelect } from "./components/ui/native-select.tsx";
 
 export interface TimeBlockFormProps {
   readonly task: Task;
@@ -32,7 +35,7 @@ export const TimeBlockForm = ({
       ) : null}
       <label className="field">
         <span>Calendar</span>
-        <select name="calendarId" required disabled={disabled}>
+        <NativeSelect name="calendarId" required disabled={disabled}>
           {calendars
             .filter((calendar) => calendar.supportsEvents)
             .map((calendar) => (
@@ -40,11 +43,11 @@ export const TimeBlockForm = ({
                 {calendar.displayName}
               </option>
             ))}
-        </select>
+        </NativeSelect>
       </label>
       <label className="field">
         <span>Start</span>
-        <input
+        <Input
           name="startsAt"
           type="datetime-local"
           required
@@ -53,7 +56,7 @@ export const TimeBlockForm = ({
       </label>
       <label className="field">
         <span>Minutes</span>
-        <input
+        <Input
           name="durationMinutes"
           type="number"
           min="1"
@@ -66,18 +69,18 @@ export const TimeBlockForm = ({
       <p className="hint">
         Manual placement stays explicit even when times overlap.
       </p>
-      <button disabled={disabled}>
+      <Button disabled={disabled}>
         {task.plannedStart == null ? "Schedule" : "Move calendar block"}
-      </button>
+      </Button>
       {task.plannedStart != null ? (
-        <button
+        <Button
           type="button"
-          className="btn-ghost"
+          variant="outline"
           disabled={disabled}
           onClick={() => void onRemove(task)}
         >
           Remove calendar block
-        </button>
+        </Button>
       ) : null}
     </form>
   );

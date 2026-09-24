@@ -1,3 +1,5 @@
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
 import { usePlannerLoader } from "./use-planner-loader.ts";
 import { googleProjectionFreshness } from "@suite/domain";
 import { createTask } from "./api.ts";
@@ -1833,21 +1835,21 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           {formError !== null ? (
             <p className="message message-error">{formError}</p>
           ) : null}
-          <button
-            className="btn-ghost"
+          <Button
+            variant="ghost"
             type="button"
             disabled={busy}
             onClick={() => void syncNow()}
           >
             Sync now
-          </button>
-          <button
-            className="btn-ghost"
+          </Button>
+          <Button
+            variant="ghost"
             type="button"
             onClick={() => void exportDiagnostics()}
           >
             Export redacted sync diagnostics
-          </button>
+          </Button>
         </section>
       </main>
     );
@@ -1877,9 +1879,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               <p className="step">Connection problem</p>
               <h2>Unable to reach the Suite</h2>
               <p className="muted">{state.message}</p>
-              <button className="btn-primary" onClick={() => location.reload()}>
-                Retry
-              </button>
+              <Button onClick={() => location.reload()}>Retry</Button>
             </div>
           )}
           {state.kind === "setup" && (
@@ -1914,9 +1914,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               {formError !== null && (
                 <p className="message message-error">{formError}</p>
               )}
-              <button className="btn-primary btn-block" disabled={busy}>
+              <Button className="w-full" disabled={busy}>
                 {busy ? "Creating..." : "Create owner"}
-              </button>
+              </Button>
             </form>
           )}
           {state.kind === "login" && (
@@ -1948,9 +1948,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               {formError !== null && (
                 <p className="message message-error">{formError}</p>
               )}
-              <button className="btn-primary btn-block" disabled={busy}>
+              <Button className="w-full" disabled={busy}>
                 {busy ? "Signing in..." : "Sign in"}
-              </button>
+              </Button>
             </form>
           )}
           {state.kind === "offline" && (
@@ -1983,22 +1983,22 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                   className="offline-capture"
                   onSubmit={(event) => void submitTask(event)}
                 >
-                  <input
+                  <Input
                     type="text"
                     name="title"
                     required
                     placeholder="Capture a task..."
                     aria-label="Task title"
                   />
-                  <input
+                  <Input
                     type="text"
                     name="notes"
                     placeholder="Notes (optional)"
                     aria-label="Task notes"
                   />
-                  <button className="btn-primary" type="submit" disabled={busy}>
+                  <Button type="submit" disabled={busy}>
                     Add
-                  </button>
+                  </Button>
                 </form>
                 <ul className="tasks" role="list">
                   {state.tasks.map((task) => (
@@ -2016,8 +2016,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                       </div>
                       {task.notes !== "" && <p>{task.notes}</p>}
                       <div className="task-actions">
-                        <button
-                          className="btn-ghost"
+                        <Button
+                          variant="ghost"
                           type="button"
                           onClick={() =>
                             void changeTaskStatus(
@@ -2029,14 +2029,14 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                           }
                         >
                           {task.status === "completed" ? "Reopen" : "Complete"}
-                        </button>
-                        <button
-                          className="btn-danger"
+                        </Button>
+                        <Button
+                          variant="destructive"
                           type="button"
                           onClick={() => void removeTask(task)}
                         >
                           Delete
-                        </button>
+                        </Button>
                       </div>
                     </li>
                   ))}
@@ -2044,33 +2044,33 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 <details className="recovery">
                   <summary>Deleted tasks ({state.recovery.length})</summary>
                   {state.recovery.map((task) => (
-                    <button
+                    <Button
                       key={task.id}
                       type="button"
                       onClick={() => void recoverTask(task)}
                     >
                       Restore {task.title}
-                    </button>
+                    </Button>
                   ))}
                 </details>
                 <p className="hint">
                   Visible sync conflicts: {state.conflictCount}
                 </p>
-                <button
-                  className="btn-ghost"
+                <Button
+                  variant="ghost"
                   type="button"
                   disabled={busy}
                   onClick={() => void syncNow()}
                 >
                   Sync now
-                </button>
-                <button
-                  className="btn-ghost"
+                </Button>
+                <Button
+                  variant="ghost"
                   type="button"
                   onClick={() => void exportDiagnostics()}
                 >
                   Export redacted sync diagnostics
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -2099,9 +2099,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               {formError !== null && (
                 <p className="message message-error">{formError}</p>
               )}
-              <button className="btn-primary btn-block" disabled={busy}>
+              <Button className="w-full" disabled={busy}>
                 {busy ? "Verifying..." : "Verify and connect"}
-              </button>
+              </Button>
             </form>
           )}
         </div>

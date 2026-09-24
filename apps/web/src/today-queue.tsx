@@ -10,6 +10,10 @@ import {
   TaskListItem,
   type TaskListItemState,
 } from "./components/tasks/TaskListItem.tsx";
+import { Button } from "./components/ui/button.tsx";
+import { Card, CardContent, CardHeader } from "./components/ui/card.tsx";
+import { EmptyState } from "./components/ui/empty-state.tsx";
+import { SectionHeading } from "./components/ui/section-heading.tsx";
 
 export interface TodayQueueProps {
   readonly at: string;
@@ -136,13 +140,17 @@ export const TodayQueue = ({
     listed: readonly Task[],
     state: "overdue" | "scheduled" | "planning",
   ) => (
-    <section
+    <Card
       className={`today-section ${className}`}
       aria-labelledby={`${className}-title`}
     >
-      <h2 id={`${className}-title`}>{title}</h2>
-      <ul>{listed.map((task) => row(task, state))}</ul>
-    </section>
+      <CardHeader>
+        <SectionHeading id={`${className}-title`} title={title} />
+      </CardHeader>
+      <CardContent>
+        <ul>{listed.map((task) => row(task, state))}</ul>
+      </CardContent>
+    </Card>
   );
 
   return (
@@ -158,13 +166,13 @@ export const TodayQueue = ({
         <p className="hint">
           {queue.futureScheduledCount} future{" "}
           {queue.futureScheduledCount === 1 ? "task" : "tasks"} hidden.{" "}
-          <button type="button" onClick={onViewTasks}>
+          <Button variant="link" type="button" onClick={onViewTasks}>
             View tasks
-          </button>
+          </Button>
         </p>
       ) : null}
       {overdue.length + scheduled.length + planning.length === 0 ? (
-        <p>Nothing queued for today.</p>
+        <EmptyState title="Nothing queued for today." />
       ) : (
         <>
           {section("Overdue", "today-overdue", overdue, "overdue")}
@@ -178,14 +186,21 @@ export const TodayQueue = ({
         </>
       )}
       {completed.length > 0 ? (
-        <section
+        <Card
           className="today-completed"
           aria-live="polite"
           aria-labelledby="today-completed-title"
         >
-          <h2 id="today-completed-title">Completed just now</h2>
-          <ul>{completed.map((task) => row(task, "completed"))}</ul>
-        </section>
+          <CardHeader>
+            <SectionHeading
+              id="today-completed-title"
+              title="Completed just now"
+            />
+          </CardHeader>
+          <CardContent>
+            <ul>{completed.map((task) => row(task, "completed"))}</ul>
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );

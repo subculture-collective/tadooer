@@ -5,6 +5,8 @@ import type {
   Task,
 } from "@suite/contracts";
 import { TimeBlockForm } from "../../time-block-form.tsx";
+import { Badge } from "../ui/badge.tsx";
+import { Button } from "../ui/button.tsx";
 
 export type TaskListItemState =
   "overdue" | "scheduled" | "planning" | "completed";
@@ -80,7 +82,7 @@ export const TaskListItem = ({
         </p>
       </div>
       <div className="today-task-actions">
-        <button
+        <Button
           type="button"
           disabled={busy}
           aria-label={`${task.status === "completed" ? "Reopen" : "Complete"} “${task.title}”`}
@@ -92,18 +94,18 @@ export const TaskListItem = ({
           }
         >
           {task.status === "completed" ? "Reopen" : "Complete"}
-        </button>
+        </Button>
         {state === "completed" ? null : focusRunning ? (
-          <span>Focus running</span>
+          <Badge variant="now">Focus running</Badge>
         ) : (
-          <button
+          <Button
             type="button"
             disabled={busy || !focusActionsAvailable || focusBlocked}
             aria-label={`Start focus on “${task.title}”`}
             onClick={() => onStartFocus(task)}
           >
             Start focus
-          </button>
+          </Button>
         )}
         {state === "completed" ? null : !focusActionsAvailable ? (
           <span className="hint">Reconnect to start focus.</span>
