@@ -66,7 +66,7 @@ no unknown sections or fields. The export still cannot be applied:
 
 ## Capability rows
 
-Status counts: 2 supported, 18 partial, 20 gap, 2 owner decision.
+Status counts: 2 supported, 18 partial, 20 gap, 1 owner decision, 1 excluded.
 
 | Area          | Capability                                                                                                                                    | Status    | Tracking                                                                  |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------------------- |
@@ -106,7 +106,7 @@ Status counts: 2 supported, 18 partial, 20 gap, 2 owner decision.
 | Settings      | Onboarding presets and guided tour                                                                                                            | gap       | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
 | Settings      | Tray, floating task widget, minimize to tray, custom title bar                                                                                | partial   | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
 | Sync          | See and stop another device's active tracking                                                                                                 | supported | —                                                                         |
-| Sync          | Multi-device sync through Dropbox, OneDrive, WebDAV, local file, Nextcloud or SuperSync, with optional end-to-end encryption                  | decision  | [#94](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/94) |
+| Sync          | Multi-device sync through Dropbox, OneDrive, WebDAV, local file, Nextcloud or SuperSync, with optional end-to-end encryption                  | excluded  | [#94](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/94) |
 | Sync          | Offline edits for every entity                                                                                                                | partial   | [#92](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/92) |
 | Data          | Full JSON export/import, automatic local backups, restore, privacy export                                                                     | partial   | [#47](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/47) |
 | Data          | User-facing export and restore of Tadooer data                                                                                                | gap       | [#93](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/93) |
@@ -123,8 +123,14 @@ Tadooer evidence paths to exist, and every unsupported row to have a tracking
 issue. A new Super Productivity field must be classified in the schema module
 and assigned to a row before an import containing it can be applied.
 
+## Exclusions
+
+- Owner decision, September 24 ([#94](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/94)):
+  client-side end-to-end encryption and sync through third-party storage
+  (Dropbox, OneDrive, WebDAV, local file, Nextcloud, SuperSync) are not parity
+  requirements. Tadooer keeps its self-hosted server sync.
+
 ## Remaining acceptance for #17
 
-- Decide #94 and record the outcome in the `sync` row.
 - Reconcile the matrix against real imported workflows under #47. Source parity
   evidence does not establish replacement readiness.
