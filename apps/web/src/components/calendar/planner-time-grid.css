@@ -20,12 +20,16 @@
   .planner-time-grid__days {
     display: grid;
     grid-template-columns: repeat(var(--planner-days), minmax(10rem, 1fr));
+    grid-template-rows: auto auto minmax(76rem, auto);
     overflow-x: auto;
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
     background: var(--base);
   }
   .planner-time-grid__day {
+    display: grid;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
     min-width: 10rem;
     border-left: 1px solid var(--line);
   }

@@ -32,6 +32,14 @@ const phaseOneCalDav = () => {
           "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:seed-event\r\nDTSTART:20260806T120000Z\r\nDTEND:20260806T130000Z\r\nSUMMARY:Existing appointment\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
       },
     ],
+    [
+      "/dav.php/calendars/alice/work/all-day.ics",
+      {
+        etag: '"all-day-1"',
+        rawIcs:
+          "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:all-day-event\r\nDTSTART;VALUE=DATE:20260806\r\nDTEND;VALUE=DATE:20260807\r\nSUMMARY:All-day planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+      },
+    ],
   ]);
   let version = 1;
   let failNextPutAfterCommit = false;
@@ -657,9 +665,17 @@ describe("Suite HTTP server", () => {
           await plannerResponse.json(),
         );
         expect(planner.freshness.state).toBe("fresh");
-        expect(planner.events).toMatchObject([
-          { summary: "Existing appointment" },
-        ]);
+        expect(planner.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ summary: "Existing appointment" }),
+            expect.objectContaining({
+              summary: "All-day planning",
+              startsAt: "2026-08-06T00:00:00.000Z",
+              endsAt: "2026-08-07T00:00:00.000Z",
+              allDay: true,
+            }),
+          ]),
+        );
 
         const blockResponse = await fetch(
           `${server.baseUrl}/api/tasks/${created.task.id}/time-block`,

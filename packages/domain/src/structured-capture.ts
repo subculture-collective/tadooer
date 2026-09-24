@@ -117,6 +117,22 @@ const dateValue = (result: chrono.ParsedResult): string => {
   return `${String(year)}-${month}-${day}`;
 };
 
+const contextDateValue = (context: StructuredCaptureContext): string => {
+  const civil =
+    context.timeZone === undefined
+      ? context.at.getTime() + context.timezoneOffsetMinutes * 60_000
+      : civilTimestamp(context.at.getTime(), context.timeZone);
+  return new Date(civil).toISOString().slice(0, 10);
+};
+
+const bareWeekday =
+  /^(?:on\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i;
+
+const addDays = (date: string, days: number): string =>
+  new Date(new Date(`${date}T00:00:00.000Z`).getTime() + days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
 const parseDate = (
   value: string,
   context: StructuredCaptureContext,
@@ -143,6 +159,11 @@ const parseDate = (
       `Could not resolve time expression “${value}”`,
     );
   }
+  const parsedDate = dateValue(result);
+  const resolvedDate =
+    bareWeekday.test(value.trim()) && parsedDate === contextDateValue(context)
+      ? addDays(parsedDate, 7)
+      : parsedDate;
   const hasExplicitTime =
     result.start.isCertain("hour") || result.start.isCertain("minute");
   return hasExplicitTime
@@ -154,7 +175,7 @@ const parseDate = (
             ? zonedInstant(result, context.timeZone)
             : result.start.date().toISOString(),
       }
-    : { kind: "date", value: dateValue(result) };
+    : { kind: "date", value: resolvedDate };
 };
 
 export const parseStructuredCapture = (
