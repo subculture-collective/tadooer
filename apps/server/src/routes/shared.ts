@@ -149,6 +149,7 @@ export const taskResponse = (task: TaskRecord): Task => ({
 
 export const calendarEventResponse = (
   event: CalendarEventProjectionRecord,
+  linkedTaskId?: string,
 ): PlannerResponse["events"][number] => ({
   identity: {
     providerId: event.providerId,
@@ -162,6 +163,7 @@ export const calendarEventResponse = (
   startsAt: event.startsAt,
   endsAt: event.endsAt,
   allDay: event.allDay,
+  ...(linkedTaskId === undefined ? {} : { linkedTaskId }),
   recurrence: event.recurrence ?? "none",
   projectedAt: event.projectedAt,
   source: {

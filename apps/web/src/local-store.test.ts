@@ -229,11 +229,226 @@ describe("LocalStore", () => {
     expect(await local.loadOutbox()).toEqual(outboxBefore);
 
     await local.queueTaskPatch(taskId, { title: "Reviewed resolution" });
-    expect(await local.loadConflicts()).toEqual([]);
+    expect(await local.loadConflicts()).toEqual(conflictBefore);
     expect((await local.loadOutbox()).map(({ state }) => state)).toEqual([
-      "acknowledged",
+      "conflicted",
       "queued",
     ]);
+  });
+
+  it("resolves only the selected conflict and retries its immutable local patch", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    await local.applySyncRound(response());
+    const original = await local.queueTaskPatch(taskId, {
+      deadline: { kind: "date", value: "2026-09-30" },
+    });
+    await local.applySyncRound(
+      response({
+        outcomes: [
+          {
+            kind: "conflict",
+            operationId: original.operationId,
+            code: "SYNC_FIELD_CONFLICT",
+            taskId,
+            taskRevision: 2,
+            conflictingFields: ["deadline"],
+          },
+        ],
+      }),
+    );
+    const review = (await local.loadConflictReviews())[0];
+    expect(review).toMatchObject({
+      conflict: { operationId: original.operationId },
+      attemptedFields: { deadline: { kind: "date", value: "2026-09-30" } },
+      retryLocalSupported: true,
+    });
+    if (review?.canonical === null || review === undefined)
+      throw new Error("Expected a canonical task conflict review");
+
+    const retry = await local.resolveTaskConflict({
+      operationId: original.operationId,
+      choice: "retry-local",
+      reviewedTaskRevision: review.canonical.task.revision,
+      reviewedFieldVersions: {
+        deadline: review.canonical.fieldVersions.deadline,
+      },
+    });
+    expect(retry).toMatchObject({
+      kind: "task.patch",
+      taskId,
+      fields: { deadline: { kind: "date", value: "2026-09-30" } },
+      baseFieldVersions: { deadline: review.canonical.fieldVersions.deadline },
+    });
+    expect(await local.loadConflicts()).toEqual([]);
+    expect((await local.loadOutbox()).map(({ state }) => state)).toEqual([
+      "resolved",
+      "queued",
+    ]);
+    const [resolved, replacement] = await local.loadOutbox();
+    expect(resolved).toMatchObject({
+      operation: original,
+      state: "resolved",
+      resolvedAt: "2026-08-06T16:00:00.000Z",
+      resolutionChoice: "retry-local",
+      replacementOperationId: replacement?.operation.operationId,
+    });
+    expect(resolved?.operation).toEqual(original);
+    expect((await local.loadCachedTasks())[0]?.task.deadline).toEqual({
+      kind: "date",
+      value: "2026-09-30",
+    });
+  });
+
+  it("rejects stale conflict reviews without retiring the original operation", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    await local.applySyncRound(response());
+    const original = await local.queueTaskPatch(taskId, {
+      title: "Local title",
+    });
+    await local.applySyncRound(
+      response({
+        outcomes: [
+          {
+            kind: "conflict",
+            operationId: original.operationId,
+            code: "SYNC_FIELD_CONFLICT",
+            taskId,
+            taskRevision: 2,
+            conflictingFields: ["title"],
+          },
+        ],
+      }),
+    );
+    await expect(
+      local.resolveTaskConflict({
+        operationId: original.operationId,
+        choice: "keep-current",
+        reviewedTaskRevision: 1,
+        reviewedFieldVersions: { title: 1 },
+      }),
+    ).rejects.toThrow("latest canonical values");
+    expect((await local.loadOutbox())[0]?.state).toBe("conflicted");
+    expect(await local.loadConflicts()).toHaveLength(1);
+  });
+
+  it("blocks a conflict retry behind a newer local task change, then allows it after sync", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    await local.applySyncRound(response());
+    const original = await local.queueTaskPatch(taskId, {
+      title: "Local title",
+    });
+    await local.applySyncRound(
+      response({
+        outcomes: [
+          {
+            kind: "conflict",
+            operationId: original.operationId,
+            code: "SYNC_FIELD_CONFLICT",
+            taskId,
+            taskRevision: 2,
+            conflictingFields: ["title"],
+          },
+        ],
+      }),
+    );
+    const later = await local.queueTaskPatch(taskId, { notes: "Newer note" });
+    const blocked = (await local.loadConflictReviews())[0];
+    expect(blocked).toMatchObject({
+      retryLocalSupported: false,
+      retryLocalUnavailableReason: "pending-local-sync",
+    });
+    if (blocked?.canonical === null || blocked === undefined)
+      throw new Error("Expected a canonical task conflict review");
+
+    await expect(
+      local.resolveTaskConflict({
+        operationId: original.operationId,
+        choice: "retry-local",
+        reviewedTaskRevision: blocked.canonical.task.revision,
+        reviewedFieldVersions: { title: blocked.canonical.fieldVersions.title },
+      }),
+    ).rejects.toThrow("newer local change must finish syncing");
+    expect((await local.loadOutbox())[0]).toMatchObject({
+      operation: original,
+      state: "conflicted",
+    });
+
+    await local.applySyncRound(
+      response({
+        outcomes: [
+          {
+            kind: "applied",
+            operationId: later.operationId,
+            entityId: taskId,
+            entityRevision: 2,
+            changeSequence: 2,
+          },
+        ],
+      }),
+    );
+    const ready = (await local.loadConflictReviews())[0];
+    expect(ready?.retryLocalSupported).toBe(true);
+    if (ready?.canonical === null || ready === undefined)
+      throw new Error("Expected a canonical task conflict review");
+    await expect(
+      local.resolveTaskConflict({
+        operationId: original.operationId,
+        choice: "retry-local",
+        reviewedTaskRevision: ready.canonical.task.revision,
+        reviewedFieldVersions: { title: ready.canonical.fieldVersions.title },
+      }),
+    ).resolves.toMatchObject({
+      kind: "task.patch",
+      fields: { title: "Local title" },
+    });
+  });
+
+  it("keeps current values without sending a replacement operation", async () => {
+    const local = store();
+    await local.ensureClient(() => Promise.resolve(registration));
+    await local.applySyncRound(response());
+    const original = await local.queueTaskPatch(taskId, {
+      title: "Local title",
+    });
+    await local.applySyncRound(
+      response({
+        outcomes: [
+          {
+            kind: "conflict",
+            operationId: original.operationId,
+            code: "SYNC_FIELD_CONFLICT",
+            taskId,
+            taskRevision: 2,
+            conflictingFields: ["title"],
+          },
+        ],
+      }),
+    );
+    const review = (await local.loadConflictReviews())[0];
+    if (review?.canonical === null || review === undefined)
+      throw new Error("Expected a canonical task conflict review");
+
+    await expect(
+      local.resolveTaskConflict({
+        operationId: original.operationId,
+        choice: "keep-current",
+        reviewedTaskRevision: review.canonical.task.revision,
+        reviewedFieldVersions: { title: review.canonical.fieldVersions.title },
+      }),
+    ).resolves.toBeNull();
+    expect(await local.loadConflicts()).toEqual([]);
+    expect(await local.loadOutbox()).toMatchObject([
+      {
+        operation: original,
+        state: "resolved",
+        resolvedAt: "2026-08-06T16:00:00.000Z",
+        resolutionChoice: "keep-current",
+      },
+    ]);
+    expect((await local.loadCachedTasks())[0]?.task.title).toBe("Server task");
   });
 
   it("waits for canonical habit occurrences and preserves queued completions through reset", async () => {

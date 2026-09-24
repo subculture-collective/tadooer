@@ -206,6 +206,13 @@ export interface TaskCalendarBlockRecord {
   readonly updatedAt: string;
 }
 
+export interface ActiveTaskCalendarEventLink {
+  readonly providerId: string;
+  readonly calendarId: string;
+  readonly eventHref: string;
+  readonly taskId: string;
+}
+
 export interface CalendarWriteOperationRecord {
   readonly ownerId: string;
   readonly idempotencyKey: string;
@@ -2363,6 +2370,33 @@ export class SuiteDatabase {
     to: string,
   ): readonly CalendarEventProjectionRecord[] {
     return this.calendarProjections.listProjectedEvents(ownerId, from, to);
+  }
+
+  listActiveTaskCalendarEventLinks(
+    ownerId: string,
+  ): readonly ActiveTaskCalendarEventLink[] {
+    return this.#database
+      .prepare(
+        `SELECT b.provider_id,b.calendar_id,b.event_href,b.task_id
+         FROM task_calendar_blocks b
+         JOIN tasks t ON t.id=b.task_id AND t.owner_id=b.owner_id
+         WHERE b.owner_id=? AND b.state='active' AND t.deleted_at IS NULL`,
+      )
+      .all(ownerId)
+      .map((row) => {
+        const link = row as {
+          provider_id: string;
+          calendar_id: string;
+          event_href: string;
+          task_id: string;
+        };
+        return {
+          providerId: link.provider_id,
+          calendarId: link.calendar_id,
+          eventHref: link.event_href,
+          taskId: link.task_id,
+        };
+      });
   }
 
   getTaskCalendarBlock(

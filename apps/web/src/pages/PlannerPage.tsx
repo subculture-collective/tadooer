@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import type { PlannerResponse } from "@suite/contracts";
+import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
+import type {
+  BaikalStatusResponse,
+  PlannerResponse,
+  Task,
+} from "@suite/contracts";
 import {
   AlertCircleIcon,
   ChevronLeftIcon,
@@ -13,6 +17,10 @@ import {
   type CalendarView,
 } from "../components/calendar/calendar-range.ts";
 import { PlannerTimeGrid } from "../components/calendar/PlannerTimeGrid.tsx";
+import {
+  PlannerDetailsSheet,
+  type PlannerDetailsSelection,
+} from "../components/calendar/PlannerDetailsSheet.tsx";
 import {
   Alert,
   AlertDescription,
@@ -31,6 +39,25 @@ interface PlannerPageProps {
   readonly loading?: boolean;
   readonly error?: string | null;
   readonly onLoadPlanner: (range: CalendarRange) => Promise<void>;
+  readonly tasks: readonly Task[];
+  readonly onChangeTaskStatus: (
+    task: Task,
+    action: "complete" | "reopen",
+  ) => Promise<boolean>;
+  readonly onSubmitTaskEdit: (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+  ) => Promise<boolean>;
+  readonly calendars: BaikalStatusResponse["calendars"];
+  readonly onSubmitTimeBlock: (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+    window: CalendarRange,
+  ) => Promise<boolean>;
+  readonly onRemoveTimeBlock: (
+    task: Task,
+    window: CalendarRange,
+  ) => Promise<boolean>;
 }
 
 const calendarViewLabel: Readonly<Record<CalendarView, string>> = {
@@ -56,9 +83,19 @@ export const PlannerPage = ({
   loading = false,
   error = null,
   onLoadPlanner,
+  tasks,
+  onChangeTaskStatus,
+  onSubmitTaskEdit,
+  calendars,
+  onSubmitTimeBlock,
+  onRemoveTimeBlock,
 }: PlannerPageProps) => {
   const [view, setView] = useState<CalendarView>("week");
   const [anchor, setAnchor] = useState(() => new Date());
+  const [selection, setSelection] = useState<PlannerDetailsSelection | null>(
+    null,
+  );
+  const [opener, setOpener] = useState<HTMLElement | null>(null);
   const range = useMemo(
     () => buildCalendarRange(view, anchor, timeZone),
     [anchor, timeZone, view],
@@ -205,11 +242,40 @@ export const PlannerPage = ({
                 timeZone={timeZone}
                 events={planner.events}
                 tasks={planner.tasks}
+                onSelectEntry={(entry) => {
+                  setOpener(
+                    document.activeElement instanceof HTMLElement
+                      ? document.activeElement
+                      : null,
+                  );
+                  setSelection(entry);
+                }}
               />
             </>
           )}
         </CardContent>
       </Card>
+      <PlannerDetailsSheet
+        selection={selection}
+        tasks={tasks}
+        events={planner?.events ?? []}
+        busy={busy}
+        timeZone={timeZone}
+        error={null}
+        opener={opener}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelection(null);
+          }
+        }}
+        onChangeTaskStatus={onChangeTaskStatus}
+        onSubmitTaskEdit={onSubmitTaskEdit}
+        calendars={calendars}
+        onSubmitTimeBlock={(event, task) =>
+          onSubmitTimeBlock(event, task, range)
+        }
+        onRemoveTimeBlock={(task) => onRemoveTimeBlock(task, range)}
+      />
     </div>
   );
 };

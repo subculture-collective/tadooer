@@ -94,7 +94,13 @@ import {
   resumeSession,
   setupOwner,
 } from "./api.ts";
-import { LocalStore, type LocalClientIdentity } from "./local-store.ts";
+import {
+  LocalStore,
+  type LocalClientIdentity,
+  type TaskConflictReview,
+  type ResolveTaskConflictInput,
+} from "./local-store.ts";
+import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
 import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
 import { Field } from "./field.tsx";
 import type { FocusPanelCommand } from "./focus-panel.tsx";
@@ -143,12 +149,14 @@ export type AppState =
       readonly activeSession?: ActiveSession | null;
       readonly syncStatus?: "online" | "offline" | "syncing";
       readonly conflictCount?: number;
+      readonly conflictReviews?: readonly TaskConflictReview[];
     }
   | {
       readonly kind: "offline";
       readonly tasks: readonly Task[];
       readonly recovery: readonly Task[];
       readonly conflictCount: number;
+      readonly conflictReviews?: readonly TaskConflictReview[];
       readonly message: string;
       readonly planningPreferences?: PlanningPreferences;
     }
@@ -332,6 +340,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         .map(({ task }) => task)
         .filter((task) => task.deletedAt != null),
       conflictCount: (await localStore.loadConflicts()).length,
+      conflictReviews: await localStore.loadConflictReviews(),
     };
   }, [localStore]);
 
@@ -878,6 +887,22 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  const resolveConflict = async (
+    input: ResolveTaskConflictInput,
+  ): Promise<void> => {
+    setBusy(true);
+    setFormError(null);
+    try {
+      await localStore.resolveTaskConflict(input);
+      await syncAfterLocalMutation("Conflict resolution saved locally");
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+      await publishLocalState();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const syncNow = async (): Promise<void> => {
     if (state.kind !== "authenticated" && state.kind !== "offline") return;
     setBusy(true);
@@ -1392,6 +1417,118 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  // The Sheet needs an action outcome to retain its draft and show its own
+  // error. Existing page forms retain their Promise<void> callbacks.
+  const submitPlannerTaskEdit = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+  ): Promise<boolean> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated" && state.kind !== "offline")
+      return false;
+    const data = new FormData(event.currentTarget);
+    setBusy(true);
+    setFormError(null);
+    try {
+      const estimate = Number(formValue(data, "estimateMinutes"));
+      await localStore.queueTaskPatch(task.id, {
+        title: formValue(data, "title"),
+        notes: formValue(data, "notes"),
+        deadline: deadlineFromForm(data),
+        estimateMinutes:
+          Number.isInteger(estimate) && estimate > 0 ? estimate : null,
+      });
+      await syncAfterLocalMutation();
+      return true;
+    } catch (error: unknown) {
+      handleTaskError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitPlannerTimeBlock = async (
+    event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
+    task: Task,
+    window: { readonly from: string; readonly to: string },
+  ): Promise<boolean> => {
+    event.preventDefault();
+    if (state.kind !== "authenticated") return false;
+    const data = new FormData(event.currentTarget);
+    const startsAt = localInputToIso(formValue(data, "startsAt"));
+    const durationMinutes = Number(formValue(data, "durationMinutes"));
+    if (startsAt === undefined) {
+      setFormError("Choose a valid start time.");
+      return false;
+    }
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await putTaskTimeBlock(
+        task.id,
+        task.revision,
+        {
+          calendarId: formValue(data, "calendarId"),
+          startsAt,
+          durationMinutes,
+        },
+        state.session.csrfToken,
+        crypto.randomUUID(),
+      );
+      replaceTask(result.task);
+      const [planner, dayPlan] = await Promise.all([
+        getPlanner(window.from, window.to),
+        getDayPlan(),
+        syncAfterLocalMutation(),
+      ]);
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, planner, dayPlan }
+          : current,
+      );
+      return true;
+    } catch (error: unknown) {
+      handleTaskError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removePlannerTimeBlock = async (
+    task: Task,
+    window: { readonly from: string; readonly to: string },
+  ): Promise<boolean> => {
+    if (state.kind !== "authenticated") return false;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await removeTaskTimeBlock(
+        task.id,
+        task.revision,
+        state.session.csrfToken,
+      );
+      replaceTask(result.task);
+      const [planner, dayPlan] = await Promise.all([
+        getPlanner(window.from, window.to),
+        getDayPlan(),
+        syncAfterLocalMutation(),
+      ]);
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, planner, dayPlan }
+          : current,
+      );
+      return true;
+    } catch (error: unknown) {
+      handleTaskError(error);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const signOut = async (): Promise<void> => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
@@ -1811,6 +1948,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     const renderedOfflineState = offlineForRender();
     return (
       <main className="main">
+        <SyncConflictReview
+          reviews={renderedOfflineState.conflictReviews ?? []}
+          busy={busy}
+          onResolve={resolveConflict}
+        />
         <TodayPage
           dayPlan={undefined}
           planningPreferences={renderedOfflineState.planningPreferences}
@@ -2166,6 +2308,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       }
     >
       {recovery}
+      <SyncConflictReview
+        reviews={state.conflictReviews ?? []}
+        busy={busy}
+        onResolve={resolveConflict}
+      />
       {route === "today" && (
         <TodayPage
           dayPlan={dayPlanView}
@@ -2212,6 +2359,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onLoadPlanner={loadPlanner}
           loading={plannerLoading}
           error={plannerError}
+          tasks={state.tasks}
+          onChangeTaskStatus={changeTaskStatus}
+          onSubmitTaskEdit={submitPlannerTaskEdit}
+          calendars={state.baikal.calendars}
+          onSubmitTimeBlock={submitPlannerTimeBlock}
+          onRemoveTimeBlock={removePlannerTimeBlock}
         />
       )}
       {route === "tasks" && (

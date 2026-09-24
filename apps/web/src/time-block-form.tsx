@@ -14,6 +14,10 @@ export interface TimeBlockFormProps {
     task: Task,
   ) => Promise<void>;
   readonly onRemove: (task: Task) => Promise<void>;
+  readonly defaultCalendarId?: string;
+  readonly defaultStartsAt?: string;
+  readonly defaultDurationMinutes?: number;
+  readonly startLabel?: string;
 }
 
 export const TimeBlockForm = ({
@@ -23,6 +27,10 @@ export const TimeBlockForm = ({
   available,
   onSubmit,
   onRemove,
+  defaultCalendarId,
+  defaultStartsAt,
+  defaultDurationMinutes,
+  startLabel = "Start",
 }: TimeBlockFormProps) => {
   const disabled = busy || !available;
   return (
@@ -35,7 +43,12 @@ export const TimeBlockForm = ({
       ) : null}
       <label className="field">
         <span>Calendar</span>
-        <NativeSelect name="calendarId" required disabled={disabled}>
+        <NativeSelect
+          name="calendarId"
+          required
+          disabled={disabled}
+          defaultValue={defaultCalendarId}
+        >
           {calendars
             .filter((calendar) => calendar.supportsEvents)
             .map((calendar) => (
@@ -46,10 +59,11 @@ export const TimeBlockForm = ({
         </NativeSelect>
       </label>
       <label className="field">
-        <span>Start</span>
+        <span>{startLabel}</span>
         <Input
           name="startsAt"
           type="datetime-local"
+          defaultValue={defaultStartsAt}
           required
           disabled={disabled}
         />
@@ -61,7 +75,7 @@ export const TimeBlockForm = ({
           type="number"
           min="1"
           max="720"
-          defaultValue={task.estimateMinutes ?? 30}
+          defaultValue={defaultDurationMinutes ?? task.estimateMinutes ?? 30}
           required
           disabled={disabled}
         />

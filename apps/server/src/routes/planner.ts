@@ -17,6 +17,12 @@ const projectedEventTime = (value: string, allDay: boolean): string => {
   return new Date(normalized).toISOString();
 };
 
+const eventIdentityKey = (
+  providerId: string,
+  calendarId: string,
+  href: string,
+): string => `${providerId}:${calendarId}:${href}`;
+
 export const handlePlanner: RouteHandler = async (
   request,
   response,
@@ -120,6 +126,14 @@ export const handlePlanner: RouteHandler = async (
       window.data.from,
       window.data.to,
     );
+    const linkedTaskIdByEvent = new Map(
+      database
+        .listActiveTaskCalendarEventLinks(session.owner.id)
+        .map((link) => [
+          eventIdentityKey(link.providerId, link.calendarId, link.eventHref),
+          link.taskId,
+        ]),
+    );
     const body: PlannerResponse = {
       window: window.data,
       tasks: database
@@ -142,7 +156,14 @@ export const handlePlanner: RouteHandler = async (
           return leftTime - rightTime || left.id.localeCompare(right.id);
         })
         .map(taskResponse),
-      events: events.map(calendarEventResponse),
+      events: events.map((event) =>
+        calendarEventResponse(
+          event,
+          linkedTaskIdByEvent.get(
+            eventIdentityKey(event.providerId, event.calendarId, event.href),
+          ),
+        ),
+      ),
       freshness: fresh
         ? {
             state: "fresh",

@@ -67,12 +67,48 @@ export interface LocalConflict {
 }
 
 export type LocalOutboxState =
-  "queued" | "sending" | "acknowledged" | "conflicted" | "rejected";
+  | "queued"
+  | "sending"
+  | "acknowledged"
+  | "resolved"
+  | "conflicted"
+  | "rejected";
 
 export interface LocalOutboxEntry {
   readonly operation: SyncOperation;
   readonly state: LocalOutboxState;
   readonly safeErrorCode: string | null;
+  /** Local audit metadata retained with the immutable original operation. */
+  readonly resolvedAt?: string;
+  readonly resolutionChoice?: "keep-current" | "retry-local";
+  readonly replacementOperationId?: string;
+}
+
+type TaskPatchOperation = Extract<
+  SyncOperation,
+  { readonly kind: "task.patch" }
+>;
+
+export interface TaskConflictReview {
+  readonly conflict: LocalConflict;
+  /** The server-authoritative task snapshot currently cached for review. */
+  readonly canonical: SyncTaskSnapshot | null;
+  /** The immutable fields requested by the original conflicted operation. */
+  readonly attemptedFields: TaskPatchOperation["fields"] | null;
+  /** Resource and non-patch conflicts stay visible but cannot be retried locally. */
+  readonly retryLocalSupported: boolean;
+  /** Why retry is unavailable, so the UI can distinguish an unsupported resource. */
+  readonly retryLocalUnavailableReason:
+    "pending-local-sync" | "unsupported" | null;
+}
+
+export interface ResolveTaskConflictInput {
+  readonly operationId: string;
+  readonly choice: "keep-current" | "retry-local";
+  /** Revision displayed to the person resolving this conflict. */
+  readonly reviewedTaskRevision: number;
+  /** Field versions displayed to the person resolving this conflict. */
+  readonly reviewedFieldVersions: Readonly<Partial<TaskFieldVersions>>;
 }
 
 interface LocalMetadata extends LocalClientIdentity {
@@ -154,6 +190,25 @@ const isTaskSnapshot = (value: unknown): value is SyncTaskSnapshot =>
   typeof value === "object" &&
   "task" in value &&
   "fieldVersions" in value;
+
+const taskIdForOperation = (operation: SyncOperation): string | null => {
+  if (operation.kind === "task.create") return operation.task.id;
+  if (operation.kind.startsWith("task.") && "taskId" in operation)
+    return operation.taskId;
+  return null;
+};
+
+const hasNewerActiveTaskMutation = (
+  entries: readonly LocalOutboxEntry[],
+  taskId: string,
+  clientSequence: number,
+): boolean =>
+  entries.some(
+    (entry) =>
+      entry.operation.clientSequence > clientSequence &&
+      (entry.state === "queued" || entry.state === "sending") &&
+      taskIdForOperation(entry.operation) === taskId,
+  );
 
 const safeOutcomeCode = (value: unknown): string => {
   if (
@@ -382,6 +437,192 @@ export class LocalStore {
     )) as LocalConflict[];
     await transactionDone(transaction);
     return conflicts;
+  }
+
+  async loadConflictReviews(): Promise<readonly TaskConflictReview[]> {
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [entityStore, outboxStore, conflictStore],
+      "readonly",
+    );
+    const conflicts = (await requestResult(
+      transaction.objectStore(conflictStore).getAll(),
+    )) as LocalConflict[];
+    const outbox = transaction.objectStore(outboxStore);
+    const entities = transaction.objectStore(entityStore);
+    const allEntries = (await requestResult(
+      outbox.getAll(),
+    )) as LocalOutboxEntry[];
+    const reviews = await Promise.all(
+      conflicts.map(async (conflict): Promise<TaskConflictReview> => {
+        const entry = (await requestResult(
+          outbox.get(conflict.operationId),
+        )) as LocalOutboxEntry | undefined;
+        const cached = (await requestResult(
+          entities.get(entityKey("task", conflict.taskId)),
+        )) as CachedEntity | undefined;
+        const canonical =
+          cached !== undefined && isTaskSnapshot(cached.value)
+            ? cached.value
+            : null;
+        const attemptedFields =
+          entry?.operation.kind === "task.patch"
+            ? entry.operation.fields
+            : null;
+        const pendingLocalSync =
+          entry !== undefined &&
+          hasNewerActiveTaskMutation(
+            allEntries,
+            conflict.taskId,
+            entry.operation.clientSequence,
+          );
+        const retrySupportedByConflict =
+          canonical !== null &&
+          attemptedFields !== null &&
+          conflict.conflictingFields !== null &&
+          conflict.conflictingFields.length > 0;
+        return {
+          conflict,
+          canonical,
+          attemptedFields,
+          retryLocalSupported: retrySupportedByConflict && !pendingLocalSync,
+          retryLocalUnavailableReason: pendingLocalSync
+            ? "pending-local-sync"
+            : retrySupportedByConflict
+              ? null
+              : "unsupported",
+        };
+      }),
+    );
+    await transactionDone(transaction);
+    return reviews.sort((left, right) =>
+      left.conflict.operationId.localeCompare(right.conflict.operationId),
+    );
+  }
+
+  async resolveTaskConflict(
+    input: ResolveTaskConflictInput,
+  ): Promise<SyncOperation | null> {
+    const review = (await this.loadConflictReviews()).find(
+      ({ conflict }) => conflict.operationId === input.operationId,
+    );
+    if (review === undefined)
+      throw new Error("Sync conflict is no longer available");
+    if (review.canonical === null)
+      throw new Error("The canonical task is no longer available for review");
+    this.#assertConflictPreview(review, input);
+    if (
+      input.choice === "retry-local" &&
+      review.retryLocalUnavailableReason === "pending-local-sync"
+    )
+      throw new Error(
+        "A newer local change must finish syncing before retrying",
+      );
+
+    const metadata = await this.#requiredMetadata();
+    const retry =
+      input.choice === "retry-local"
+        ? await this.#conflictRetryOperation(review, metadata)
+        : null;
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [metadataStore, entityStore, outboxStore, conflictStore],
+      "readwrite",
+    );
+    const metadataHandle = transaction.objectStore(metadataStore);
+    const currentMetadata = (await requestResult(
+      metadataHandle.get(metadataKey),
+    )) as LocalMetadata | undefined;
+    const conflicts = transaction.objectStore(conflictStore);
+    const conflict = (await requestResult(conflicts.get(input.operationId))) as
+      LocalConflict | undefined;
+    const outbox = transaction.objectStore(outboxStore);
+    const original = (await requestResult(outbox.get(input.operationId))) as
+      LocalOutboxEntry | undefined;
+    const allEntries = (await requestResult(
+      outbox.getAll(),
+    )) as LocalOutboxEntry[];
+    const entities = transaction.objectStore(entityStore);
+    const cached = (await requestResult(
+      entities.get(entityKey("task", review.conflict.taskId)),
+    )) as CachedEntity | undefined;
+    if (
+      currentMetadata === undefined ||
+      conflict === undefined ||
+      original === undefined ||
+      cached === undefined ||
+      !isTaskSnapshot(cached.value)
+    ) {
+      transaction.abort();
+      throw new Error("Sync conflict changed before it could be resolved");
+    }
+    const currentReview: TaskConflictReview = {
+      conflict,
+      canonical: cached.value,
+      attemptedFields:
+        original.operation.kind === "task.patch"
+          ? original.operation.fields
+          : null,
+      retryLocalSupported:
+        original.operation.kind === "task.patch" &&
+        conflict.conflictingFields !== null &&
+        conflict.conflictingFields.length > 0,
+      retryLocalUnavailableReason: null,
+    };
+    this.#assertConflictPreview(currentReview, input);
+    if (
+      input.choice === "retry-local" &&
+      hasNewerActiveTaskMutation(
+        allEntries,
+        conflict.taskId,
+        original.operation.clientSequence,
+      )
+    ) {
+      transaction.abort();
+      throw new Error(
+        "A newer local change must finish syncing before retrying",
+      );
+    }
+    if (
+      retry !== null &&
+      currentMetadata.nextClientSequence !== metadata.nextClientSequence
+    ) {
+      transaction.abort();
+      throw new Error("A newer local change requires a fresh conflict review");
+    }
+    outbox.put({
+      ...original,
+      state: "resolved",
+      resolvedAt: this.#now(),
+      resolutionChoice: input.choice,
+      ...(retry === null ? {} : { replacementOperationId: retry.operationId }),
+    } satisfies LocalOutboxEntry);
+    conflicts.delete(input.operationId);
+    if (retry !== null) {
+      const task = {
+        ...cached.value.task,
+        ...retry.fields,
+        updatedAt: this.#now(),
+      };
+      entities.put({
+        ...cached,
+        value: { ...cached.value, task },
+      } satisfies CachedEntity);
+      metadataHandle.put(
+        {
+          ...currentMetadata,
+          nextClientSequence: currentMetadata.nextClientSequence + 1,
+        },
+        metadataKey,
+      );
+      outbox.put({
+        operation: retry,
+        state: "queued",
+        safeErrorCode: null,
+      } satisfies LocalOutboxEntry);
+    }
+    await transactionDone(transaction);
+    return retry;
   }
 
   async queueTaskCreate(input: {
@@ -836,6 +1077,52 @@ export class LocalStore {
     return { ...normalized, requestHash: await hash(payloadToHash) };
   }
 
+  #assertConflictPreview(
+    review: TaskConflictReview,
+    input: ResolveTaskConflictInput,
+  ): void {
+    if (review.canonical === null)
+      throw new Error("The canonical task is no longer available for review");
+    if (review.canonical.task.revision !== input.reviewedTaskRevision)
+      throw new Error("The task changed; review the latest canonical values");
+    const fields = Object.keys(review.attemptedFields ?? {}) as CoreTaskField[];
+    for (const field of fields) {
+      if (
+        input.reviewedFieldVersions[field] !==
+        review.canonical.fieldVersions[field]
+      )
+        throw new Error(
+          "A task field changed; review the latest canonical values",
+        );
+    }
+  }
+
+  async #conflictRetryOperation(
+    review: TaskConflictReview,
+    metadata: LocalMetadata,
+  ): Promise<TaskPatchOperation> {
+    if (!review.retryLocalSupported || review.canonical === null)
+      throw new Error("This sync conflict cannot be retried locally");
+    const canonical = review.canonical;
+    const fields = review.attemptedFields;
+    if (fields === null)
+      throw new Error("The original task patch is unavailable");
+    const baseFieldVersions = Object.fromEntries(
+      (Object.keys(fields) as CoreTaskField[]).map((field) => [
+        field,
+        canonical.fieldVersions[field],
+      ]),
+    );
+    const operation = await this.#operation(metadata, "task.patch", {
+      taskId: review.conflict.taskId,
+      fields,
+      baseFieldVersions,
+    });
+    if (operation.kind !== "task.patch")
+      throw new Error("Expected a task patch conflict retry");
+    return operation;
+  }
+
   async #queueAndWriteTask(
     operation: SyncOperation,
     snapshot: SyncTaskSnapshot,
@@ -866,17 +1153,6 @@ export class LocalStore {
       changeSequence: snapshot.changeSequence,
     } satisfies CachedEntity);
     const outbox = transaction.objectStore(outboxStore);
-    const conflicts = transaction.objectStore(conflictStore);
-    const taskConflicts = (
-      (await requestResult(conflicts.getAll())) as LocalConflict[]
-    ).filter(({ taskId }) => taskId === snapshot.task.id);
-    for (const conflict of taskConflicts) {
-      conflicts.delete(conflict.operationId);
-      const prior = (await requestResult(outbox.get(conflict.operationId))) as
-        LocalOutboxEntry | undefined;
-      if (prior !== undefined)
-        outbox.put({ ...prior, state: "acknowledged", safeErrorCode: null });
-    }
     outbox.put({
       operation,
       state: "queued",

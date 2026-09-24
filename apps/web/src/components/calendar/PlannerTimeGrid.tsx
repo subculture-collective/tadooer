@@ -16,7 +16,16 @@ export interface PlannerTimeGridProps {
   readonly timeZone: string;
   readonly events: readonly CalendarEventProjection[];
   readonly tasks: readonly Task[];
+  readonly onSelectEntry?: (entry: PlannerGridEntry) => void;
 }
+
+export type PlannerGridEntry =
+  | { readonly kind: "event"; readonly event: CalendarEventProjection }
+  | { readonly kind: "task"; readonly task: Task };
+
+type LinkedCalendarEvent = CalendarEventProjection & {
+  readonly linkedTaskId?: string;
+};
 
 interface CalendarDay {
   readonly start: Date;
@@ -33,6 +42,7 @@ interface TimedEntry {
   readonly start: Date;
   readonly end: Date;
   readonly detail: string;
+  readonly source?: PlannerGridEntry;
 }
 
 interface PositionedEntry extends TimedEntry {
@@ -188,25 +198,34 @@ const entriesFor = (
       start: new Date(event.startsAt),
       end: new Date(event.endsAt),
       detail: `${event.source.providerDisplayLabel} · ${event.source.calendarName}`,
+      source: { kind: "event" as const, event },
     })),
-  ...tasks.flatMap((task) => {
-    if (task.plannedStart == null) return [];
-    const start = new Date(task.plannedStart);
-    const estimateMinutes = task.estimateMinutes ?? 30;
-    return [
-      {
-        id: `task:${task.id}`,
-        kind: "task" as const,
-        title: task.title,
-        start,
-        end: new Date(start.getTime() + estimateMinutes * 60 * 1000),
-        detail:
-          task.estimateMinutes == null
-            ? "Suite task · 30 min placeholder"
-            : `Suite task · ${String(task.estimateMinutes)} min`,
-      },
-    ];
-  }),
+  ...tasks
+    .filter(
+      (task) =>
+        !events.some(
+          (event) => (event as LinkedCalendarEvent).linkedTaskId === task.id,
+        ),
+    )
+    .flatMap((task) => {
+      if (task.plannedStart == null) return [];
+      const start = new Date(task.plannedStart);
+      const estimateMinutes = task.estimateMinutes ?? 30;
+      return [
+        {
+          id: `task:${task.id}`,
+          kind: "task" as const,
+          title: task.title,
+          start,
+          end: new Date(start.getTime() + estimateMinutes * 60 * 1000),
+          detail:
+            task.estimateMinutes == null
+              ? "Suite task · 30 min placeholder"
+              : `Suite task · ${String(task.estimateMinutes)} min`,
+          source: { kind: "task" as const, task },
+        },
+      ];
+    }),
 ];
 
 const hourMarkers = (
@@ -238,6 +257,7 @@ export function PlannerTimeGrid({
   timeZone,
   events,
   tasks,
+  onSelectEntry,
 }: PlannerTimeGridProps) {
   const [now, setNow] = useState(() => new Date());
   const days = plannerCalendarDays(range, view, timeZone);
@@ -302,13 +322,18 @@ export function PlannerTimeGrid({
                     <span className="planner-time-grid__all-day-empty">—</span>
                   ) : (
                     allDay.map((event) => (
-                      <article
+                      <button
+                        type="button"
+                        tabIndex={0}
                         className="planner-time-grid__all-day-event"
                         key={`${event.identity.calendarId}:${event.href}`}
+                        onClick={() =>
+                          onSelectEntry?.({ kind: "event", event })
+                        }
                       >
                         <strong>{event.summary || "Untitled event"}</strong>
                         <span>{event.source.calendarName}</span>
-                      </article>
+                      </button>
                     ))
                   )}
                 </div>
@@ -336,7 +361,9 @@ export function PlannerTimeGrid({
                   </div>
                 )}
                 {positioned.map((entry) => (
-                  <article
+                  <button
+                    type="button"
+                    tabIndex={0}
                     className={`planner-time-grid__entry planner-time-grid__entry--${entry.kind}`}
                     key={entry.id}
                     style={{
@@ -346,7 +373,10 @@ export function PlannerTimeGrid({
                       width: `calc(${String(100 / entry.columns)}% - 0.4rem)`,
                     }}
                     aria-label={`${entry.title}, ${timeLabel(entry.start, timeZone)} to ${timeLabel(entry.end, timeZone)}. ${entry.detail}`}
-                    tabIndex={0}
+                    onClick={() => {
+                      if (entry.source !== undefined)
+                        onSelectEntry?.(entry.source);
+                    }}
                   >
                     {entry.kind === "task" && (
                       <CheckSquareIcon aria-hidden="true" />
@@ -357,7 +387,7 @@ export function PlannerTimeGrid({
                       {timeLabel(entry.end, timeZone)}
                     </time>
                     <span>{entry.detail}</span>
-                  </article>
+                  </button>
                 ))}
               </div>
             </section>
