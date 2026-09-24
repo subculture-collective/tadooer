@@ -8,6 +8,19 @@ import type {
   TemplatePoolSlot,
   Task,
 } from "@suite/contracts";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { SectionHeading } from "@/components/ui/section-heading";
+import { Textarea } from "@/components/ui/textarea";
 
 export interface ChoicePoolLibraryProps {
   readonly pools: readonly ChoicePool[];
@@ -147,12 +160,12 @@ export const ChoicePoolLibrary = ({
       className="choice-pool-library"
       aria-labelledby="choice-pool-title"
     >
-      <div className="section-heading">
-        <div>
-          <p className="step">Resolve vague work deliberately</p>
-          <h3 id="choice-pool-title">Choice Pools</h3>
-        </div>
-      </div>
+      <SectionHeading
+        as="h3"
+        eyebrow="Resolve vague work deliberately"
+        title="Choice Pools"
+        id="choice-pool-title"
+      />
       <p className="muted">
         Candidates remain inert until you preview and confirm a planning
         placeholder. Eligibility is explainable and based on recorded selection
@@ -164,20 +177,20 @@ export const ChoicePoolLibrary = ({
       >
         <label className="field">
           <span>Pool name</span>
-          <input name="title" required maxLength={240} />
+          <Input name="title" required maxLength={240} />
         </label>
         <label className="field">
           <span>Policy</span>
-          <select name="policy" defaultValue="cycle">
+          <NativeSelect name="policy" defaultValue="cycle">
             <option value="none">Always eligible</option>
             <option value="cooldown">Cooldown after selection</option>
             <option value="cycle">Cycle without replacement</option>
             <option value="one_shot">One shot</option>
-          </select>
+          </NativeSelect>
         </label>
         <label className="field">
           <span>Pick count</span>
-          <input
+          <Input
             name="pickCount"
             type="number"
             min="1"
@@ -188,7 +201,7 @@ export const ChoicePoolLibrary = ({
         </label>
         <label className="field">
           <span>Cooldown days (used only for cooldown)</span>
-          <input
+          <Input
             name="cooldownDays"
             type="number"
             min="1"
@@ -199,117 +212,131 @@ export const ChoicePoolLibrary = ({
         </label>
         <label className="field choice-pool-items">
           <span>Candidates, one per line</span>
-          <textarea name="items" rows={5} required />
+          <Textarea name="items" rows={5} required />
         </label>
-        <button disabled={busy}>Create pool</button>
+        <Button disabled={busy}>Create pool</Button>
       </form>
       {pools.length === 0 ? (
-        <p className="muted">No Choice Pools yet.</p>
+        <EmptyState title="No Choice Pools yet." />
       ) : (
         <ul className="choice-pools">
           {pools.map((pool) => (
-            <li key={pool.id}>
-              <strong>{pool.title}</strong>
-              <span>
-                Pick {pool.pickCount} · {pool.policy.replaceAll("_", " ")} ·{" "}
-                {history.filter(({ poolId }) => poolId === pool.id).length}{" "}
-                history events
-              </span>
-              <ol>
-                {items
-                  .filter(({ poolId }) => poolId === pool.id)
-                  .map((item) => (
-                    <li key={item.id}>{item.title}</li>
-                  ))}
-              </ol>
-              <details>
-                <summary>Edit pool and candidates</summary>
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const data = new FormData(event.currentTarget);
-                    const policy = value(
-                      data,
-                      "policy",
-                    ) as ChoicePool["policy"];
-                    const candidateTitles = value(data, "items")
-                      .split("\n")
-                      .map((title) => title.trim())
-                      .filter(Boolean);
-                    void onEditPool(pool, {
-                      title: value(data, "title"),
-                      policy,
-                      pickCount: Number(value(data, "pickCount")),
-                      cooldownSeconds:
-                        policy === "cooldown"
-                          ? Number(value(data, "cooldownDays")) * 86_400
-                          : null,
-                      items: candidateTitles.map((title) => {
-                        const existing = items.find(
-                          (item) =>
-                            item.poolId === pool.id && item.title === title,
-                        );
-                        return existing === undefined
-                          ? { title }
-                          : { id: existing.id, title };
-                      }),
-                    });
-                  }}
-                >
-                  <label className="field">
-                    <span>Name</span>
-                    <input name="title" defaultValue={pool.title} required />
-                  </label>
-                  <label className="field">
-                    <span>Policy</span>
-                    <select name="policy" defaultValue={pool.policy}>
-                      <option value="none">Always eligible</option>
-                      <option value="cooldown">Cooldown</option>
-                      <option value="cycle">Cycle</option>
-                      <option value="one_shot">One shot</option>
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Pick count</span>
-                    <input
-                      name="pickCount"
-                      type="number"
-                      min="1"
-                      max="25"
-                      defaultValue={pool.pickCount}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Cooldown days</span>
-                    <input
-                      name="cooldownDays"
-                      type="number"
-                      min="1"
-                      max="365"
-                      defaultValue={Math.max(
-                        1,
-                        Math.round((pool.cooldownSeconds ?? 432000) / 86400),
-                      )}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Candidates, one per line</span>
-                    <textarea
-                      name="items"
-                      rows={5}
-                      defaultValue={items
-                        .filter(
-                          ({ poolId, archivedAt }) =>
-                            poolId === pool.id && archivedAt === null,
-                        )
-                        .map(({ title }) => title)
-                        .join("\n")}
-                    />
-                  </label>
-                  <button disabled={busy}>Save pool</button>
-                </form>
-              </details>
-            </li>
+            <Card key={pool.id}>
+              <CardContent>
+                <strong>{pool.title}</strong>
+                <span>
+                  Pick {pool.pickCount} · {pool.policy.replaceAll("_", " ")} ·{" "}
+                  {history.filter(({ poolId }) => poolId === pool.id).length}{" "}
+                  history events
+                </span>
+                <ol>
+                  {items
+                    .filter(({ poolId }) => poolId === pool.id)
+                    .map((item) => (
+                      <li key={item.id}>{item.title}</li>
+                    ))}
+                </ol>
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" type="button">
+                      Edit pool and candidates
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const data = new FormData(event.currentTarget);
+                        const policy = value(
+                          data,
+                          "policy",
+                        ) as ChoicePool["policy"];
+                        const candidateTitles = value(data, "items")
+                          .split("\n")
+                          .map((title) => title.trim())
+                          .filter(Boolean);
+                        void onEditPool(pool, {
+                          title: value(data, "title"),
+                          policy,
+                          pickCount: Number(value(data, "pickCount")),
+                          cooldownSeconds:
+                            policy === "cooldown"
+                              ? Number(value(data, "cooldownDays")) * 86_400
+                              : null,
+                          items: candidateTitles.map((title) => {
+                            const existing = items.find(
+                              (item) =>
+                                item.poolId === pool.id && item.title === title,
+                            );
+                            return existing === undefined
+                              ? { title }
+                              : { id: existing.id, title };
+                          }),
+                        });
+                      }}
+                    >
+                      <label className="field">
+                        <span>Name</span>
+                        <Input
+                          name="title"
+                          defaultValue={pool.title}
+                          required
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Policy</span>
+                        <NativeSelect name="policy" defaultValue={pool.policy}>
+                          <option value="none">Always eligible</option>
+                          <option value="cooldown">Cooldown</option>
+                          <option value="cycle">Cycle</option>
+                          <option value="one_shot">One shot</option>
+                        </NativeSelect>
+                      </label>
+                      <label className="field">
+                        <span>Pick count</span>
+                        <Input
+                          name="pickCount"
+                          type="number"
+                          min="1"
+                          max="25"
+                          defaultValue={pool.pickCount}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Cooldown days</span>
+                        <Input
+                          name="cooldownDays"
+                          type="number"
+                          min="1"
+                          max="365"
+                          defaultValue={Math.max(
+                            1,
+                            Math.round(
+                              (pool.cooldownSeconds ?? 432000) / 86400,
+                            ),
+                          )}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Candidates, one per line</span>
+                        <Textarea
+                          name="items"
+                          rows={5}
+                          defaultValue={items
+                            .filter(
+                              ({ poolId, archivedAt }) =>
+                                poolId === pool.id && archivedAt === null,
+                            )
+                            .map(({ title }) => title)
+                            .join("\n")}
+                        />
+                      </label>
+                      <Button disabled={busy}>Save pool</Button>
+                    </form>
+                  </CollapsibleContent>
+                </Collapsible>
+              </CardContent>
+            </Card>
           ))}
         </ul>
       )}
@@ -320,7 +347,7 @@ export const ChoicePoolLibrary = ({
         <h4>Create a Planning Placeholder</h4>
         <label className="field">
           <span>Parent task</span>
-          <select name="taskId" required defaultValue="">
+          <NativeSelect name="taskId" required defaultValue="">
             <option value="" disabled>
               Select a task
             </option>
@@ -331,11 +358,11 @@ export const ChoicePoolLibrary = ({
                   {task.title}
                 </option>
               ))}
-          </select>
+          </NativeSelect>
         </label>
         <label className="field">
           <span>Choice Pool</span>
-          <select name="poolId" required defaultValue="">
+          <NativeSelect name="poolId" required defaultValue="">
             <option value="" disabled>
               Select a pool
             </option>
@@ -346,11 +373,11 @@ export const ChoicePoolLibrary = ({
                   {pool.title}
                 </option>
               ))}
-          </select>
+          </NativeSelect>
         </label>
-        <button disabled={busy || pools.length === 0 || tasks.length === 0}>
+        <Button disabled={busy || pools.length === 0 || tasks.length === 0}>
           Reserve placeholder
-        </button>
+        </Button>
       </form>
       <form
         className="placeholder-create"
@@ -372,7 +399,7 @@ export const ChoicePoolLibrary = ({
         <h4>Add a Choice Pool slot to a Task Template</h4>
         <label className="field">
           <span>Template</span>
-          <select name="templateId" required defaultValue="">
+          <NativeSelect name="templateId" required defaultValue="">
             <option value="" disabled>
               Select a template
             </option>
@@ -383,11 +410,11 @@ export const ChoicePoolLibrary = ({
                   {template.title}
                 </option>
               ))}
-          </select>
+          </NativeSelect>
         </label>
         <label className="field">
           <span>Choice Pool</span>
-          <select name="poolId" required defaultValue="">
+          <NativeSelect name="poolId" required defaultValue="">
             <option value="" disabled>
               Select a pool
             </option>
@@ -398,11 +425,11 @@ export const ChoicePoolLibrary = ({
                   {pool.title}
                 </option>
               ))}
-          </select>
+          </NativeSelect>
         </label>
         <label className="field">
           <span>Pick count</span>
-          <input
+          <Input
             name="pickCount"
             type="number"
             min="1"
@@ -411,9 +438,9 @@ export const ChoicePoolLibrary = ({
             required
           />
         </label>
-        <button disabled={busy || templates.length === 0 || pools.length === 0}>
+        <Button disabled={busy || templates.length === 0 || pools.length === 0}>
           Add template slot
-        </button>
+        </Button>
       </form>
       <div className="placeholders">
         {placeholders.map((placeholder) => {
@@ -447,7 +474,7 @@ export const ChoicePoolLibrary = ({
                         kind === "completed",
                     );
                     return (
-                      <button
+                      <Button
                         key={event.id}
                         type="button"
                         disabled={busy || completed}
@@ -462,17 +489,17 @@ export const ChoicePoolLibrary = ({
                         {completed
                           ? "Completion recorded"
                           : `Record completion: ${items.find(({ id }) => id === event.itemId)?.title ?? "item"}`}
-                      </button>
+                      </Button>
                     );
                   })}
               {placeholder.state === "unresolved" && (
-                <button
+                <Button
                   type="button"
                   disabled={busy}
                   onClick={() => void preview(placeholder.id)}
                 >
                   Preview eligible choices
-                </button>
+                </Button>
               )}
               {suggestion !== undefined &&
                 placeholder.state === "unresolved" && (
@@ -496,17 +523,17 @@ export const ChoicePoolLibrary = ({
                         );
                         return (
                           <label key={item.id} className="pool-choice">
-                            <input
-                              type="checkbox"
+                            <Checkbox
                               checked={selectedIds.includes(item.id)}
-                              onChange={(event) =>
+                              onCheckedChange={(checked) =>
                                 setSelected((current) => ({
                                   ...current,
-                                  [placeholder.id]: event.currentTarget.checked
-                                    ? [...selectedIds, item.id]
-                                    : selectedIds.filter(
-                                        (id) => id !== item.id,
-                                      ),
+                                  [placeholder.id]:
+                                    checked === true
+                                      ? [...selectedIds, item.id]
+                                      : selectedIds.filter(
+                                          (id) => id !== item.id,
+                                        ),
                                 }))
                               }
                             />
@@ -522,16 +549,16 @@ export const ChoicePoolLibrary = ({
                       })}
                     </fieldset>
                     <label className="pool-choice">
-                      <input name="override" type="checkbox" />
+                      <Checkbox name="override" />
                       <span>Override policy and record the bypass</span>
                     </label>
-                    <button
+                    <Button
                       disabled={
                         busy || selectedIds.length !== placeholder.pickCount
                       }
                     >
                       Confirm resolution
-                    </button>
+                    </Button>
                   </form>
                 )}
             </article>

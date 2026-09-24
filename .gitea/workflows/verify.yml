@@ -1,0 +1,35 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Activate the repository toolchain
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/suite-pnpm" --no-package-lock --ignore-scripts pnpm@11.15.1
+          export PATH="$RUNNER_TEMP/suite-pnpm/node_modules/.bin:$PATH"
+          echo "$RUNNER_TEMP/suite-pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+          test "$(node -p 'process.versions.node.split(".")[0]')" -ge 24
+          test "$(pnpm --version)" = "11.15.1"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify
+        run: pnpm verify

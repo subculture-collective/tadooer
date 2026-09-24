@@ -1,11 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PlannerResponse } from "@suite/contracts";
 import {
+  AlertCircleIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  LoaderCircleIcon,
+} from "lucide-react";
+import {
   buildCalendarRange,
   shiftCalendarAnchor,
   type CalendarRange,
   type CalendarView,
 } from "../components/calendar/calendar-range.ts";
+import { PlannerTimeGrid } from "../components/calendar/PlannerTimeGrid.tsx";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "../components/ui/alert.tsx";
+import { Badge } from "../components/ui/badge.tsx";
+import { Button } from "../components/ui/button.tsx";
+import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
+import { PageHeader } from "../components/ui/page-header.tsx";
+import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs.tsx";
 
 interface PlannerPageProps {
   readonly planner: PlannerResponse | null;
@@ -57,143 +74,142 @@ export const PlannerPage = ({
 
   return (
     <div className="today-page">
-      <header className="today-header">
-        <p className="step">Calendar context</p>
-        <h1>Planner</h1>
-        <p>Review Suite tasks beside projected calendar events.</p>
-      </header>
-      <section className="week-plan" aria-label="Planner controls">
-        <div className="filter-bar">
-          <button
+      <PageHeader
+        eyebrow="Calendar context"
+        title="Planner"
+        description="Place projected calendar events and Suite tasks on a real time grid."
+        actions={
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => setAnchor(new Date())}
             disabled={busy}
           >
             Today
-          </button>
-          <button
-            type="button"
-            aria-label="Previous period"
-            onClick={() =>
-              setAnchor((current) =>
-                shiftCalendarAnchor(view, current, -1, timeZone),
-              )
-            }
-            disabled={busy}
-          >
-            Previous
-          </button>
-          <button
-            type="button"
-            aria-label="Next period"
-            onClick={() =>
-              setAnchor((current) =>
-                shiftCalendarAnchor(view, current, 1, timeZone),
-              )
-            }
-            disabled={busy}
-          >
-            Next
-          </button>
-          <label className="field">
-            <span>Calendar view</span>
-            <select
-              value={view}
-              onChange={(event) =>
-                setView(event.currentTarget.value as CalendarView)
-              }
-            >
-              {(Object.keys(calendarViewLabel) as readonly CalendarView[]).map(
-                (value) => (
-                  <option key={value} value={value}>
-                    {calendarViewLabel[value]}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-        </div>
-        <p className="hint">
-          {displayTime(range.from, timeZone)} —{" "}
-          {displayTime(range.to, timeZone)}
-        </p>
-        {loading && <p role="status">Loading the selected period…</p>}
-        {error !== null && (
-          <p role="alert">
-            Could not refresh this period: {error}.{" "}
-            {matchesRange
-              ? "Showing saved data for this period."
-              : "The previous period is hidden."}{" "}
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => void onLoadPlanner(range)}
-            >
-              Retry
-            </button>
-          </p>
-        )}
-        {planner === null || !matchesRange ? (
-          <p className="muted">
-            {error === null
-              ? "Waiting for calendar context for this period…"
-              : "No current data for the selected period."}
-          </p>
-        ) : (
-          <>
-            <p className={`freshness freshness--${planner.freshness.state}`}>
-              {planner.freshness.message}
-            </p>
-            <div className="planner-grid" data-view={view}>
-              <section aria-labelledby="planner-events-title">
-                <h2 id="planner-events-title">Calendar events</h2>
-                {planner.events.length === 0 ? (
-                  <p className="muted">No projected events in this period.</p>
-                ) : (
-                  <ol className="timeline">
-                    {planner.events.map((event) => (
-                      <li key={`${event.identity.calendarId}:${event.href}`}>
-                        <time dateTime={event.startsAt}>
-                          {event.allDay
-                            ? "All day"
-                            : displayTime(event.startsAt, timeZone)}
-                        </time>
-                        <strong>{event.summary || "Untitled event"}</strong>
-                        <span className="source-badge">
-                          {event.source.providerDisplayLabel} ·{" "}
-                          {event.source.calendarName}
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
-              <section aria-labelledby="planner-tasks-title">
-                <h2 id="planner-tasks-title">Planned tasks</h2>
-                {planner.tasks.length === 0 ? (
-                  <p className="muted">
-                    No Suite tasks planned in this period.
-                  </p>
-                ) : (
-                  <ol className="timeline">
-                    {planner.tasks.map((task) => (
-                      <li key={task.id}>
-                        <time dateTime={task.plannedStart ?? undefined}>
-                          {task.plannedStart === undefined ||
-                          task.plannedStart === null
-                            ? "No time set"
-                            : displayTime(task.plannedStart, timeZone)}
-                        </time>
-                        <strong>{task.title}</strong>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
+          </Button>
+        }
+      />
+      <Card aria-label="Planner controls and calendar">
+        <CardHeader className="gap-3 border-b">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Previous period"
+                onClick={() =>
+                  setAnchor((current) =>
+                    shiftCalendarAnchor(view, current, -1, timeZone),
+                  )
+                }
+                disabled={busy}
+              >
+                <ChevronLeftIcon />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Next period"
+                onClick={() =>
+                  setAnchor((current) =>
+                    shiftCalendarAnchor(view, current, 1, timeZone),
+                  )
+                }
+                disabled={busy}
+              >
+                <ChevronRightIcon />
+              </Button>
+              <p className="ml-1 text-sm font-medium text-foreground">
+                {displayTime(range.from, timeZone)} —{" "}
+                {displayTime(range.to, timeZone)}
+              </p>
             </div>
-          </>
-        )}
-      </section>
+            <Tabs
+              value={view}
+              onValueChange={(value) => setView(value as CalendarView)}
+            >
+              <TabsList aria-label="Calendar view">
+                {(
+                  Object.keys(calendarViewLabel) as readonly CalendarView[]
+                ).map((value) => (
+                  <TabsTrigger key={value} value={value}>
+                    {calendarViewLabel[value]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-3 pt-4">
+          {loading && (
+            <p
+              className="flex items-center gap-2 text-sm text-subtext"
+              role="status"
+            >
+              <LoaderCircleIcon
+                className="size-4 animate-spin"
+                aria-hidden="true"
+              />
+              Loading the selected period…
+            </p>
+          )}
+          {error !== null && (
+            <Alert variant="warning">
+              <AlertCircleIcon />
+              <AlertTitle>Could not refresh this period</AlertTitle>
+              <AlertDescription>
+                <p>
+                  {error}.{" "}
+                  {matchesRange
+                    ? "Showing saved data for this period."
+                    : "The previous period is hidden."}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={loading}
+                  onClick={() => void onLoadPlanner(range)}
+                >
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {planner === null || !matchesRange ? (
+            <p className="text-sm text-subtext">
+              {error === null
+                ? "Waiting for calendar context for this period…"
+                : "No current data for the selected period."}
+            </p>
+          ) : (
+            <>
+              <Badge
+                className="w-fit"
+                variant={
+                  planner.freshness.state === "fresh"
+                    ? "success"
+                    : planner.freshness.state === "stale"
+                      ? "warning"
+                      : "secondary"
+                }
+              >
+                {planner.freshness.message}
+              </Badge>
+              <PlannerTimeGrid
+                view={view}
+                range={range}
+                timeZone={timeZone}
+                events={planner.events}
+                tasks={planner.tasks}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 };

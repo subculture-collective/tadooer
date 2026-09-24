@@ -9,6 +9,13 @@ import {
   listAutomationTokens,
   revokeAutomationToken,
 } from "../api.ts";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { SectionHeading } from "@/components/ui/section-heading";
 
 const permissionLabel = (scope: AutomationTokenScope): string => {
   const [area, action] = scope.split(":");
@@ -108,7 +115,11 @@ export const AssistantAccess = ({
       className="assistant-access"
       aria-labelledby="assistant-access-title"
     >
-      <h3 id="assistant-access-title">Assistant access</h3>
+      <SectionHeading
+        as="h3"
+        id="assistant-access-title"
+        title="Assistant access"
+      />
       <p>
         Create a separate token for each assistant. Select only the permissions
         it needs. The Tadooer plugin previews changes and asks for your approval
@@ -122,9 +133,10 @@ export const AssistantAccess = ({
         }}
       >
         <div className="form-grid-2">
-          <label className="field">
-            Access label{" "}
-            <input
+          <Field className="field">
+            <FieldLabel htmlFor="assistant-label">Access label</FieldLabel>
+            <Input
+              id="assistant-label"
               type="text"
               required
               maxLength={100}
@@ -132,10 +144,11 @@ export const AssistantAccess = ({
               disabled={busy}
               onChange={(event) => setLabel(event.currentTarget.value)}
             />
-          </label>
-          <label className="field">
-            Expires after{" "}
-            <select
+          </Field>
+          <Field className="field">
+            <FieldLabel htmlFor="assistant-expiry">Expires after</FieldLabel>
+            <NativeSelect
+              id="assistant-expiry"
               value={days}
               disabled={busy}
               onChange={(event) => setDays(Number(event.currentTarget.value))}
@@ -143,18 +156,20 @@ export const AssistantAccess = ({
               <option value={7}>7 days</option>
               <option value={30}>30 days</option>
               <option value={90}>90 days</option>
-            </select>
-          </label>
+            </NativeSelect>
+          </Field>
         </div>
         <fieldset disabled={busy} className="form-grid-2">
           <legend>Assistant permissions</legend>
           {automationTokenScopeSchema.options.map((scope) => (
-            <label key={scope} className="assistant-permission">
-              <input
-                type="checkbox"
+            <Field
+              key={scope}
+              className="assistant-permission flex-row items-center gap-2"
+            >
+              <Checkbox
+                id={`assistant-scope-${scope}`}
                 checked={scopes.includes(scope)}
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
+                onCheckedChange={(checked) => {
                   setScopes((current) =>
                     checked
                       ? [...current, scope]
@@ -162,11 +177,13 @@ export const AssistantAccess = ({
                   );
                 }}
               />
-              {permissionLabel(scope)}
-            </label>
+              <FieldLabel htmlFor={`assistant-scope-${scope}`}>
+                {permissionLabel(scope)}
+              </FieldLabel>
+            </Field>
           ))}
         </fieldset>
-        <button
+        <Button
           disabled={
             busy ||
             secret !== null ||
@@ -176,20 +193,28 @@ export const AssistantAccess = ({
           type="submit"
         >
           Create assistant access
-        </button>
+        </Button>
       </form>
       {secret !== null && (
         <div>
-          <label>
-            New assistant token{" "}
-            <input type="password" readOnly value={secret} autoComplete="off" />
-          </label>
+          <Field>
+            <FieldLabel htmlFor="assistant-token">
+              New assistant token
+            </FieldLabel>
+            <Input
+              id="assistant-token"
+              type="password"
+              readOnly
+              value={secret}
+              autoComplete="off"
+            />
+          </Field>
           <p>
             Save this in a private file owned by you with mode 0600, then point
             the plugin’s tokenFile setting to it. Keep it out of chat and shared
             configuration.
           </p>
-          <button
+          <Button
             type="button"
             onClick={() => {
               void (async () => {
@@ -208,15 +233,20 @@ export const AssistantAccess = ({
             }}
           >
             Copy token
-          </button>
-          <button type="button" onClick={() => setSecret(null)}>
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => setSecret(null)}>
             I saved the token — dismiss
-          </button>
+          </Button>
         </div>
       )}
-      <button type="button" disabled={busy} onClick={() => void refresh()}>
+      <Button
+        type="button"
+        variant="outline"
+        disabled={busy}
+        onClick={() => void refresh()}
+      >
         Reload assistant access
-      </button>
+      </Button>
       {tokens !== null &&
         (tokens.length === 0 ? (
           <p>No assistant tokens created.</p>
@@ -233,38 +263,51 @@ export const AssistantAccess = ({
                 ; expires {token.expiresAt}
                 <p>{token.scopes.map(permissionLabel).join(", ")}</p>
                 {token.revokedAt === null && (
-                  <button
+                  <Button
                     type="button"
                     disabled={busy}
                     onClick={() => setPendingRevoke(token)}
                   >
                     Revoke {token.label}
-                  </button>
+                  </Button>
                 )}
               </li>
             ))}
           </ul>
         ))}
       {pendingRevoke !== null && (
-        <div role="group" aria-label="Confirm assistant revocation">
+        <Alert
+          variant="warning"
+          role="group"
+          aria-label="Confirm assistant revocation"
+        >
           <p>
             Revoke “{pendingRevoke.label}”? This assistant will lose access
             immediately.
           </p>
-          <button type="button" disabled={busy} onClick={() => void revoke()}>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={busy}
+            onClick={() => void revoke()}
+          >
             Confirm revocation
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             disabled={busy}
             onClick={() => setPendingRevoke(null)}
           >
             Keep access
-          </button>
-        </div>
+          </Button>
+        </Alert>
       )}
       {message !== null && <p role="status">{message}</p>}
-      {error !== null && <p role="alert">{error}</p>}
+      {error !== null && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
     </section>
   );
 };

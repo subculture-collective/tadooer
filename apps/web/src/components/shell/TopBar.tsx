@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { routeLabel, type WorkspaceRoute } from "@/app/routes";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 interface TopBarProps {
   readonly route: WorkspaceRoute;
@@ -18,14 +20,14 @@ export const TopBar = ({
     <span className="topbar-breadcrumb">{routeLabel(route)}</span>
     <div className="topbar-actions">
       {commandTrigger}
-      <button className="btn-ghost" type="button" onClick={onSignOut}>
+      <Button variant="ghost" type="button" onClick={onSignOut}>
         Sign out
-      </button>
+      </Button>
     </div>
     {formError !== null && (
-      <span role="alert" className="message message-error">
-        {formError}
-      </span>
+      <Alert variant="destructive" className="message message-error">
+        <AlertDescription>{formError}</AlertDescription>
+      </Alert>
     )}
   </header>
 );

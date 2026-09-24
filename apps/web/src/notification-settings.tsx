@@ -3,6 +3,10 @@ import type {
   NotificationStatusResponse,
 } from "@suite/contracts";
 import type { SyntheticEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { SectionHeading } from "@/components/ui/section-heading";
 
 export interface NotificationSettingsProps {
   readonly preferences: NotificationPreferences;
@@ -33,15 +37,17 @@ export const NotificationSettings = ({
   };
   return (
     <section aria-labelledby="notification-settings-title">
-      <div className="section-heading">
-        <div>
-          <p className="step">Private ntfy delivery</p>
-          <h3 id="notification-settings-title">Task reminders</h3>
-        </div>
-        <span className={`freshness freshness--${status.state}`}>
-          {status.state}
-        </span>
-      </div>
+      <SectionHeading
+        as="h3"
+        eyebrow="Private ntfy delivery"
+        title="Task reminders"
+        id="notification-settings-title"
+        actions={
+          <span className={`freshness freshness--${status.state}`}>
+            {status.state}
+          </span>
+        }
+      />
       <p className="hint">
         Detailed reminders contain only the task title, local scheduled time,
         and a Suite task link. Notes and calendar-event details are excluded.
@@ -52,49 +58,55 @@ export const NotificationSettings = ({
         </p>
       )}
       <form className="notification-preferences" onSubmit={submit}>
-        <label>
-          <input
-            type="checkbox"
+        <Field className="flex-row items-center gap-2">
+          <Checkbox
+            id="notifications-enabled"
             name="enabled"
             defaultChecked={preferences.enabled}
           />
-          Enable task reminders
-        </label>
-        <label>
-          <input
-            type="checkbox"
+          <FieldLabel htmlFor="notifications-enabled">
+            Enable task reminders
+          </FieldLabel>
+        </Field>
+        <Field className="flex-row items-center gap-2">
+          <Checkbox
+            id="notifications-lead"
             name="leadReminderEnabled"
             defaultChecked={preferences.leadReminderEnabled}
           />
-          Remind 15 minutes before
-        </label>
-        <label>
-          <input
-            type="checkbox"
+          <FieldLabel htmlFor="notifications-lead">
+            Remind 15 minutes before
+          </FieldLabel>
+        </Field>
+        <Field className="flex-row items-center gap-2">
+          <Checkbox
+            id="notifications-start"
             name="atStartReminderEnabled"
             defaultChecked={preferences.atStartReminderEnabled}
           />
-          Remind at start
-        </label>
-        <label>
-          <input
-            type="checkbox"
+          <FieldLabel htmlFor="notifications-start">Remind at start</FieldLabel>
+        </Field>
+        <Field className="flex-row items-center gap-2">
+          <Checkbox
+            id="notifications-content"
             name="detailedContentEnabled"
             defaultChecked={preferences.detailedContentEnabled}
           />
-          Include task title and scheduled context
-        </label>
-        <button disabled={busy || !online || !status.configured}>
+          <FieldLabel htmlFor="notifications-content">
+            Include task title and scheduled context
+          </FieldLabel>
+        </Field>
+        <Button disabled={busy || !online || !status.configured}>
           Save reminder preferences
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="btn-ghost"
+          variant="ghost"
           disabled={busy || !online || !status.configured}
           onClick={() => void onTest()}
         >
           Send test reminder
-        </button>
+        </Button>
       </form>
       <p className="hint" role="status">
         Pending: {status.pendingCount} · Failed: {status.failedCount}

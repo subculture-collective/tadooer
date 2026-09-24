@@ -4,6 +4,17 @@ import {
   type SuperProductivityPreview,
 } from "@suite/contracts";
 import { applyTaskImport, previewTaskImport } from "../api.ts";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { SectionHeading } from "@/components/ui/section-heading";
 
 export const SuperProductivityImport = ({
   csrfToken,
@@ -72,36 +83,47 @@ export const SuperProductivityImport = ({
   };
   return (
     <section aria-labelledby="sp-import-title">
-      <h3 id="sp-import-title">Super Productivity migration</h3>
+      <SectionHeading
+        as="h3"
+        id="sp-import-title"
+        title="Super Productivity migration"
+      />
       <p>
         Preview a JSON backup before importing core tasks, projects, tags,
         notes, exact scheduled times, deadlines, estimates, and completion
         dates. Preview changes nothing. Unsupported workflows block the entire
         import.
       </p>
-      <label>
-        Super Productivity export{" "}
-        <input
+      <Field>
+        <FieldLabel htmlFor="sp-import-file">
+          Super Productivity export
+        </FieldLabel>
+        <Input
+          id="sp-import-file"
           type="file"
           accept=".json,application/json"
           disabled={busy}
           onChange={(event) => void choose(event.currentTarget.files?.[0])}
         />
-      </label>
+      </Field>
       <p className="hint">
         The file stays in this browser until you preview it. Preview sends it to
         your Tadooer server. Limit: {limits.label},{" "}
         {limits.records.toLocaleString()} records. Keep the original backup.
       </p>
-      <button
+      <Button
         type="button"
         disabled={busy || raw === null}
         onClick={() => void preview()}
       >
         {busy ? "Reading export…" : "Preview Super Productivity export"}
-      </button>
+      </Button>
       {outcome !== null && <p role="status">{outcome}</p>}
-      {error !== null && <p role="alert">{error}</p>}
+      {error !== null && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
       {report !== null && (
         <div aria-live="polite">
           <p>
@@ -134,40 +156,48 @@ export const SuperProductivityImport = ({
               </li>
             ))}
           </ul>
-          <details>
-            <summary>Inspect task inventory</summary>
-            <ul>
-              {report.tasks.map((task) => (
-                <li key={task.sourceId}>
-                  {task.title} —{" "}
-                  {task.archived
-                    ? "archived"
-                    : task.completed
-                      ? "completed"
-                      : "open"}
-                  {task.parentId === null ? "" : " · child task"}
-                </li>
-              ))}
-            </ul>
-          </details>
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost">
+                Inspect task inventory
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <ul>
+                {report.tasks.map((task) => (
+                  <li key={task.sourceId}>
+                    {task.title} —{" "}
+                    {task.archived
+                      ? "archived"
+                      : task.completed
+                        ? "completed"
+                        : "open"}
+                    {task.parentId === null ? "" : " · child task"}
+                  </li>
+                ))}
+              </ul>
+            </CollapsibleContent>
+          </Collapsible>
           {report.canApply && (
             <div>
-              <label>
-                <input
-                  type="checkbox"
+              <Field className="flex-row items-center gap-2">
+                <Checkbox
+                  id="sp-import-approved"
                   checked={approved}
                   disabled={busy}
-                  onChange={(event) => setApproved(event.currentTarget.checked)}
-                />{" "}
-                I reviewed the inventory and want to import these records.
-              </label>
-              <button
+                  onCheckedChange={(checked) => setApproved(checked === true)}
+                />
+                <FieldLabel htmlFor="sp-import-approved">
+                  I reviewed the inventory and want to import these records.
+                </FieldLabel>
+              </Field>
+              <Button
                 type="button"
                 disabled={busy || !approved}
                 onClick={() => void apply()}
               >
                 Import reviewed records
-              </button>
+              </Button>
             </div>
           )}
           <p className="hint">

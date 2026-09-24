@@ -10,6 +10,12 @@ import type {
 import { FocusPanel, type FocusPanelCommand } from "../focus-panel.tsx";
 import { TodayQueue } from "../today-queue.tsx";
 import { TaskCaptureForm } from "../components/tasks/TaskCaptureForm.tsx";
+import { Badge } from "../components/ui/badge.tsx";
+import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
+import { Checkbox } from "../components/ui/checkbox.tsx";
+import { EmptyState } from "../components/ui/empty-state.tsx";
+import { PageHeader } from "../components/ui/page-header.tsx";
+import { SectionHeading } from "../components/ui/section-heading.tsx";
 
 export interface TodayPageProps {
   readonly dayPlan: DayPlanResponse | undefined;
@@ -94,22 +100,31 @@ export const TodayPage = (props: TodayPageProps) => {
   }, []);
   const preferences = planningPreferences ?? dayPlan?.preferences;
   return (
-    <div className="today-page">
-      <header className="today-header">
-        <p className="step">Calm daily workspace</p>
-        <h1>Today</h1>
-        <p>
-          {dayPlan === undefined
+    <div className="today-page mx-auto flex w-full max-w-5xl flex-col gap-6">
+      <PageHeader
+        eyebrow="Calm daily workspace"
+        title="Today"
+        description={
+          dayPlan === undefined
             ? "Choose the next useful task from your local workspace."
-            : calmStateLabel[dayPlan.state]}
-        </p>
+            : calmStateLabel[dayPlan.state]
+        }
+      >
         {dayPlan?.nextTask === null ? (
-          <p className="hint">No scheduled task is ready next.</p>
+          <p className="text-xs text-subtext-2">
+            No scheduled task is ready next.
+          </p>
         ) : dayPlan?.nextTask !== undefined ? (
-          <p className="hint">Next: {dayPlan.nextTask.title}</p>
+          <p className="text-xs text-subtext-2">
+            Next: {dayPlan.nextTask.title}
+          </p>
         ) : null}
-      </header>
-      <p className="today-capabilities" aria-live="polite">
+      </PageHeader>
+      <p
+        className="flex items-center gap-2 text-xs text-subtext-2"
+        aria-live="polite"
+      >
+        <span aria-hidden="true" className="size-1.5 rounded-full bg-success" />
         {syncStatus === "offline"
           ? "Offline. Tasks can be captured, completed, and reopened."
           : syncStatus === "syncing"
@@ -143,75 +158,86 @@ export const TodayPage = (props: TodayPageProps) => {
         onRemoveTimeBlock={onRemoveTimeBlock}
         onViewTasks={onViewTasks}
       />
-      <section className="week-plan" aria-labelledby="week-plan-title">
-        <div className="section-heading">
-          <div>
-            <p className="step">Real calendar context</p>
-            <h2 id="week-plan-title">Week plan</h2>
-          </div>
-          {planner !== null ? (
-            <span className={`freshness freshness--${planner.freshness.state}`}>
-              {planner.freshness.message}
-            </span>
-          ) : null}
-        </div>
-        {planner === null || planner.events.length === 0 ? (
-          <p className="muted">No supported events in this week.</p>
-        ) : (
-          <>
-            <fieldset className="calendar-filters">
-              <legend>Calendars</legend>
-              {Array.from(
-                new Map(
-                  planner.events.map((event) => [
-                    event.identity.calendarId,
-                    event.source,
-                  ]),
-                ),
-              ).map(([calendarId, source]) => (
-                <label key={calendarId}>
-                  <input
-                    type="checkbox"
-                    checked={!hiddenCalendarIds.includes(calendarId)}
-                    onChange={(event) => {
-                      const checked = event.currentTarget.checked;
-                      setHiddenCalendarIds((current) =>
-                        updateHiddenCalendarIds(current, calendarId, checked),
-                      );
-                    }}
-                  />
-                  {source.providerDisplayLabel} · {source.calendarName}
-                </label>
-              ))}
-            </fieldset>
-            <ol className="timeline">
-              {planner.events
-                .filter(
-                  (event) =>
-                    !hiddenCalendarIds.includes(event.identity.calendarId),
-                )
-                .map((event) => (
-                  <li key={`${event.identity.calendarId}:${event.href}`}>
-                    <time dateTime={event.startsAt}>
-                      {preferences === undefined
-                        ? new Date(event.startsAt).toLocaleString()
-                        : new Intl.DateTimeFormat("en-US", {
-                            timeZone: preferences.timeZone,
-                            dateStyle: "medium",
-                            timeStyle: "short",
-                          }).format(new Date(event.startsAt))}
-                    </time>
-                    <strong>{event.summary || "Untitled event"}</strong>
-                    <span className="source-badge">
-                      {event.source.providerDisplayLabel} ·{" "}
-                      {event.source.calendarName}
-                    </span>
-                  </li>
+      <Card className="week-plan" aria-labelledby="week-plan-title">
+        <CardHeader>
+          <SectionHeading
+            id="week-plan-title"
+            eyebrow="Real calendar context"
+            title="Week plan"
+            actions={
+              planner !== null ? (
+                <Badge
+                  variant={
+                    planner.freshness.state === "fresh" ? "success" : "warning"
+                  }
+                >
+                  {planner.freshness.message}
+                </Badge>
+              ) : undefined
+            }
+          />
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          {planner === null || planner.events.length === 0 ? (
+            <EmptyState title="No supported events in this week." />
+          ) : (
+            <>
+              <fieldset className="calendar-filters">
+                <legend>Calendars</legend>
+                {Array.from(
+                  new Map(
+                    planner.events.map((event) => [
+                      event.identity.calendarId,
+                      event.source,
+                    ]),
+                  ),
+                ).map(([calendarId, source]) => (
+                  <label key={calendarId}>
+                    <Checkbox
+                      checked={!hiddenCalendarIds.includes(calendarId)}
+                      onCheckedChange={(checked) => {
+                        setHiddenCalendarIds((current) =>
+                          updateHiddenCalendarIds(
+                            current,
+                            calendarId,
+                            checked === true,
+                          ),
+                        );
+                      }}
+                    />
+                    {source.providerDisplayLabel} · {source.calendarName}
+                  </label>
                 ))}
-            </ol>
-          </>
-        )}
-      </section>
+              </fieldset>
+              <ol className="timeline">
+                {planner.events
+                  .filter(
+                    (event) =>
+                      !hiddenCalendarIds.includes(event.identity.calendarId),
+                  )
+                  .map((event) => (
+                    <li key={`${event.identity.calendarId}:${event.href}`}>
+                      <time dateTime={event.startsAt}>
+                        {preferences === undefined
+                          ? new Date(event.startsAt).toLocaleString()
+                          : new Intl.DateTimeFormat("en-US", {
+                              timeZone: preferences.timeZone,
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            }).format(new Date(event.startsAt))}
+                      </time>
+                      <strong>{event.summary || "Untitled event"}</strong>
+                      <span className="source-badge">
+                        {event.source.providerDisplayLabel} ·{" "}
+                        {event.source.calendarName}
+                      </span>
+                    </li>
+                  ))}
+              </ol>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 };

@@ -9,6 +9,14 @@ import { sendJson, sendError, sameOrigin, readJson } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { taskResponse, calendarEventResponse } from "./shared.ts";
 
+const projectedEventTime = (value: string, allDay: boolean): string => {
+  const normalized =
+    allDay && /^\d{8}$/.test(value)
+      ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}T00:00:00.000Z`
+      : value;
+  return new Date(normalized).toISOString();
+};
+
 export const handlePlanner: RouteHandler = async (
   request,
   response,
@@ -73,8 +81,14 @@ export const handlePlanner: RouteHandler = async (
             etag: resource.etag,
             rawIcs: resource.rawIcs,
             summary: resource.event.summary,
-            startsAt: new Date(resource.event.startsAt).toISOString(),
-            endsAt: new Date(resource.event.endsAt).toISOString(),
+            startsAt: projectedEventTime(
+              resource.event.startsAt,
+              resource.event.allDay,
+            ),
+            endsAt: projectedEventTime(
+              resource.event.endsAt,
+              resource.event.allDay,
+            ),
             allDay: resource.event.allDay,
             recurrence: "none" as const,
             freshness: "current" as const,

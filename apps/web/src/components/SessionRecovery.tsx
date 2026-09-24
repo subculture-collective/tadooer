@@ -2,6 +2,10 @@ import { useState, type SyntheticEvent } from "react";
 import type { SessionResponse } from "@suite/contracts";
 import { login, resumeSession } from "../api.ts";
 import type { SessionFailure } from "../session-recovery.ts";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 
 export const SessionRecovery = ({
   failure,
@@ -44,36 +48,45 @@ export const SessionRecovery = ({
     }
   };
   return (
-    <section aria-label="Session recovery" className="message message-error">
-      <h2>
+    <Alert
+      aria-label="Session recovery"
+      variant="destructive"
+      className="message message-error"
+    >
+      <AlertTitle>
         {failure === "expired" ? "Sign in again" : "Refresh your session"}
-      </h2>
-      <p>
-        Your workspace and queued work have been kept. Recover your session,
-        then review the result before retrying your action.
-      </p>
-      <form onSubmit={(event) => void recover(event)}>
-        <p>Signed in as {username}</p>
-        {failure === "expired" && (
-          <label>
-            Password{" "}
-            <input
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-            />
-          </label>
-        )}
-        <button type="submit" disabled={busy}>
-          {busy
-            ? "Recovering…"
-            : failure === "expired"
-              ? "Sign in again"
-              : "Refresh session"}
-        </button>
-        {error !== null && <p role="alert">{error}</p>}
-      </form>
-    </section>
+      </AlertTitle>
+      <AlertDescription>
+        <p>
+          Your workspace and queued work have been kept. Recover your session,
+          then review the result before retrying your action.
+        </p>
+        <form onSubmit={(event) => void recover(event)}>
+          <p>Signed in as {username}</p>
+          {failure === "expired" && (
+            <Field>
+              <FieldLabel htmlFor="session-recovery-password">
+                Password
+              </FieldLabel>
+              <Input
+                id="session-recovery-password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+              />
+            </Field>
+          )}
+          <Button type="submit" disabled={busy}>
+            {busy
+              ? "Recovering…"
+              : failure === "expired"
+                ? "Sign in again"
+                : "Refresh session"}
+          </Button>
+          <FieldError>{error}</FieldError>
+        </form>
+      </AlertDescription>
+    </Alert>
   );
 };

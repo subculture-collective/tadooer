@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { taskDeadlineSchema, type Task } from "@suite/contracts";
+import { Input } from "../ui/input.tsx";
+import { NativeSelect } from "../ui/native-select.tsx";
 
 export const deadlineFromForm = (data: FormData): Task["deadline"] => {
   const kind = data.get("deadlineKind");
@@ -25,7 +27,7 @@ export const DeadlineFields = ({
       <legend>Deadline</legend>
       <label className="field">
         <span>Deadline type</span>
-        <select
+        <NativeSelect
           name="deadlineKind"
           value={kind}
           onChange={(event) => {
@@ -37,14 +39,14 @@ export const DeadlineFields = ({
           <option value="none">No deadline</option>
           <option value="date">Date only</option>
           <option value="instant">Date and time (UTC)</option>
-        </select>
+        </NativeSelect>
       </label>
       {kind !== "none" && (
         <label className="field">
           <span>
             {kind === "date" ? "Deadline date" : "Deadline date and time (UTC)"}
           </span>
-          <input
+          <Input
             key={kind}
             name="deadlineValue"
             type={kind === "date" ? "date" : "datetime-local"}

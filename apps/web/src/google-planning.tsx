@@ -4,6 +4,16 @@ import type {
   GoogleConnectorStatusResponse,
   PlanningPreferences,
 } from "@suite/contracts";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { SectionHeading } from "@/components/ui/section-heading";
 
 export interface GooglePlanningProps {
   readonly status: GoogleConnectorStatusResponse;
@@ -58,25 +68,27 @@ export const GooglePlanning = ({
       className="google-planning"
       aria-labelledby="google-planning-title"
     >
-      <div className="section-heading">
-        <div>
-          <p className="step">
-            {mode === "preferences"
-              ? "Civil-time planning"
-              : "Federated calendar context"}
-          </p>
-          <h3 id="google-planning-title">
-            {mode === "preferences"
-              ? "Working hours and time zone"
-              : "Google Calendar"}
-          </h3>
-        </div>
-        <span
-          className={`freshness freshness--${status.connected ? status.state : "unavailable"}`}
-        >
-          {status.state.replaceAll("_", " ")}
-        </span>
-      </div>
+      <SectionHeading
+        as="h3"
+        id="google-planning-title"
+        eyebrow={
+          mode === "preferences"
+            ? "Civil-time planning"
+            : "Federated calendar context"
+        }
+        title={
+          mode === "preferences"
+            ? "Working hours and time zone"
+            : "Google Calendar"
+        }
+        actions={
+          <span
+            className={`freshness freshness--${status.connected ? status.state : "unavailable"}`}
+          >
+            {status.state.replaceAll("_", " ")}
+          </span>
+        }
+      />
       {mode !== "preferences" &&
         (!status.configured ? (
           <p className="muted">
@@ -89,7 +101,7 @@ export const GooglePlanning = ({
               Connect read-only calendar access in your system browser. The
               Suite stores the refresh grant encrypted on the server.
             </p>
-            <button
+            <Button
               type="button"
               disabled={busy}
               onClick={() =>
@@ -101,7 +113,7 @@ export const GooglePlanning = ({
               {status.state === "reconnect_required"
                 ? "Reconnect Google Calendar"
                 : "Connect Google Calendar"}
-            </button>
+            </Button>
             {authorizationUrl !== null && (
               <p>
                 <a
@@ -162,30 +174,30 @@ export const GooglePlanning = ({
               stays available if the resync fails.
             </p>
             <div className="task-actions">
-              <button
+              <Button
                 type="button"
-                className="btn-ghost"
+                variant="ghost"
                 disabled={busy}
                 onClick={() => void onSynchronize()}
               >
                 Sync Google now
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="btn-ghost"
+                variant="ghost"
                 disabled={busy}
                 onClick={() => void onSynchronize(true)}
               >
                 Resync Google Calendar
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="btn-danger"
+                variant="destructive"
                 disabled={busy}
                 onClick={() => void onDisconnect()}
               >
                 Disconnect Google
-              </button>
+              </Button>
             </div>
           </div>
         ))}
@@ -206,88 +218,103 @@ export const GooglePlanning = ({
       )}
 
       {mode !== "connection" && (
-        <details open={mode === "preferences"}>
-          <summary>Working hours and quiet break</summary>
-          <form className="planning-preferences" onSubmit={submitPreferences}>
-            <fieldset>
-              <legend>Working days</legend>
-              {dayNames.map((name, day) => (
-                <label key={name}>
-                  <input
-                    type="checkbox"
-                    checked={days.includes(day)}
-                    onChange={(event) =>
-                      setDays((current) =>
-                        event.currentTarget.checked
-                          ? [...current, day].toSorted()
-                          : current.filter((candidate) => candidate !== day),
-                      )
-                    }
-                  />
-                  {name}
-                </label>
-              ))}
-            </fieldset>
-            <label>
-              Work starts
-              <input
-                name="workdayStart"
-                type="time"
-                defaultValue={preferences.workdayStart}
-                required
-              />
-            </label>
-            <label>
-              Work ends
-              <input
-                name="workdayEnd"
-                type="time"
-                defaultValue={preferences.workdayEnd}
-                required
-              />
-            </label>
-            <label>
-              Quiet break starts
-              <input
-                name="breakStart"
-                type="time"
-                defaultValue={preferences.breakStart ?? ""}
-              />
-            </label>
-            <label>
-              Quiet break ends
-              <input
-                name="breakEnd"
-                type="time"
-                defaultValue={preferences.breakEnd ?? ""}
-              />
-            </label>
-            <label>
-              Time zone
-              <input
-                name="timeZone"
-                defaultValue={preferences.timeZone}
-                list="suite-time-zones"
-                required
-                autoComplete="off"
-              />
-            </label>
-            <datalist id="suite-time-zones">
-              <option value="America/Chicago" />
-              <option value="America/New_York" />
-              <option value="America/Denver" />
-              <option value="America/Los_Angeles" />
-              <option value="UTC" />
-            </datalist>
-            <p className="hint">
-              Use an IANA time zone such as America/Chicago. Day boundaries and
-              daylight-saving transitions follow this setting.
-            </p>
-            <button disabled={busy || days.length === 0}>
-              Save planning hours
-            </button>
-          </form>
-        </details>
+        <Collapsible defaultOpen={mode === "preferences"}>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" type="button">
+              Working hours and quiet break
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <form className="planning-preferences" onSubmit={submitPreferences}>
+              <fieldset>
+                <legend>Working days</legend>
+                {dayNames.map((name, day) => (
+                  <Field key={name} className="flex-row items-center gap-2">
+                    <Checkbox
+                      id={`working-day-${String(day)}`}
+                      checked={days.includes(day)}
+                      onCheckedChange={(checked) =>
+                        setDays((current) =>
+                          checked === true
+                            ? [...current, day].toSorted()
+                            : current.filter((candidate) => candidate !== day),
+                        )
+                      }
+                    />
+                    <FieldLabel htmlFor={`working-day-${String(day)}`}>
+                      {name}
+                    </FieldLabel>
+                  </Field>
+                ))}
+              </fieldset>
+              <Field>
+                <FieldLabel htmlFor="workday-start">Work starts</FieldLabel>
+                <Input
+                  id="workday-start"
+                  name="workdayStart"
+                  type="time"
+                  defaultValue={preferences.workdayStart}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="workday-end">Work ends</FieldLabel>
+                <Input
+                  id="workday-end"
+                  name="workdayEnd"
+                  type="time"
+                  defaultValue={preferences.workdayEnd}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="break-start">
+                  Quiet break starts
+                </FieldLabel>
+                <Input
+                  id="break-start"
+                  name="breakStart"
+                  type="time"
+                  defaultValue={preferences.breakStart ?? ""}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="break-end">Quiet break ends</FieldLabel>
+                <Input
+                  id="break-end"
+                  name="breakEnd"
+                  type="time"
+                  defaultValue={preferences.breakEnd ?? ""}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="time-zone">Time zone</FieldLabel>
+                <Input
+                  id="time-zone"
+                  name="timeZone"
+                  defaultValue={preferences.timeZone}
+                  list="suite-time-zones"
+                  required
+                  autoComplete="off"
+                />
+              </Field>
+              <datalist id="suite-time-zones">
+                <option value="America/Chicago" />
+                <option value="America/New_York" />
+                <option value="America/Denver" />
+                <option value="America/Los_Angeles" />
+                <option value="UTC" />
+              </datalist>
+              <p className="hint">
+                Use an IANA time zone such as America/Chicago. Day boundaries
+                and daylight-saving transitions follow this setting.
+              </p>
+              <Button disabled={busy || days.length === 0}>
+                Save planning hours
+              </Button>
+            </form>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </section>
   );

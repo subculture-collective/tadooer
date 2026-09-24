@@ -1,5 +1,9 @@
 import { useEffect, useState, type SyntheticEvent } from "react";
 import type { ActiveSession, Task } from "@suite/contracts";
+import { Button } from "./components/ui/button.tsx";
+import { Card, CardContent, CardHeader } from "./components/ui/card.tsx";
+import { NativeSelect } from "./components/ui/native-select.tsx";
+import { SectionHeading } from "./components/ui/section-heading.tsx";
 
 export type FocusPanelCommand =
   | {
@@ -67,7 +71,7 @@ const StartSession = ({
     <form className="task-actions" onSubmit={submit}>
       <label className="field">
         <span>Focus task</span>
-        <select
+        <NativeSelect
           value={taskId}
           onChange={(event) => setTaskId(event.target.value)}
           disabled={busy || !online}
@@ -77,11 +81,11 @@ const StartSession = ({
               {task.title}
             </option>
           ))}
-        </select>
+        </NativeSelect>
       </label>
-      <button type="submit" disabled={busy || !online || taskId === ""}>
+      <Button type="submit" disabled={busy || !online || taskId === ""}>
         Start focus
-      </button>
+      </Button>
     </form>
   );
 };
@@ -106,23 +110,27 @@ export const FocusPanel = ({
           ? "The previous focus session is complete. Start a new session when ready."
           : null;
     return (
-      <section aria-labelledby="focus-panel-title">
-        <h2 id="focus-panel-title">Focus session</h2>
-        {recoveryMessage === null ? null : (
-          <p className="hint">{recoveryMessage}</p>
-        )}
-        {!online ? (
-          <p className="hint">Reconnect to start a focus session.</p>
-        ) : null}
-        {showStartForm ? (
-          <StartSession
-            tasks={tasks}
-            busy={busy}
-            online={online}
-            onCommand={onCommand}
-          />
-        ) : null}
-      </section>
+      <Card aria-labelledby="focus-panel-title">
+        <CardHeader>
+          <SectionHeading id="focus-panel-title" title="Focus session" />
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          {recoveryMessage === null ? null : (
+            <p className="hint">{recoveryMessage}</p>
+          )}
+          {!online ? (
+            <p className="hint">Reconnect to start a focus session.</p>
+          ) : null}
+          {showStartForm ? (
+            <StartSession
+              tasks={tasks}
+              busy={busy}
+              online={online}
+              onCommand={onCommand}
+            />
+          ) : null}
+        </CardContent>
+      </Card>
     );
   }
 
@@ -141,55 +149,59 @@ export const FocusPanel = ({
   };
 
   return (
-    <section aria-labelledby="focus-panel-title">
-      <h2 id="focus-panel-title">Focus session</h2>
-      <p className="hint">
-        {phaseLabel} · {stateLabel}
-      </p>
-      {!online ? (
-        <p className="hint">Reconnect to control this session.</p>
-      ) : null}
-      {owner ? (
-        <div className="task-actions" aria-label="Focus session controls">
-          <button
-            type="button"
-            disabled={controlsDisabled}
-            onClick={() =>
-              command(session.state === "running" ? "pause" : "resume")
-            }
-          >
-            {session.state === "running" ? "Pause" : "Resume"}
-          </button>
-          <button
-            type="button"
-            disabled={controlsDisabled}
-            onClick={() =>
-              command(session.phase === "focus" ? "start_break" : "end_break")
-            }
-          >
-            {session.phase === "focus" ? "Start break" : "End break"}
-          </button>
-          <button
-            className="btn-ghost"
-            type="button"
-            disabled={controlsDisabled}
-            onClick={() => command("complete")}
-          >
-            Complete focus session
-          </button>
-        </div>
-      ) : (
-        <div className="task-actions">
-          <p className="hint">Controlled on another registered device.</p>
-          <button
-            type="button"
-            disabled={controlsDisabled}
-            onClick={() => command("takeover")}
-          >
-            Take over on this device
-          </button>
-        </div>
-      )}
-    </section>
+    <Card aria-labelledby="focus-panel-title">
+      <CardHeader>
+        <SectionHeading id="focus-panel-title" title="Focus session" />
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <p className="hint">
+          {phaseLabel} · {stateLabel}
+        </p>
+        {!online ? (
+          <p className="hint">Reconnect to control this session.</p>
+        ) : null}
+        {owner ? (
+          <div className="task-actions" aria-label="Focus session controls">
+            <Button
+              type="button"
+              disabled={controlsDisabled}
+              onClick={() =>
+                command(session.state === "running" ? "pause" : "resume")
+              }
+            >
+              {session.state === "running" ? "Pause" : "Resume"}
+            </Button>
+            <Button
+              type="button"
+              disabled={controlsDisabled}
+              onClick={() =>
+                command(session.phase === "focus" ? "start_break" : "end_break")
+              }
+            >
+              {session.phase === "focus" ? "Start break" : "End break"}
+            </Button>
+            <Button
+              variant="outline"
+              type="button"
+              disabled={controlsDisabled}
+              onClick={() => command("complete")}
+            >
+              Complete focus session
+            </Button>
+          </div>
+        ) : (
+          <div className="task-actions">
+            <p className="hint">Controlled on another registered device.</p>
+            <Button
+              type="button"
+              disabled={controlsDisabled}
+              onClick={() => command("takeover")}
+            >
+              Take over on this device
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 };

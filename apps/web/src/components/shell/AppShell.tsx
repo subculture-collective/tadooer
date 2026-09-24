@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { WorkspaceRoute } from "@/app/routes";
 import { SidebarNav } from "./SidebarNav.tsx";
 import { TopBar } from "./TopBar.tsx";
+import { Badge } from "@/components/ui/badge";
 
 interface AppShellProps {
   readonly route: WorkspaceRoute;
@@ -34,21 +35,21 @@ export const AppShell = ({
       </div>
       <SidebarNav route={route} onNavigate={onNavigate} />
       <div className="sidebar-status">
-        <div className="status-row">
+        <Badge variant="outline" className="status-row">
           <span
             className={`status-dot ${syncStatus === "online" || syncStatus === "syncing" ? "online" : "offline"}`}
           />
           Task sync: {syncStatus ?? "offline"}
-        </div>
+        </Badge>
         {conflictCount !== undefined && conflictCount > 0 && (
-          <div className="status-row">
+          <Badge variant="destructive" className="status-row">
             <span className="status-dot error" />
             Conflicts: {conflictCount}
-          </div>
+          </Badge>
         )}
-        <div className="status-row status-row--quiet">
+        <Badge variant="secondary" className="status-row status-row--quiet">
           {baikalConnected ? "Baikal verified" : "Baikal disconnected"}
-        </div>
+        </Badge>
       </div>
     </aside>
     <TopBar

@@ -1,4 +1,17 @@
 import { useMemo, useState, type SyntheticEvent } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { SectionHeading } from "@/components/ui/section-heading";
+import { Textarea } from "@/components/ui/textarea";
 
 export interface TemplateView {
   readonly id: string;
@@ -179,7 +192,7 @@ export const TemplateLibrary = ({
   ) => (
     <label className="field compact-field">
       <span>Existing destination project</span>
-      <select
+      <NativeSelect
         required
         value={destination[id] ?? suggestedProjectId ?? ""}
         onChange={(event) => chooseDestination(id, event.currentTarget.value)}
@@ -192,7 +205,7 @@ export const TemplateLibrary = ({
             {project.title}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </label>
   );
 
@@ -201,26 +214,32 @@ export const TemplateLibrary = ({
       className="template-library"
       aria-labelledby="template-library-title"
     >
-      <div className="section-heading">
-        <div>
-          <p className="step">Reusable work</p>
-          <h3 id="template-library-title">Template Library</h3>
-        </div>
-        <form className="template-search" role="search" onSubmit={submitSearch}>
-          <label>
-            <span className="sr-only">Search templates</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="Search templates"
-            />
-          </label>
-          <button type="submit" className="btn-ghost" disabled={busy}>
-            Search
-          </button>
-        </form>
-      </div>
+      <SectionHeading
+        as="h3"
+        eyebrow="Reusable work"
+        title="Template Library"
+        id="template-library-title"
+        actions={
+          <form
+            className="template-search"
+            role="search"
+            onSubmit={submitSearch}
+          >
+            <label>
+              <span className="sr-only">Search templates</span>
+              <Input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+                placeholder="Search templates"
+              />
+            </label>
+            <Button type="submit" variant="ghost" disabled={busy}>
+              Search
+            </Button>
+          </form>
+        }
+      />
       <p className="hint" id="template-library-note">
         Templates are inert blueprints. They do not appear in active tasks,
         reminders, or focus tracking.
@@ -233,46 +252,45 @@ export const TemplateLibrary = ({
         <h4>New template</h4>
         <label className="field">
           <span>Template title</span>
-          <input name="title" required autoComplete="off" />
+          <Input name="title" required autoComplete="off" />
         </label>
         <label className="field">
           <span>Notes</span>
-          <input name="notes" autoComplete="off" />
+          <Input name="notes" autoComplete="off" />
         </label>
         <label className="field">
           <span>Estimate minutes</span>
-          <input name="estimateMinutes" type="number" min="1" max="720" />
+          <Input name="estimateMinutes" type="number" min="1" max="720" />
         </label>
         <label className="field">
           <span>Suggested project</span>
-          <select name="suggestedProjectId">
+          <NativeSelect name="suggestedProjectId">
             <option value="">No suggestion</option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.title}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         {tags.length > 0 && (
           <fieldset>
             <legend>Tags</legend>
             {tags.map((tag) => (
               <label key={tag.id}>
-                <input type="checkbox" name="tagIds" value={tag.id} />{" "}
-                {tag.displayName}
+                <Checkbox name="tagIds" value={tag.id} /> {tag.displayName}
               </label>
             ))}
           </fieldset>
         )}
         <label className="field">
           <span>Checklist blueprints (one per line)</span>
-          <textarea name="subtasks" rows={3} />
+          <Textarea name="subtasks" rows={3} />
         </label>
-        <button disabled={busy}>{busy ? "Saving…" : "Save template"}</button>
+        <Button disabled={busy}>{busy ? "Saving…" : "Save template"}</Button>
       </form>
       {templates.length === 0 ? (
-        <p className="muted">No templates match this library yet.</p>
+        <EmptyState title="No templates match this library yet." />
       ) : (
         <ul className="template-list">
           {templates.map((template) => {
@@ -280,112 +298,126 @@ export const TemplateLibrary = ({
             const selected =
               destination[template.id] ?? template.suggestedProjectId ?? "";
             return (
-              <li key={template.id} className="template-card">
-                <div className="task-heading">
-                  <strong>{template.title}</strong>
-                  <small>
-                    {template.estimateMinutes == null
-                      ? "No estimate"
-                      : `${String(template.estimateMinutes)} minutes`}{" "}
-                    · {items.length} checklist{" "}
-                    {items.length === 1 ? "item" : "items"}
-                  </small>
-                </div>
-                {template.notes && <p>{template.notes}</p>}
-                {items.length > 0 && (
-                  <ol className="template-blueprints">
-                    {items.map((item) => (
-                      <li key={item.id}>{item.title}</li>
-                    ))}
-                  </ol>
-                )}
-                <details className="template-edit">
-                  <summary>Edit template</summary>
-                  <form onSubmit={(event) => void submitEdit(event, template)}>
-                    <label className="field">
-                      <span>Title</span>
-                      <input
-                        name="title"
-                        required
-                        defaultValue={template.title}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Notes</span>
-                      <input name="notes" defaultValue={template.notes} />
-                    </label>
-                    <label className="field">
-                      <span>Estimate minutes</span>
-                      <input
-                        name="estimateMinutes"
-                        type="number"
-                        min="1"
-                        max="720"
-                        defaultValue={template.estimateMinutes ?? ""}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Suggested project</span>
-                      <select
-                        name="suggestedProjectId"
-                        defaultValue={template.suggestedProjectId ?? ""}
+              <Card key={template.id} className="template-card">
+                <CardContent>
+                  <div className="task-heading">
+                    <strong>{template.title}</strong>
+                    <small>
+                      {template.estimateMinutes == null
+                        ? "No estimate"
+                        : `${String(template.estimateMinutes)} minutes`}{" "}
+                      · {items.length} checklist{" "}
+                      {items.length === 1 ? "item" : "items"}
+                    </small>
+                  </div>
+                  {template.notes && <p>{template.notes}</p>}
+                  {items.length > 0 && (
+                    <ol className="template-blueprints">
+                      {items.map((item) => (
+                        <li key={item.id}>{item.title}</li>
+                      ))}
+                    </ol>
+                  )}
+                  <Collapsible className="template-edit">
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" type="button">
+                        Edit template
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <form
+                        onSubmit={(event) => void submitEdit(event, template)}
                       >
-                        <option value="">No suggestion</option>
-                        {projects.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {project.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {tags.length > 0 && (
-                      <fieldset>
-                        <legend>Tags</legend>
-                        {tags.map((tag) => (
-                          <label key={tag.id}>
-                            <input
-                              type="checkbox"
-                              name="tagIds"
-                              value={tag.id}
-                              defaultChecked={template.tagIds.includes(tag.id)}
-                            />{" "}
-                            {tag.displayName}
-                          </label>
-                        ))}
-                      </fieldset>
+                        <label className="field">
+                          <span>Title</span>
+                          <Input
+                            name="title"
+                            required
+                            defaultValue={template.title}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Notes</span>
+                          <Input name="notes" defaultValue={template.notes} />
+                        </label>
+                        <label className="field">
+                          <span>Estimate minutes</span>
+                          <Input
+                            name="estimateMinutes"
+                            type="number"
+                            min="1"
+                            max="720"
+                            defaultValue={template.estimateMinutes ?? ""}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Suggested project</span>
+                          <NativeSelect
+                            name="suggestedProjectId"
+                            defaultValue={template.suggestedProjectId ?? ""}
+                          >
+                            <option value="">No suggestion</option>
+                            {projects.map((project) => (
+                              <option key={project.id} value={project.id}>
+                                {project.title}
+                              </option>
+                            ))}
+                          </NativeSelect>
+                        </label>
+                        {tags.length > 0 && (
+                          <fieldset>
+                            <legend>Tags</legend>
+                            {tags.map((tag) => (
+                              <label key={tag.id}>
+                                <Checkbox
+                                  name="tagIds"
+                                  value={tag.id}
+                                  defaultChecked={template.tagIds.includes(
+                                    tag.id,
+                                  )}
+                                />{" "}
+                                {tag.displayName}
+                              </label>
+                            ))}
+                          </fieldset>
+                        )}
+                        <label className="field">
+                          <span>Checklist blueprints (one per line)</span>
+                          <Textarea
+                            name="subtasks"
+                            rows={3}
+                            defaultValue={items
+                              .map(({ title }) => title)
+                              .join("\n")}
+                          />
+                        </label>
+                        <Button disabled={busy}>Save template</Button>
+                      </form>
+                    </CollapsibleContent>
+                  </Collapsible>
+                  <div className="template-destination">
+                    {destinationSelect(
+                      template.id,
+                      template.suggestedProjectId,
                     )}
-                    <label className="field">
-                      <span>Checklist blueprints (one per line)</span>
-                      <textarea
-                        name="subtasks"
-                        rows={3}
-                        defaultValue={items
-                          .map(({ title }) => title)
-                          .join("\n")}
-                      />
-                    </label>
-                    <button disabled={busy}>Save template</button>
-                  </form>
-                </details>
-                <div className="template-destination">
-                  {destinationSelect(template.id, template.suggestedProjectId)}
-                  <button
-                    type="button"
-                    disabled={busy || !selected}
-                    onClick={() => void onInstantiate(template.id, selected)}
-                  >
-                    Create task
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-danger"
-                    disabled={busy}
-                    onClick={() => void onArchive(template)}
-                  >
-                    Archive template
-                  </button>
-                </div>
-              </li>
+                    <Button
+                      type="button"
+                      disabled={busy || !selected}
+                      onClick={() => void onInstantiate(template.id, selected)}
+                    >
+                      Create task
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={busy}
+                      onClick={() => void onArchive(template)}
+                    >
+                      Archive template
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             );
           })}
         </ul>
@@ -401,7 +433,7 @@ export const TemplateLibrary = ({
         >
           <label className="field">
             <span>Set name</span>
-            <input name="title" required autoComplete="off" />
+            <Input name="title" required autoComplete="off" />
           </label>
           <fieldset>
             <legend>Templates in this set</legend>
@@ -409,19 +441,15 @@ export const TemplateLibrary = ({
               .filter((template) => template.archivedAt === null)
               .map((template) => (
                 <label key={template.id}>
-                  <input
-                    type="checkbox"
-                    name="templateIds"
-                    value={template.id}
-                  />{" "}
+                  <Checkbox name="templateIds" value={template.id} />{" "}
                   {template.title}
                 </label>
               ))}
           </fieldset>
-          <button disabled={busy || templates.length === 0}>Save set</button>
+          <Button disabled={busy || templates.length === 0}>Save set</Button>
         </form>
         {sets.length === 0 ? (
-          <p className="muted">No reusable sets yet.</p>
+          <EmptyState title="No reusable sets yet." />
         ) : (
           <ul className="template-list">
             {sets
@@ -429,27 +457,31 @@ export const TemplateLibrary = ({
               .map((set) => {
                 const selected = destination[set.id] ?? "";
                 return (
-                  <li key={set.id} className="template-card">
-                    <strong>{set.title}</strong>
-                    <ol className="template-blueprints">
-                      {set.templateIds.map((templateId) => (
-                        <li key={templateId}>
-                          {templates.find(({ id }) => id === templateId)
-                            ?.title ?? "Archived template"}
-                        </li>
-                      ))}
-                    </ol>
-                    <div className="template-destination">
-                      {destinationSelect(set.id)}
-                      <button
-                        type="button"
-                        disabled={busy || !selected}
-                        onClick={() => void onInstantiateSet(set.id, selected)}
-                      >
-                        Create set
-                      </button>
-                    </div>
-                  </li>
+                  <Card key={set.id} className="template-card">
+                    <CardContent>
+                      <strong>{set.title}</strong>
+                      <ol className="template-blueprints">
+                        {set.templateIds.map((templateId) => (
+                          <li key={templateId}>
+                            {templates.find(({ id }) => id === templateId)
+                              ?.title ?? "Archived template"}
+                          </li>
+                        ))}
+                      </ol>
+                      <div className="template-destination">
+                        {destinationSelect(set.id)}
+                        <Button
+                          type="button"
+                          disabled={busy || !selected}
+                          onClick={() =>
+                            void onInstantiateSet(set.id, selected)
+                          }
+                        >
+                          Create set
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
                 );
               })}
           </ul>

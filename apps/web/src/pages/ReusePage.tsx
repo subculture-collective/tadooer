@@ -14,6 +14,7 @@ import {
   type TemplateSetView,
 } from "../template-library.tsx";
 import { ChoicePoolLibrary } from "../choice-pool-library.tsx";
+import { PageHeader } from "../components/ui/page-header.tsx";
 
 export interface ReusePageProps {
   readonly templates: readonly TemplateView[];
@@ -133,7 +134,12 @@ export const ReusePage = ({
   onResolvePlaceholder,
 }: ReusePageProps) => {
   return (
-    <>
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+      <PageHeader
+        eyebrow="Reusable building blocks"
+        title="Reuse"
+        description="Save repeatable task patterns and make bounded choices from curated pools."
+      />
       <TemplateLibrary
         templates={templates}
         blueprints={templateBlueprints}
@@ -166,6 +172,6 @@ export const ReusePage = ({
         onSuggest={onSuggestPlaceholder}
         onResolve={onResolvePlaceholder}
       />
-    </>
+    </div>
   );
 };

@@ -11,6 +11,13 @@ import {
   previewCalendarImport,
   revokeCalendarFeed,
 } from "./api.ts";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Progress } from "@/components/ui/progress";
+import { SectionHeading } from "@/components/ui/section-heading";
 
 const maximumCalendarFileBytes = 4 * 1024 * 1024;
 
@@ -157,7 +164,11 @@ export const CalendarMigration = ({
   };
   return (
     <section className="migration-library" aria-labelledby="migration-heading">
-      <h3 id="migration-heading">Migration & read-only publication</h3>
+      <SectionHeading
+        as="h3"
+        id="migration-heading"
+        title="Migration & read-only publication"
+      />
       <p className="hint">
         Preview a bounded ICS export before making a one-time copy into Baïkal.
         Google exports use the Google Calendar ICS/Takeout adapter; this is not
@@ -168,26 +179,38 @@ export const CalendarMigration = ({
         aria-busy={importActivity !== null}
         onSubmit={(event) => void previewImport(event)}
       >
-        <label className="field">
-          <span>Source</span>
-          <select name="source" disabled={importActivity !== null}>
+        <Field className="field">
+          <FieldLabel htmlFor="calendar-source">Source</FieldLabel>
+          <NativeSelect
+            id="calendar-source"
+            name="source"
+            disabled={importActivity !== null}
+          >
             <option value="ics">iCalendar file</option>
             <option value="google_ics">Google Calendar ICS/Takeout</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>Destination calendar</span>
-          <select name="calendarId" required disabled={importActivity !== null}>
+          </NativeSelect>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="calendar-destination">
+            Destination calendar
+          </FieldLabel>
+          <NativeSelect
+            id="calendar-destination"
+            name="calendarId"
+            required
+            disabled={importActivity !== null}
+          >
             {calendars.map((calendar) => (
               <option key={calendar.id} value={calendar.id}>
                 {calendar.displayName}
               </option>
             ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Calendar file</span>
-          <input
+          </NativeSelect>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="calendar-file">Calendar file</FieldLabel>
+          <Input
+            id="calendar-file"
             name="calendarFile"
             type="file"
             accept=".ics,text/calendar"
@@ -196,7 +219,7 @@ export const CalendarMigration = ({
             aria-describedby="calendar-file-help"
             onChange={(event) => void selectCalendarFile(event)}
           />
-        </label>
+        </Field>
         <p id="calendar-file-help" className="hint">
           Choose one `.ics` export, up to 4 MiB. The browser reads it locally
           and sends it only when you preview the import.
@@ -207,18 +230,18 @@ export const CalendarMigration = ({
             <span>{(selectedFile.size / 1024).toFixed(1)} KiB selected</span>
           </p>
         )}
-        <button disabled={selectedFile === null || importActivity !== null}>
+        <Button disabled={selectedFile === null || importActivity !== null}>
           {importActivity === "reading"
             ? "Reading file…"
             : importActivity === "previewing"
               ? "Building preview…"
               : "Preview import"}
-        </button>
+        </Button>
       </form>
       {importError !== null && (
-        <p className="message message-error" role="alert">
-          {importError}
-        </p>
+        <Alert variant="destructive" className="message message-error">
+          <AlertDescription>{importError}</AlertDescription>
+        </Alert>
       )}
       {preview !== null && (
         <div
@@ -245,7 +268,7 @@ export const CalendarMigration = ({
             ))}
           </ul>
           {preview.state === "previewed" ? (
-            <button
+            <Button
               type="button"
               disabled={importActivity !== null}
               onClick={() => void applyImport()}
@@ -253,7 +276,7 @@ export const CalendarMigration = ({
               {importActivity === "applying"
                 ? "Importing into Baïkal…"
                 : "Apply one-time migration"}
-            </button>
+            </Button>
           ) : (
             <p>Import state: {preview.state}</p>
           )}
@@ -261,7 +284,10 @@ export const CalendarMigration = ({
       )}
       {importActivity === "applying" && preview !== null && (
         <div className="import-progress" role="status" aria-live="polite">
-          <progress aria-label="Calendar migration is in progress" />
+          <Progress
+            aria-label="Calendar migration is in progress"
+            value={null}
+          />
           <strong>Migration in progress</strong>
           <span>
             Importing up to {preview.report.totals.ready} events. Keep this page
@@ -280,21 +306,21 @@ export const CalendarMigration = ({
         ))}
       </ul>
       <form onSubmit={(event) => void issueFeed(event)}>
-        <label className="field">
-          <span>Published calendar</span>
-          <select name="calendarId" required>
+        <Field className="field">
+          <FieldLabel htmlFor="feed-calendar">Published calendar</FieldLabel>
+          <NativeSelect id="feed-calendar" name="calendarId" required>
             {calendars.map((calendar) => (
               <option key={calendar.id} value={calendar.id}>
                 {calendar.displayName}
               </option>
             ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Feed label</span>
-          <input name="label" required maxLength={100} />
-        </label>
-        <button>Create revocable read-only feed</button>
+          </NativeSelect>
+        </Field>
+        <Field className="field">
+          <FieldLabel htmlFor="feed-label">Feed label</FieldLabel>
+          <Input id="feed-label" name="label" required maxLength={100} />
+        </Field>
+        <Button>Create revocable read-only feed</Button>
       </form>
       {issuedUrl !== null && (
         <output className="capability-url">
@@ -311,7 +337,7 @@ export const CalendarMigration = ({
           <li key={feed.id}>
             {feed.label} · {feed.revokedAt === null ? "active" : "revoked"}
             {feed.revokedAt === null && (
-              <button
+              <Button
                 type="button"
                 onClick={() =>
                   void revokeCalendarFeed(feed.id, csrfToken).then(() =>
@@ -329,7 +355,7 @@ export const CalendarMigration = ({
                 }
               >
                 Revoke
-              </button>
+              </Button>
             )}
           </li>
         ))}

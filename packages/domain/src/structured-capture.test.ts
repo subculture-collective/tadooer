@@ -109,6 +109,25 @@ describe("parseStructuredCapture", () => {
     });
   });
 
+  it("resolves a bare weekday after the current planning-zone weekday", () => {
+    for (const context of [
+      {
+        at: new Date("2026-08-22T01:00:00.000Z"),
+        timezoneOffsetMinutes: -300,
+        timeZone: "America/Chicago",
+      },
+      {
+        at: new Date("2026-08-20T16:00:00.000Z"),
+        timezoneOffsetMinutes: 540,
+        timeZone: "Asia/Tokyo",
+      },
+    ]) {
+      expect(
+        parseStructuredCapture("Review !Friday", context).deadline,
+      ).toEqual({ kind: "date", value: "2026-08-28" });
+    }
+  });
+
   it("rejects planned dates without a time", () => {
     expect(() => parseStructuredCapture("Plan @tomorrow", context)).toThrow(
       "planned time must include a time of day",
