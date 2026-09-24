@@ -14,7 +14,6 @@ interface ParityRow {
   id: string;
   status: "supported" | "partial" | "gap" | "decision";
   issue: number | null;
-  proposedIssue?: string;
   tadooer: string[];
   tests: string[];
   sections: string[];
@@ -62,11 +61,7 @@ it("keeps row evidence present and tracks every unresolved row", () => {
     expect(["supported", "partial", "gap", "decision"]).toContain(row.status);
     if (row.status === "supported")
       expect(row.tests.length, row.id).toBeGreaterThan(0);
-    else
-      expect(
-        row.issue !== null || row.proposedIssue !== undefined,
-        `${row.id} needs a tracking issue`,
-      ).toBe(true);
+    else expect(row.issue, `${row.id} needs a tracking issue`).not.toBeNull();
     if (row.status === "partial")
       expect(row.tadooer.length, row.id).toBeGreaterThan(0);
   }
