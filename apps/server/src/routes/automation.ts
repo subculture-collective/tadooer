@@ -494,7 +494,7 @@ export const handleAutomation: RouteHandler = async (
       body = {
         window: window.data,
         tasks: database.listTasks(token.ownerId).map(taskResponse),
-        events: events.map(calendarEventResponse),
+        events: events.map((event) => calendarEventResponse(event)),
         freshness: {
           state:
             events.length === 0 ? ("unavailable" as const) : ("stale" as const),

@@ -356,6 +356,7 @@ export const calendarEventProjectionSchema = z
     startsAt: z.iso.datetime(),
     endsAt: z.iso.datetime(),
     allDay: z.boolean(),
+    linkedTaskId: entityIdSchema.optional(),
     recurrence: z.enum(["none", "instance"]),
     projectedAt: z.iso.datetime(),
     source: z.object({
@@ -1389,6 +1390,7 @@ export const syncDiagnosticOperationSchema = z
       "queued",
       "sending",
       "acknowledged",
+      "resolved",
       "conflicted",
       "rejected",
     ]),

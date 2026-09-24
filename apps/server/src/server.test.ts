@@ -40,6 +40,14 @@ const phaseOneCalDav = () => {
           "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:all-day-event\r\nDTSTART;VALUE=DATE:20260806\r\nDTEND;VALUE=DATE:20260807\r\nSUMMARY:All-day planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
       },
     ],
+    [
+      "/dav.php/calendars/alice/work/provider-only-same-title.ics",
+      {
+        etag: '"provider-only-1"',
+        rawIcs:
+          "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:provider-only-same-title\r\nDTSTART:20260806T090000Z\r\nDTEND:20260806T093000Z\r\nSUMMARY:Plan focused work\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+      },
+    ],
   ]);
   let version = 1;
   let failNextPutAfterCommit = false;
@@ -711,6 +719,27 @@ describe("Suite HTTP server", () => {
           ),
         ).toHaveLength(1);
 
+        const linkedPlannerResponse = await fetch(
+          `${server.baseUrl}/api/planner?from=2026-08-06T00%3A00%3A00.000Z&to=2026-08-07T00%3A00%3A00.000Z`,
+          { headers: { Cookie: cookie } },
+        );
+        expect(linkedPlannerResponse.status).toBe(200);
+        const linkedPlanner = plannerResponseSchema.parse(
+          await linkedPlannerResponse.json(),
+        );
+        expect(
+          linkedPlanner.events.find(
+            (event) => event.href === block.mapping.href,
+          ),
+        ).toMatchObject({ linkedTaskId: created.task.id });
+        expect(
+          linkedPlanner.events.find(
+            (event) =>
+              event.href ===
+              "/dav.php/calendars/alice/work/provider-only-same-title.ics",
+          ),
+        ).not.toHaveProperty("linkedTaskId");
+
         const replayResponse = await fetch(
           `${server.baseUrl}/api/tasks/${created.task.id}/time-block`,
           {
@@ -792,6 +821,16 @@ describe("Suite HTTP server", () => {
         expect(caldav.resources.get(block.mapping.href)?.rawIcs).toContain(
           "SUMMARY:External edit",
         );
+        const conflictedPlannerResponse = await fetch(
+          `${server.baseUrl}/api/planner?from=2026-08-06T00%3A00%3A00.000Z&to=2026-08-07T00%3A00%3A00.000Z`,
+          { headers: { Cookie: cookie } },
+        );
+        expect(conflictedPlannerResponse.status).toBe(200);
+        expect(
+          plannerResponseSchema
+            .parse(await conflictedPlannerResponse.json())
+            .events.find((event) => event.href === block.mapping.href),
+        ).not.toHaveProperty("linkedTaskId");
 
         const removableTaskResponse = await fetch(
           `${server.baseUrl}/api/tasks`,

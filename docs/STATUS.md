@@ -1,6 +1,6 @@
 # Current development and release checkpoint
 
-Recorded September 20, 2026. This is the single current checkpoint; phase notes
+Recorded September 24, 2026. This is the single current checkpoint; phase notes
 and execution logs retain dated historical evidence. The complete work list is
 [roadmap #15](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/15).
 The [approved interview](discovery/2026-09-20-parity-assistants-calendar-hub.md)
@@ -9,27 +9,21 @@ define the current scope.
 
 ## Source and publication
 
-The reviewed development stack through `cc1babd` passes `pnpm verify`:
-234 tests in 72 files, type checking, lint, formatting, and all four builds.
-A built stdio adapter against a built disposable server advertises 34 tools;
-project/tag lifecycle, assignment and checklist workflows have HTTP and runtime
-checks. This is local verification, not hosted CI or live assistant qualification.
+The page/component migration and real Planner grid reached `main` through PRs
+#87 and #88 at `588c1ed`. Its local gate passed 251 tests in 79 files; hosted
+PR run 9640 and merged-main run 9641 passed.
 
-- Reliability/core import work: PR #53 was merged into `main` at `d80b9a3`.
-- Bounded import capacity, assistant inventory and calendar authority contract:
-  original PRs #54/#61/#62 were merged into intermediate branches. Integration
-  PR #68 carries their original commits to `main`; their earlier merged status
-  alone does not prove they reached `main`.
-- Source parity inventory: PR #69.
-- Atomic organization authority and assistant operations: PRs #70/#71.
-- Atomic checklist authority and assistant operations: PRs #72/#73.
+The next development slice, PR #89 at `630d45d`, adds Planner details/actions,
+authoritative task/event consolidation, and explicit sync conflict resolution.
+Its local gate passed 260 tests in 81 files, formatting, lint, type checks, and
+four builds. The [dated browser verification record](testing/planner-recovery-2026-09-24.md)
+distinguishes real disposable Baikal actions from injected recovery, race, clock,
+and Google UI fixtures. PR #89 records the hosted checks and final merge result.
 
-Those stack relationships were read from Gitea during this work. A temporary
-HTTP 502 interrupted readback; a later successful API/Git check again found
-`main` at `d80b9a3` and default branch `codex/phase-0-foundation` (#23). Inspect
-live PR/base state before merging. Retarget a child to `main` only after its
-parent commits reach `main`.
-No PR was merged or production image changed by this implementation run.
+Earlier maintenance PRs #81–#85 are also on `main`, including persistence
+authority cleanup. The remote default branch remains `codex/phase-0-foundation`
+(#23); use explicit `main` for delivery. This development work did not deploy a
+production image or change the pinned candidate.
 
 ## Production and stable qualification
 
@@ -64,7 +58,7 @@ and needs its own artifact, backup, deployment and authenticated checks.
 ## Reconciled historical plans
 
 [The architecture/frontend audit](product/legacy-plan-reconciliation.md)
-separates implemented work from residual tasks. Persistence authority cleanup
-#74, app controller extraction #75 and semantic component migration #76 replace
-blind execution of old unchecked steps. Old line-count targets and proposed
+separates implemented work from residual tasks. Persistence authority cleanup #74 and semantic component migration #76 are
+complete on main. App controller extraction #75 remains a separate maintenance
+item. These issues replace blind execution of old unchecked steps. Old line-count targets and proposed
 filenames are not release gates.
