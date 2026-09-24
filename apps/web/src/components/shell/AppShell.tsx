@@ -46,7 +46,7 @@ export const AppShell = ({
             Conflicts: {conflictCount}
           </div>
         )}
-        <div className="status-row" style={{ fontSize: "var(--text-2xs)" }}>
+        <div className="status-row status-row--quiet">
           {baikalConnected ? "Baikal verified" : "Baikal disconnected"}
         </div>
       </div>

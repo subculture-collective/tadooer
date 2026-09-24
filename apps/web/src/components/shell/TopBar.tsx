@@ -18,21 +18,12 @@ export const TopBar = ({
     <span className="topbar-breadcrumb">{routeLabel(route)}</span>
     <div className="topbar-actions">
       {commandTrigger}
-      <button
-        className="btn-ghost"
-        type="button"
-        onClick={onSignOut}
-        style={{ fontSize: "var(--text-xs)" }}
-      >
+      <button className="btn-ghost" type="button" onClick={onSignOut}>
         Sign out
       </button>
     </div>
     {formError !== null && (
-      <span
-        role="alert"
-        className="message message-error"
-        style={{ padding: "0.25rem 0.5rem", fontSize: "var(--text-xs)" }}
-      >
+      <span role="alert" className="message message-error">
         {formError}
       </span>
     )}

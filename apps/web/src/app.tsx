@@ -1884,35 +1884,16 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         <div className="auth-card">
           {recovery}
           {state.kind === "loading" && (
-            <div style={{ textAlign: "center" }}>
-              <div
-                className="status-dot online"
-                style={{ width: 8, height: 8, margin: "0 auto 0.75rem" }}
-              />
+            <div className="auth-loading">
+              <div className="status-dot online" />
               <p className="muted">Opening your suite...</p>
             </div>
           )}
           {state.kind === "error" && (
             <div>
               <p className="step">Connection problem</p>
-              <h2
-                style={{
-                  fontSize: "var(--text-xl)",
-                  fontWeight: 600,
-                  marginBottom: "0.5rem",
-                }}
-              >
-                Unable to reach the Suite
-              </h2>
-              <p
-                style={{
-                  fontSize: "var(--text-sm)",
-                  color: "var(--color-text-secondary)",
-                  marginBottom: "1rem",
-                }}
-              >
-                {state.message}
-              </p>
+              <h2>Unable to reach the Suite</h2>
+              <p className="muted">{state.message}</p>
               <button className="btn-primary" onClick={() => location.reload()}>
                 Retry
               </button>
@@ -1921,16 +1902,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           {state.kind === "setup" && (
             <form onSubmit={(event) => void submitSetup(event)}>
               <p className="step">Step 1 of 2</p>
-              <h2
-                style={{
-                  fontSize: "var(--text-xl)",
-                  fontWeight: 600,
-                  marginBottom: "1rem",
-                }}
-              >
-                Create the owner account
-              </h2>
-              <p className="muted" style={{ marginBottom: "1rem" }}>
+              <h2>Create the owner account</h2>
+              <p className="muted">
                 This first release supports one owner. The identity remains
                 explicit so future data is always ownership-scoped.
               </p>
@@ -1952,22 +1925,13 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 autoComplete="new-password"
                 minLength={14}
               />
-              <p className="hint" style={{ marginBottom: "0.75rem" }}>
+              <p className="hint">
                 Use at least 14 characters. A memorable passphrase works well.
               </p>
               {formError !== null && (
-                <p
-                  className="message message-error"
-                  style={{ marginBottom: "0.75rem" }}
-                >
-                  {formError}
-                </p>
+                <p className="message message-error">{formError}</p>
               )}
-              <button
-                className="btn-primary"
-                disabled={busy}
-                style={{ width: "100%" }}
-              >
+              <button className="btn-primary btn-block" disabled={busy}>
                 {busy ? "Creating..." : "Create owner"}
               </button>
             </form>
@@ -1975,22 +1939,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           {state.kind === "login" && (
             <form onSubmit={(event) => void submitLogin(event)}>
               <p className="step">Welcome back</p>
-              <h2
-                style={{
-                  fontSize: "var(--text-xl)",
-                  fontWeight: 600,
-                  marginBottom: "1rem",
-                }}
-              >
-                Sign in
-              </h2>
+              <h2>Sign in</h2>
               {state.message !== undefined && (
-                <p
-                  className="message message-success"
-                  style={{ marginBottom: "0.75rem" }}
-                >
-                  {state.message}
-                </p>
+                <p className="message message-success">{state.message}</p>
               )}
               <Field
                 label="Username"
@@ -2007,26 +1958,14 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 autoComplete="current-password"
               />
               {state.username !== undefined && (
-                <p
-                  className="message message-error"
-                  style={{ marginTop: "0.5rem" }}
-                >
+                <p className="message message-error">
                   Session expired. Please sign in again.
                 </p>
               )}
               {formError !== null && (
-                <p
-                  className="message message-error"
-                  style={{ marginTop: "0.5rem" }}
-                >
-                  {formError}
-                </p>
+                <p className="message message-error">{formError}</p>
               )}
-              <button
-                className="btn-primary"
-                disabled={busy}
-                style={{ width: "100%", marginTop: "0.75rem" }}
-              >
+              <button className="btn-primary btn-block" disabled={busy}>
                 {busy ? "Signing in..." : "Sign in"}
               </button>
             </form>
@@ -2034,32 +1973,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           {state.kind === "offline" && (
             <div>
               <p className="step">Offline</p>
-              <h2
-                style={{
-                  fontSize: "var(--text-xl)",
-                  fontWeight: 600,
-                  marginBottom: "0.5rem",
-                }}
-              >
-                Limited workspace
-              </h2>
+              <h2>Limited workspace</h2>
               <p className="muted">{state.message}</p>
               {formError !== null && (
-                <p
-                  className="message message-error"
-                  style={{ marginTop: "0.5rem" }}
-                >
-                  {formError}
-                </p>
+                <p className="message message-error">{formError}</p>
               )}
-              <nav
-                style={{
-                  display: "flex",
-                  gap: "0.25rem",
-                  marginTop: "1rem",
-                  marginBottom: "1rem",
-                }}
-              >
+              <nav className="offline-nav" aria-label="Offline views">
                 {workspaceRoutes.map((item) => (
                   <a
                     key={item}
@@ -2068,20 +1987,6 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                     onClick={(event) => {
                       event.preventDefault();
                       navigate(item);
-                    }}
-                    style={{
-                      padding: "0.25rem 0.5rem",
-                      borderRadius: "var(--radius-sm)",
-                      fontSize: "var(--text-xs)",
-                      color:
-                        route === item
-                          ? "var(--color-accent)"
-                          : "var(--color-text-secondary)",
-                      background:
-                        route === item
-                          ? "var(--color-accent-muted)"
-                          : "transparent",
-                      textDecoration: "none",
                     }}
                   >
                     {item === "reuse"
@@ -2092,11 +1997,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               </nav>
               <div>
                 <form
-                  style={{
-                    display: "flex",
-                    gap: "0.5rem",
-                    marginBottom: "0.75rem",
-                  }}
+                  className="offline-capture"
                   onSubmit={(event) => void submitTask(event)}
                 >
                   <input
@@ -2157,7 +2058,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                     </li>
                   ))}
                 </ul>
-                <details className="recovery" style={{ marginTop: "0.5rem" }}>
+                <details className="recovery">
                   <summary>Deleted tasks ({state.recovery.length})</summary>
                   {state.recovery.map((task) => (
                     <button
@@ -2169,7 +2070,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                     </button>
                   ))}
                 </details>
-                <p className="hint" style={{ marginTop: "0.5rem" }}>
+                <p className="hint">
                   Visible sync conflicts: {state.conflictCount}
                 </p>
                 <button
@@ -2193,26 +2094,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           {state.kind === "authenticated" && !state.baikal.connected && (
             <form onSubmit={(event) => void submitBaikal(event)}>
               <p className="step">Step 2 of 2</p>
-              <h2
-                style={{
-                  fontSize: "var(--text-xl)",
-                  fontWeight: 600,
-                  marginBottom: "1rem",
-                }}
-              >
-                Connect Baikal
-              </h2>
-              <p className="muted" style={{ marginBottom: "0.75rem" }}>
+              <h2>Connect Baikal</h2>
+              <p className="muted">
                 Enter the Baikal user you created. The Suite verifies it through
                 CalDAV before storing an encrypted credential.
               </p>
-              <p
-                className="hint"
-                style={{
-                  marginBottom: "0.75rem",
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
+              <p className="hint mono">
                 Bundled Baikal \u00b7 server-managed CalDAV
               </p>
               <Field
@@ -2227,18 +2114,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 autoComplete="current-password"
               />
               {formError !== null && (
-                <p
-                  className="message message-error"
-                  style={{ marginTop: "0.5rem" }}
-                >
-                  {formError}
-                </p>
+                <p className="message message-error">{formError}</p>
               )}
-              <button
-                className="btn-primary"
-                disabled={busy}
-                style={{ width: "100%", marginTop: "0.75rem" }}
-              >
+              <button className="btn-primary btn-block" disabled={busy}>
                 {busy ? "Verifying..." : "Verify and connect"}
               </button>
             </form>
