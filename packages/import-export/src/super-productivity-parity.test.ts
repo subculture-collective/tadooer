@@ -12,7 +12,7 @@ import {
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 interface ParityRow {
   id: string;
-  status: "supported" | "partial" | "gap" | "decision";
+  status: "supported" | "partial" | "gap" | "decision" | "excluded";
   issue: number | null;
   tadooer: string[];
   tests: string[];
@@ -58,7 +58,9 @@ it("keeps row evidence present and tracks every unresolved row", () => {
   for (const row of matrix.rows) {
     for (const path of [...row.tadooer, ...row.tests])
       expect(existsSync(join(root, path)), `${row.id}: ${path}`).toBe(true);
-    expect(["supported", "partial", "gap", "decision"]).toContain(row.status);
+    expect(["supported", "partial", "gap", "decision", "excluded"]).toContain(
+      row.status,
+    );
     if (row.status === "supported")
       expect(row.tests.length, row.id).toBeGreaterThan(0);
     else expect(row.issue, `${row.id} needs a tracking issue`).not.toBeNull();

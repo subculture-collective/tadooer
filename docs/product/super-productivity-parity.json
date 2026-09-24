@@ -789,7 +789,7 @@
       "id": "sync",
       "area": "Sync",
       "capability": "Multi-device sync through Dropbox, OneDrive, WebDAV, local file, Nextcloud or SuperSync, with optional end-to-end encryption",
-      "status": "decision",
+      "status": "excluded",
       "issue": 94,
       "sp": "src/app/op-log/sync-providers/provider.const.ts",
       "tadooer": ["apps/server/src/routes/sync.ts"],
@@ -798,7 +798,7 @@
         "apps/web/src/local-store.test.ts"
       ],
       "data": "Sync credentials are not exported.",
-      "sync": "Tadooer uses a self-hosted server with an offline outbox (ADR 0010). Third-party storage providers and client-side encryption are not planned.",
+      "sync": "Tadooer uses a self-hosted server with an offline outbox (ADR 0010). Owner decision, September 24 (#94): client-side end-to-end encryption and third-party storage sync are not parity requirements.",
       "ui": "Sync now and health in Settings.",
       "mcp": "Not applicable.",
       "sections": [],
