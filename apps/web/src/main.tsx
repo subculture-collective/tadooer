@@ -1,6 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app.tsx";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/atkinson-hyperlegible-mono";
 import "./styles.css";
 
 const root = document.querySelector("#root");
