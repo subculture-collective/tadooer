@@ -25,7 +25,9 @@ adds explicit Super Productivity parity, full-capability assistant plugins/MCP,
 and an opt-in Google/Baikal two-way calendar hub to the product direction.
 Subscription-backed embedded assistance is conditional on runtime qualification.
 These decisions supersede conflicting historical deferrals below; they are not
-claims of implementation or a change to the frozen soak candidate.
+claims of implementation or a change to the frozen soak candidate. The
+[parity matrix](product/super-productivity-parity.md) pins Super Productivity
+19.1.0 and lists each capability's status and tracking issue.
 
 Deliver contract-first vertical slices that are usable end to end. Every phase
 must leave a runnable, testable product state; phases are dependency order, not
