@@ -36,7 +36,7 @@ deeper blocks with `hierarchy_depth_unsupported` rather than guessing.
 
 **Identity and storage.** A child task is an ordinary task row with its own
 UUID, revision, field versions, project, tags, dates, calendar block, focus
-sessions and recovery lifecycle. Migration `0021_task_hierarchy` adds three
+sessions and recovery lifecycle. Migration `0024_task_hierarchy` adds three
 columns to `tasks`: nullable `parent_id`, nullable `child_position` and
 `hierarchy_version`. SQLite triggers reject any row whose parent is itself,
 belongs to another owner, is missing, is not top-level, or whose own children

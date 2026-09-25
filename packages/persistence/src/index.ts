@@ -1274,7 +1274,7 @@ const migrations: readonly Migration[] = [
   {
     // ADR 0018: two-level task hierarchy. Triggers keep the graph acyclic,
     // owner-scoped and at most two levels deep even if application checks fail.
-    id: "0021_task_hierarchy",
+    id: "0024_task_hierarchy",
     sql: `
       ALTER TABLE tasks ADD COLUMN parent_id TEXT REFERENCES tasks(id) ON DELETE CASCADE;
       ALTER TABLE tasks ADD COLUMN child_position INTEGER;
