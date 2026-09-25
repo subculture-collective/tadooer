@@ -3,6 +3,7 @@ import {
   applicationPreferencesSchema,
   defaultApplicationPreferences,
   normalizeShortcutBinding,
+  normalizeShortcutOverrides,
   resolveShortcutBindings,
   shortcutActions,
   shortcutConflicts,
@@ -67,11 +68,17 @@ describe("application preferences (ADR 0030)", () => {
       }).success,
     ).toBe(false);
     expect(
-      applicationPreferencesSchema.parse({
+      applicationPreferencesSchema.safeParse({
         ...defaultApplicationPreferences,
         shortcuts: { "sync.now": "ctrl+shift+s" },
-      }).shortcuts,
-    ).toEqual({ "sync.now": "Ctrl+Shift+S" });
+      }).success,
+    ).toBe(true);
+    expect(
+      normalizeShortcutOverrides({
+        "sync.now": "ctrl+shift+s",
+        "help.shortcuts": null,
+      }),
+    ).toEqual({ "sync.now": "Ctrl+Shift+S", "help.shortcuts": null });
   });
 
   it("keeps default bindings unique and source keys unique", () => {

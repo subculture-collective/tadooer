@@ -122,19 +122,16 @@ export const normalizeShortcutBinding = (value: string): string | undefined => {
   );
 };
 
+/**
+ * A binding as written; the record stores its canonical form (see
+ * `normalizeShortcutOverrides`). A refine keeps the schema representable in
+ * JSON Schema for the MCP catalog.
+ */
 export const shortcutBindingSchema = z
   .string()
   .max(40)
-  .transform((value, context) => {
-    const normalized = normalizeShortcutBinding(value);
-    if (normalized === undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "Use modifiers (Ctrl, Alt, Shift, Meta) plus one key",
-      });
-      return z.NEVER;
-    }
-    return normalized;
+  .refine((value) => normalizeShortcutBinding(value) !== undefined, {
+    message: "Use modifiers (Ctrl, Alt, Shift, Meta) plus one key",
   });
 
 export interface ShortcutAction {
@@ -282,6 +279,21 @@ export const shortcutOverridesSchema = z.partialRecord(
   shortcutBindingSchema.nullable(),
 );
 export type ShortcutOverrides = z.infer<typeof shortcutOverridesSchema>;
+
+/** Canonical form of every override; invalid bindings are dropped. */
+export const normalizeShortcutOverrides = (
+  overrides: ShortcutOverrides,
+): ShortcutOverrides => {
+  const normalized: Record<string, string | null> = {};
+  for (const [id, binding] of Object.entries(overrides)) {
+    if (binding === null) normalized[id] = null;
+    else {
+      const canonical = normalizeShortcutBinding(binding);
+      if (canonical !== undefined) normalized[id] = canonical;
+    }
+  }
+  return normalized;
+};
 
 /** Effective binding per action after overrides. */
 export const resolveShortcutBindings = (

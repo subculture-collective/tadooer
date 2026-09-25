@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   applicationPreferencesSchema,
   defaultApplicationPreferences,
+  normalizeShortcutOverrides,
   type ApplicationPreferences,
 } from "@suite/contracts";
 
@@ -99,7 +100,13 @@ export class SqliteApplicationPreferencesStore {
         ok: false,
         message: "defaultProjectId: choose an active project",
       };
-    return { ok: true, preferences: parsed.data };
+    return {
+      ok: true,
+      preferences: {
+        ...parsed.data,
+        shortcuts: normalizeShortcutOverrides(parsed.data.shortcuts),
+      },
+    };
   }
 
   mutate(input: {
@@ -172,7 +179,15 @@ export class SqliteApplicationPreferencesStore {
     }
     const parsed = applicationPreferencesSchema.safeParse(candidate);
     if (!parsed.success) throw new Error("Imported preferences are invalid");
-    this.#write(ownerId, parsed.data, 1, now);
+    this.#write(
+      ownerId,
+      {
+        ...parsed.data,
+        shortcuts: normalizeShortcutOverrides(parsed.data.shortcuts),
+      },
+      1,
+      now,
+    );
     return entries.length;
   }
 
