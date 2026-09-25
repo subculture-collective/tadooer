@@ -55,7 +55,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | linked-issues          | partial        | One issue link per task (provider key, provider instance ID, issue ID, last-synced provenance; Gitea address rebuilt) and attachments import and are edited online (ADR 0021). Local files and commands stay inert; credentials are never read; live provider access needs fresh authorization. | [#30](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/30) |
 | reminders              | partial        | Per-task and timed-deadline reminder offsets use the ntfy ledger (ADR 0020); exact source offsets import. Legacy reminders section stays blocked.                                                                                                                                               | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
 | boards                 | missing        | Source board/section/task-view state has no qualified Tadooer mapping.                                                                                                                                                                                                                          | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
-| counters               | missing        | Source counters and metric history are not equivalent to habit streaks.                                                                                                                                                                                                                         | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
+| counters               | partial        | Counters and their day values import with provenance (counts, or stopwatch milliseconds); metric days import as daily evaluations, and their focus sessions stay evaluation history rather than time entries (ADR 0025). Streaks are derived, never imported. Not habits.                       | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
 | focus                  | partial        | Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.                                                                                                                                                                                  | [#65](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/65) |
 | plugins                | missing        | Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.                                                                                                                                                         | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
 | preferences            | partial        | Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.                                                                                                                                                        | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
@@ -79,7 +79,8 @@ no section is dropped without a report:
 - **parity**: inventoried; apply is blocked with a parity finding. Archived
   tasks apply since #38; see "Archived history" below. Repeat configurations
   apply since #42; see "Repeat configurations" below. Work history applies
-  since #41; see "Work history" below.
+  since #41; see "Work history" below. Counters and metric days apply since
+  #64; see "Counters and daily evaluations" below.
   Hierarchy fields apply since #27, and a chain deeper
   than two levels blocks with `hierarchy_depth_unsupported`. Day-only plans
   (`dueDay`) and exact reminder offsets apply since #29; a reminder that is not
@@ -88,8 +89,8 @@ no section is dropped without a report:
   task order inside projects and tags, note lock and background colour).
 - **blocked**: a populated value blocks apply (`unsupported_section` or
   `unsupported_import_data`, one finding per record).
-- **configuration**: `globalConfig`, `boards`, `planner`, `issueProvider`,
-  `pluginMetadata` and counter definitions. Reported as
+- **configuration**: `globalConfig`, `boards`, `planner`, `issueProvider` and
+  `pluginMetadata`. Reported as
   `configuration_not_imported`; never applied and does not block.
 - **ignored**: derived or view-only task state (`modified`, `hasPlannedTime`,
   `_hideSubTasksMode`, the leaked `subTasks` copy) and legacy project issue
@@ -122,8 +123,9 @@ Every finding carries `blocking`. Reported dispositions that do not block are
 `historical_parent_detached`, `history_review`, the recurrence findings
 `recurrence_notice` and `recurrence_duplicate_occurrence`, and the work history
 findings `time_total_mismatch`, `time_parent_residual`, `time_parent_shortfall`,
-`time_reconciliation`, `work_context_merged` and `work_context_historical`; any
-other code blocks.
+`time_reconciliation`, `work_context_merged` and `work_context_historical`, and
+the counter findings `counter_notice`, `counter_reconciliation` and
+`metric_field_retained`; any other code blocks.
 
 ### Archived history (#38)
 
@@ -213,14 +215,42 @@ dated days, which its parent's days include; and an `archiveOld` task with
 projects or tags that are not imported and keep their source IDs. No time
 finding blocks.
 
+### Counters and daily evaluations (#64)
+
+`simpleCounter` and `metric` apply (ADR 0025). Their fields are classified in
+`super-productivity-counters.ts` (`simpleCounterFields` and `metricFields` in
+the manifest):
+
+- Counter definitions keep their kind, enabled and hidden state, icon, streak
+  settings and countdown length. Positive `countOnDay` values import as day
+  values in the owner's zone, with the source value kept for replay checks.
+  Stopwatch values are milliseconds and may not exceed the day's length. `isOn`
+  is running state and is only reported.
+- Metric days import as daily evaluations: notes, the single reflection,
+  impact, energy and remind-tomorrow. `focusSessions` stay on the evaluation
+  as history; the same work is in `timeSpentOnDay`, so they never become time
+  entries. `totalWorkMinutes`, `completedTasks` and `plannedTasks` are kept in
+  provenance.
+- A missing title, an unusable icon, a streak without a minimum, a repeated
+  countdown (its timer is not ported) and a running counter are reported with
+  `counter_notice`. Out-of-range or malformed values, more than one reflection
+  and unreviewed fields block.
+
+A replay adds nothing and keeps Tadooer edits; a later export may add days. A
+changed source record, or a source day that meets a value recorded in Tadooer,
+aborts the import. A read-only run on `2026-09-24_231032.json` maps 12 counters
+(10 click, 1 stopwatch, 1 repeated countdown), 140 day values counting 209, and
+80 metric days with 283 focus sessions (983,691,885 ms) that stay out of the
+worklog. The only counter finding is one `counter_notice`.
+
 ### September 24 backup (19.1.0)
 
 A read-only run of the updated importer found no unknown sections or fields. The
 export still cannot be applied:
 
-- `metric`, recorded `simpleCounter` values and `pluginUserData` block as
-  unsupported sections; six configuration sections are reported. `timeTracking`
-  applies since #41.
+- `pluginUserData` blocks as an unsupported section; five configuration
+  sections are reported. `timeTracking` applies since #41; `metric` and
+  `simpleCounter` apply since #64 (rerun on `2026-09-24_231032.json`).
 - 73 unsupported-data findings, one per source: 49 live tasks with blocked fields
   (34 with linked issues and 19 with reminders; 4 have both), 22 tasks with
   day-only plans, the TODAY tag, and one finding for the archives.
