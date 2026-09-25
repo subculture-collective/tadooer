@@ -14,7 +14,8 @@ spec.loader.exec_module(observer)
 
 
 class ObserveSoakTest(unittest.TestCase):
-    def scenario(self, *, wrong_revision=False, old_backup=False, corrupt_backup=False):
+    def scenario(self, *, wrong_revision=False, old_backup=False, corrupt_backup=False,
+                 candidate_migrations=None, ready_migrations=19, migrations_check="current"):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             now = datetime.datetime.now(datetime.timezone.utc)
@@ -36,7 +37,10 @@ class ObserveSoakTest(unittest.TestCase):
             report.write_text("status: success\ncreated: " + now.isoformat() + "\n")
             ledger = root / "ledger.json"
             digest = "sha256:" + "a" * 64
-            ledger.write_text(json.dumps({"candidate": {"version": "0.14.1-calendar", "revision": "a6983dc", "imageDigest": digest}, "startedAt": started.isoformat(), "observations": []}))
+            candidate = {"version": "0.14.1-calendar", "revision": "a6983dc", "imageDigest": digest}
+            if candidate_migrations is not None:
+                candidate["migrationCount"] = candidate_migrations
+            ledger.write_text(json.dumps({"candidate": candidate, "startedAt": started.isoformat(), "observations": []}))
 
             def path(value):
                 if str(value) == "/srv/apps/productivity":
@@ -50,10 +54,12 @@ class ObserveSoakTest(unittest.TestCase):
                     return json.dumps([{"Config": {"Image": "test@" + digest}, "State": {"Health": {"Status": "healthy"}}, "RestartCount": 0}])
                 if args[-1].endswith("/build"):
                     return json.dumps({"revision": "bad" if wrong_revision else "a6983dc", "version": "0.14.1-calendar"})
-                return json.dumps({"status": "ok", "migrationCount": 19})
+                return json.dumps({"status": "ok", "migrationCount": ready_migrations, "checks": {"migrations": migrations_check}})
 
             with patch.object(observer, "Path", side_effect=path), patch.object(observer, "run", side_effect=run), patch.object(observer.subprocess, "run") as record:
-                if wrong_revision or corrupt_backup:
+                health_fails = wrong_revision or migrations_check != "current" or (
+                    candidate_migrations is not None and candidate_migrations != ready_migrations)
+                if health_fails or corrupt_backup:
                     with self.assertRaises(SystemExit):
                         observer.observe(ledger)
                 else:
@@ -62,6 +68,13 @@ class ObserveSoakTest(unittest.TestCase):
 
     def test_valid_current_window_checks(self):
         self.assertEqual(self.scenario(), [("daily_health", "pass"), ("daily_backup", "pass")])
+
+    def test_candidate_pins_its_migration_count(self):
+        self.assertEqual(self.scenario(candidate_migrations=36, ready_migrations=36), [("daily_health", "pass"), ("daily_backup", "pass")])
+        self.assertIn(("daily_health", "fail"), self.scenario(candidate_migrations=36, ready_migrations=31))
+
+    def test_pending_migrations_record_failure(self):
+        self.assertIn(("daily_health", "fail"), self.scenario(migrations_check="pending"))
 
     def test_revision_drift_records_failure(self):
         self.assertIn(("daily_health", "fail"), self.scenario(wrong_revision=True))

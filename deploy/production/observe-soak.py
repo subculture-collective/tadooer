@@ -52,12 +52,16 @@ def observe(ledger_path):
                 raise RuntimeError("Public candidate changed")
             if not container["Config"]["Image"].endswith("@" + expected["imageDigest"]):
                 raise RuntimeError("Runtime digest changed")
-            if ready["status"] != "ok" or ready["migrationCount"] != 19:
+            # The ledger candidate pins its migration count; readiness also reports
+            # whether applied migrations match the binary's expectation.
+            expected_migrations = expected.get("migrationCount", 19)
+            if (ready["status"] != "ok" or ready["migrationCount"] != expected_migrations
+                    or ready.get("checks", {}).get("migrations", "current") != "current"):
                 raise RuntimeError("Readiness or migrations failed")
             if container["State"]["Health"]["Status"] != "healthy" or container["RestartCount"] != 0:
                 raise RuntimeError("Container unhealthy or unexpected restart")
             evidence["health"] = {"build": build, "ready": ready, "container": "healthy", "unexpectedRestarts": 0}
-            record("daily_health", "pass", "Public build/readiness, pinned image, migration 19 and container health verified; evidence " + evidence_dir.name)
+            record("daily_health", "pass", "Public build/readiness, pinned image, migration " + str(expected_migrations) + " and container health verified; evidence " + evidence_dir.name)
         except Exception as error:
             evidence["healthError"] = str(error)
             record("daily_health", "fail", "Release health check failed; inspect " + evidence_dir.name)
