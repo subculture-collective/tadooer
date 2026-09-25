@@ -236,8 +236,13 @@ export const handleTasks: RouteHandler = async (
     }
 
     if (method === "DELETE" && action === undefined) {
+      // Deleting a parent also deletes its active children (ADR 0018).
+      const scope = database.taskHierarchy.deletionScope(
+        session.owner.id,
+        taskId,
+      );
       const active = database.getActiveSession(session.owner.id);
-      if (active?.endedAt === null && active.taskId === taskId) {
+      if (active?.endedAt === null && scope.includes(active.taskId)) {
         sendError(
           response,
           409,
@@ -247,7 +252,10 @@ export const handleTasks: RouteHandler = async (
         return true;
       }
       if (
-        database.getTaskCalendarBlock(session.owner.id, taskId) !== undefined
+        scope.some(
+          (id) =>
+            database.getTaskCalendarBlock(session.owner.id, id) !== undefined,
+        )
       ) {
         sendError(
           response,

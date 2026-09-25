@@ -145,6 +145,8 @@ export const taskResponse = (task: TaskRecord): Task => ({
   estimateMinutes: task.estimateMinutes,
   projectId: task.projectId ?? null,
   tagIds: [...(task.tagIds ?? [])],
+  parentId: task.parentId ?? null,
+  childPosition: task.childPosition ?? null,
 });
 
 export const calendarEventResponse = (

@@ -1,6 +1,7 @@
 import { readDayPlan } from "../day-plan.ts";
 import { readNotificationStatus } from "../notification-status.ts";
-import { StructuredCaptureError } from "@suite/domain";
+import { StructuredCaptureError, validateTaskParent } from "@suite/domain";
+import { hierarchyViolationError } from "./task-hierarchy.ts";
 import { createCapturedTask, resolveTaskCapture } from "../task-capture.ts";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -138,8 +139,10 @@ export const handleAutomation: RouteHandler = async (
   const { stores: database, auth, baikal: connector, sessionClock } = ctx;
   const method = request.method ?? "GET";
   const deletionBlocked = (ownerId: string, taskId: string): boolean => {
+    // Deleting a parent also deletes its active children (ADR 0018).
+    const scope = database.taskHierarchy.deletionScope(ownerId, taskId);
     const active = database.getActiveSession(ownerId);
-    if (active?.endedAt === null && active.taskId === taskId) {
+    if (active?.endedAt === null && scope.includes(active.taskId)) {
       sendError(
         response,
         409,
@@ -148,7 +151,11 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
-    if (database.getTaskCalendarBlock(ownerId, taskId) !== undefined) {
+    if (
+      scope.some(
+        (id) => database.getTaskCalendarBlock(ownerId, id) !== undefined,
+      )
+    ) {
       sendError(
         response,
         409,
@@ -797,6 +804,121 @@ export const handleAutomation: RouteHandler = async (
           : input.action === "rename"
             ? `Rename ${kind} "${current?.title ?? ""}" to "${input.title}"`
             : `${input.action === "archive" ? "Archive" : "Restore"} ${kind} "${current?.title ?? ""}"; task assignments are retained`;
+    } else if (command.operation === "tasks.hierarchy") {
+      // ADR 0018: the preview freezes the task, the target parent and, for a
+      // reorder, every child revision; confirmation fails if any changed.
+      const input = command.input;
+      const reject = (status: number, code: string, message: string) => {
+        sendError(response, status, code, message);
+        return true;
+      };
+      if (input.action === "move") {
+        const task = database.getTask(token.ownerId, input.taskId);
+        if (task?.revision !== input.expectedRevision)
+          return reject(
+            412,
+            "REVISION_CONFLICT",
+            "Task changed or is unavailable",
+          );
+        const parent =
+          input.parentId === null
+            ? undefined
+            : database.getTask(token.ownerId, input.parentId, true);
+        if (input.parentId !== null) {
+          const violation = validateTaskParent({
+            taskId: task.id,
+            parent,
+            taskHasActiveChildren:
+              database.taskHierarchy.childIds(token.ownerId, task.id).length >
+              0,
+          });
+          if (violation !== null) {
+            const error = hierarchyViolationError(violation);
+            return reject(error.status, error.code, error.message);
+          }
+        }
+        affected.push({ entityKind: "task", entityId: task.id });
+        baseRevisions.push({
+          entityKind: "task",
+          entityId: task.id,
+          revision: task.revision,
+        });
+        if (parent !== undefined) {
+          affected.push({ entityKind: "task", entityId: parent.id });
+          baseRevisions.push({
+            entityKind: "task",
+            entityId: parent.id,
+            revision: parent.revision,
+          });
+        }
+        taskSummary =
+          parent === undefined
+            ? `Make task "${task.title}" a top-level task`
+            : `Move task "${task.title}" under "${parent.title}" ${
+                input.index == null
+                  ? "as its last child"
+                  : `at child position ${String(input.index + 1)}`
+              }`;
+      } else {
+        const parent = database.getTask(token.ownerId, input.parentId);
+        if (parent?.revision !== input.expectedParentRevision)
+          return reject(
+            412,
+            "REVISION_CONFLICT",
+            "Parent task changed or is unavailable",
+          );
+        affected.push({ entityKind: "task", entityId: parent.id });
+        baseRevisions.push({
+          entityKind: "task",
+          entityId: parent.id,
+          revision: parent.revision,
+        });
+        if (input.action === "create_child") {
+          const violation = validateTaskParent({
+            taskId: "",
+            parent,
+            taskHasActiveChildren: false,
+          });
+          if (violation !== null) {
+            const error = hierarchyViolationError(violation);
+            return reject(error.status, error.code, error.message);
+          }
+          taskSummary = `Add child task "${input.task.title}" under "${parent.title}"`;
+        } else {
+          const children = database.taskHierarchy.listChildren(
+            token.ownerId,
+            parent.id,
+          );
+          if (children.length > 200)
+            return reject(
+              400,
+              "INVALID_CHILD_ORDER",
+              "Reorder at most 200 child tasks in one assistant action",
+            );
+          if (
+            input.items.length !== children.length ||
+            input.items.some(
+              (item) =>
+                children.find(({ id }) => id === item.id)?.revision !==
+                item.revision,
+            )
+          )
+            return reject(
+              412,
+              "TASK_CHILDREN_CHANGED",
+              "Child tasks changed or are unavailable",
+            );
+          for (const child of children) {
+            affected.push({ entityKind: "task", entityId: child.id });
+            baseRevisions.push({
+              entityKind: "task",
+              entityId: child.id,
+              revision: child.revision,
+            });
+          }
+          taskSummary = `Reorder all ${String(children.length)} child tasks of "${parent.title}"`;
+        }
+      }
     } else if (
       command.operation === "tasks.assign_project" ||
       command.operation === "tasks.set_tags"
@@ -1551,6 +1673,89 @@ export const handleAutomation: RouteHandler = async (
         return "normalizedName" in record
           ? { tag: tagResponse(record) }
           : { project: projectResponse(record) };
+      };
+    } else if (command.operation === "tasks.hierarchy") {
+      const input = command.input;
+      applyLocalMutation = () => {
+        const now = new Date().toISOString();
+        const children = (parentId: string | null) =>
+          parentId === null
+            ? []
+            : database.taskHierarchy
+                .listChildren(token.ownerId, parentId)
+                .map(taskResponse);
+        const parentOf = (parentId: string | null) => {
+          const parent =
+            parentId === null
+              ? undefined
+              : database.getTask(token.ownerId, parentId);
+          return parent === undefined ? null : taskResponse(parent);
+        };
+        if (input.action === "reorder") {
+          const reordered = database.taskHierarchy.reorder({
+            ownerId: token.ownerId,
+            parentId: input.parentId,
+            items: input.items,
+            now,
+          });
+          if (reordered.kind !== "reordered")
+            throw new Error("Child tasks changed during atomic confirmation");
+          return {
+            hierarchy: {
+              task: null,
+              parent: parentOf(input.parentId),
+              children: children(input.parentId),
+            },
+            replayed: false,
+          };
+        }
+        if (input.action === "move") {
+          const moved = database.taskHierarchy.move({
+            ownerId: token.ownerId,
+            taskId: input.taskId,
+            parentId: input.parentId,
+            index: input.index ?? null,
+            expectedRevision: input.expectedRevision,
+            now,
+          });
+          if (moved.kind !== "moved")
+            throw new Error(
+              "Task hierarchy changed during atomic confirmation",
+            );
+          return {
+            hierarchy: {
+              task: taskResponse(moved.task),
+              parent: parentOf(input.parentId),
+              children: children(input.parentId),
+            },
+            replayed: false,
+          };
+        }
+        const created = database.taskHierarchy.createChild({
+          ownerId: token.ownerId,
+          parentId: input.parentId,
+          index: input.index ?? null,
+          now,
+          create: () =>
+            createCapturedTask(
+              database,
+              token.ownerId,
+              internalKey,
+              createHash("sha256").update(JSON.stringify(input)).digest("hex"),
+              input.task,
+              now,
+            ),
+        });
+        if (created.kind !== "created" && created.kind !== "replayed")
+          throw new Error("Child task could not be created atomically");
+        return {
+          hierarchy: {
+            task: taskResponse(created.task),
+            parent: parentOf(input.parentId),
+            children: children(input.parentId),
+          },
+          replayed: created.kind === "replayed",
+        };
       };
     } else if (
       command.operation === "tasks.assign_project" ||
