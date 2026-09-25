@@ -1500,6 +1500,16 @@ export class SuiteDatabase {
         this.deleteTask(ownerId, taskId, revision, now),
       blockedIds: (ownerId, taskId) =>
         this.taskArchive.blockedIds(ownerId, taskId),
+      announceTask: (ownerId, taskId, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "task",
+          taskId,
+          "upsert",
+          revision,
+          now,
+        );
+      },
     });
     this.notes = new SqliteNoteStore(database);
     this.taskArchive = new SqliteTaskArchiveStore(database, {

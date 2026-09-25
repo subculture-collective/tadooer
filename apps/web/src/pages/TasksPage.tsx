@@ -1,7 +1,7 @@
 import { PageHeader } from "../components/ui/page-header.tsx";
 import { DeadlineFields } from "../components/tasks/DeadlineFields.tsx";
 import type { ReactElement, SyntheticEvent } from "react";
-import { groupTaskHierarchy } from "@suite/domain";
+import { groupTaskHierarchy, zonedCalendarDate } from "@suite/domain";
 import {
   TaskChildrenSection,
   TaskPlacementControls,
@@ -27,6 +27,10 @@ import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
 import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
 import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
+import {
+  RecurringSeriesManager,
+  TaskRecurrencePanel,
+} from "../components/tasks/TaskRecurrence.tsx";
 
 export interface TasksPageProps extends TaskHierarchyActions {
   readonly tasks: readonly Task[];
@@ -134,6 +138,7 @@ export const TasksPage = ({
   onMoveTask,
 }: TasksPageProps) => {
   const visibleIds = new Set(visibleTasks.map(({ id }) => id));
+  const today = zonedCalendarDate(new Date(), timeZone);
   // Children render under a visible parent; a child whose parent is filtered
   // out stays visible at top level with its placement shown.
   const topLevel = visibleTasks.filter(
@@ -335,6 +340,15 @@ export const TasksPage = ({
           online={organization.online}
         />
       )}
+      {organization !== undefined && (
+        <TaskRecurrencePanel
+          task={task}
+          csrfToken={organization.csrfToken}
+          online={organization.online}
+          today={today}
+          tags={tags}
+        />
+      )}
       <div className="task-actions">
         <Button
           type="button"
@@ -412,6 +426,14 @@ export const TasksPage = ({
           tags={tags}
           tasks={tasks}
           {...organization}
+        />
+      )}
+      {organization !== undefined && (
+        <RecurringSeriesManager
+          csrfToken={organization.csrfToken}
+          online={organization.online}
+          projects={projects}
+          today={today}
         />
       )}
       <Card className="task-filter-bar" role="search" aria-label="Filter tasks">

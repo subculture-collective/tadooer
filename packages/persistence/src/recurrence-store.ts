@@ -243,6 +243,16 @@ export interface RecurrenceDependencies {
   ) => ConditionalTaskResult;
   /** Task IDs in the family with a running focus session or calendar block. */
   readonly blockedIds: (ownerId: string, taskId: string) => readonly string[];
+  /**
+   * Re-sends an unchanged task in the sync feed. Linking an existing task to
+   * a series changes its `recurrence` field without a revision bump.
+   */
+  readonly announceTask: (
+    ownerId: string,
+    taskId: string,
+    revision: number,
+    now: string,
+  ) => void;
 }
 
 /** The fields of a generated instance or child task. */
@@ -472,7 +482,7 @@ export class SqliteRecurrenceStore {
         source: "tadooer",
         createdAt: input.now,
       });
-      if (source !== undefined && cursorDate !== null)
+      if (source !== undefined && cursorDate !== null) {
         this.#link(
           input.ownerId,
           input.id,
@@ -481,6 +491,13 @@ export class SqliteRecurrenceStore {
           "linked",
           input.now,
         );
+        this.deps.announceTask(
+          input.ownerId,
+          source.id,
+          source.revision,
+          input.now,
+        );
+      }
       this.db
         .prepare(
           `INSERT INTO idempotency_records

@@ -119,6 +119,17 @@ import {
   type TaskArchiveMutationResponse,
   type TaskHistoryResponse,
 } from "@suite/contracts";
+import {
+  recurrenceOccurrenceRequestSchema,
+  recurringSeriesCreateRequestSchema,
+  recurringSeriesListResponseSchema,
+  recurringSeriesMutationResponseSchema,
+  recurringSeriesPatchRequestSchema,
+  type RecurringSeriesCreateRequest,
+  type RecurringSeriesListResponse,
+  type RecurringSeriesMutationResponse,
+  type RecurringSeriesPatchRequest,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -1229,3 +1240,68 @@ export const unarchiveTask = (
   csrfToken: string,
 ): Promise<TaskArchiveMutationResponse> =>
   taskArchiveRequest("unarchive", taskId, revision, csrfToken);
+
+// ADR 0023 recurring series. Series writes are online-only revisioned HTTP
+// requests; generated instances arrive as ordinary tasks through sync.
+export const getRecurringSeries = (): Promise<RecurringSeriesListResponse> =>
+  request("/api/recurring-series", recurringSeriesListResponseSchema);
+
+export const createRecurringSeries = (
+  input: RecurringSeriesCreateRequest,
+  csrfToken: string,
+  idempotencyKey: string = crypto.randomUUID(),
+): Promise<RecurringSeriesMutationResponse> =>
+  request("/api/recurring-series", recurringSeriesMutationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(recurringSeriesCreateRequestSchema.parse(input)),
+  });
+
+export const patchRecurringSeries = (
+  seriesId: string,
+  revision: number,
+  patch: RecurringSeriesPatchRequest,
+  csrfToken: string,
+): Promise<RecurringSeriesMutationResponse> =>
+  request(
+    `/api/recurring-series/${encodeURIComponent(seriesId)}`,
+    recurringSeriesMutationResponseSchema,
+    {
+      method: "PATCH",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify(recurringSeriesPatchRequestSchema.parse(patch)),
+    },
+  );
+
+export const setRecurringSeriesState = (
+  seriesId: string,
+  revision: number,
+  action: "pause" | "resume" | "end",
+  csrfToken: string,
+): Promise<RecurringSeriesMutationResponse> =>
+  request(
+    `/api/recurring-series/${encodeURIComponent(seriesId)}/state`,
+    recurringSeriesMutationResponseSchema,
+    {
+      method: "POST",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify({ action }),
+    },
+  );
+
+export const changeRecurrenceOccurrence = (
+  seriesId: string,
+  revision: number,
+  date: string,
+  action: "skip" | "unskip" | "delete_instance",
+  csrfToken: string,
+): Promise<RecurringSeriesMutationResponse> =>
+  request(
+    `/api/recurring-series/${encodeURIComponent(seriesId)}/occurrences/${encodeURIComponent(date)}`,
+    recurringSeriesMutationResponseSchema,
+    {
+      method: "POST",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify(recurrenceOccurrenceRequestSchema.parse({ action })),
+    },
+  );

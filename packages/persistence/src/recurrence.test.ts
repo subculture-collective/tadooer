@@ -501,6 +501,16 @@ describe("recurring series persistence", () => {
         "00000000-0000-4000-8000-000000000001",
       );
       expect(generatedTaskIds).toEqual([]);
+      // The link reaches clients: the unchanged task is sent again.
+      const { epoch } = db.getSyncState("owner");
+      expect(
+        db
+          .listSyncChanges("owner", epoch, 0)
+          .filter(
+            ({ entityId }) =>
+              entityId === "00000000-0000-4000-8000-000000000001",
+          ),
+      ).toHaveLength(2);
       expect(
         db.getTask("owner", "00000000-0000-4000-8000-000000000001"),
       ).toMatchObject({
