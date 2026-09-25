@@ -113,6 +113,8 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "counter_notice",
     "counter_reconciliation",
     "metric_field_retained",
+    // ADR 0026: plugin records are kept as inert data.
+    "plugin_data_preserved",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -770,5 +772,6 @@ export const prepareSuperProductivityImport = (
     workContexts: sourceInventory.workContexts,
     counters: sourceInventory.counters,
     evaluations: sourceInventory.evaluations,
+    plugins: sourceInventory.plugins,
   };
 };

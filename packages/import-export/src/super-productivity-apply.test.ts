@@ -278,14 +278,19 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
     "counter_reconciliation",
   ]);
 
-  for (const extra of [
-    { reminders: [{ id: "r" }] },
-    { pluginUserData: [{ id: "plugin", data: "{}" }] },
-  ]) {
+  for (const extra of [{ reminders: [{ id: "r" }] }]) {
     const report = prepare(extra);
     expect(report.canApply).toBe(false);
     expect(codes(report)).toContain("unsupported_section");
   }
+  // Plugin data is kept as inert records since #66 (ADR 0026); only a
+  // malformed shape blocks.
+  expect(
+    codes(prepare({ pluginUserData: [{ id: "plugin", data: "{}" }] })),
+  ).toEqual(["plugin_data_preserved"]);
+  expect(codes(prepare({ pluginUserData: { plugin: "{}" } }))).toEqual([
+    "plugin_data_invalid",
+  ]);
   // Work start/end records apply since #41; malformed ones block.
   expect(
     prepare({

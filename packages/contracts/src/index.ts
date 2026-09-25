@@ -6,6 +6,7 @@ export * from "./task-archive.ts";
 export * from "./recurrence.ts";
 export * from "./time-history.ts";
 export * from "./counters.ts";
+export * from "./plugin-data.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -62,6 +63,7 @@ import {
   evaluationListResponseSchema,
   evaluationMutationResponseSchema,
 } from "./counters.ts";
+import { pluginDataListResponseSchema } from "./plugin-data.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -1601,6 +1603,8 @@ export const automationTokenScopeSchema = z.enum([
   "task_links:write",
   "metrics:read",
   "metrics:write",
+  // Imported plugin data (ADR 0026): listing only, never the data itself.
+  "plugin_data:read",
 ]);
 
 export const automationTokenSchema = z
@@ -2607,6 +2611,17 @@ export const automationCatalog = [
     outputSchema: taskLinksResponseSchema,
   },
   {
+    id: "plugin_data.list",
+    kind: "resource",
+    scopes: ["plugin_data:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/plugin-data",
+    mcpName: "suite.plugin_data.list",
+    mcpUri: "suite://v1/plugin-data",
+    inputSchema: z.object({}).strict(),
+    outputSchema: pluginDataListResponseSchema,
+  },
+  {
     id: "active-session.get",
     kind: "resource",
     scopes: ["focus:read"],
@@ -3099,6 +3114,14 @@ export const taskImportApplyResponseSchema = z
         dayValuesExisting: z.number().int().nonnegative(),
         evaluationsCreated: z.number().int().nonnegative(),
         evaluationsExisting: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    /** ADR 0026: opaque plugin data entries and plugin metadata records. */
+    pluginData: z
+      .object({
+        created: z.number().int().nonnegative(),
+        existing: z.number().int().nonnegative(),
       })
       .strict()
       .optional(),

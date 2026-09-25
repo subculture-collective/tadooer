@@ -135,6 +135,10 @@ import {
   type TimeEntryMutationResponse,
   type TimeEntryPatchRequest,
   type TimeReport,
+  pluginDataContentResponseSchema,
+  pluginDataListResponseSchema,
+  type PluginDataContentResponse,
+  type PluginDataListResponse,
 } from "@suite/contracts";
 import {
   counterHistoryResponseSchema,
@@ -1481,3 +1485,35 @@ export const saveEvaluation = (
       body: JSON.stringify(write),
     },
   );
+// Imported plugin data (ADR 0026) is online-only. Listings carry sizes and
+// flags; only an explicit download reads an entry's opaque data.
+export const getPluginData = (): Promise<PluginDataListResponse> =>
+  request("/api/plugin-data", pluginDataListResponseSchema);
+
+export const getPluginDataContent = (
+  id: string,
+): Promise<PluginDataContentResponse> =>
+  request(
+    `/api/plugin-data/entries/${encodeURIComponent(id)}`,
+    pluginDataContentResponseSchema,
+  );
+
+export const deletePluginDataEntry = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/plugin-data/entries/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const deletePluginMetadata = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/plugin-data/plugins/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });

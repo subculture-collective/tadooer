@@ -255,6 +255,21 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "plugin-data",
+      "action": "Imported plugin data: list plugin IDs, keys, sizes and enabled flags; download an entry's data; delete an entry or enabled flag",
+      "webApi": [
+        "getPluginData",
+        "getPluginDataContent",
+        "deletePluginDataEntry",
+        "deletePluginMetadata"
+      ],
+      "catalog": ["plugin_data.list"],
+      "status": "partial",
+      "issue": 66,
+      "authority": "Dedicated plugin_data:read scope lists identity, sizes and flags only; no assistant operation returns plugin data. Download and permanent deletion stay owner-only in the browser (session, CSRF and If-Match revisions). Nothing decodes or runs plugin data. Online-only (ADR 0026).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "checklists",
       "action": "Checklist child create/edit/reorder/delete",
       "webApi": [

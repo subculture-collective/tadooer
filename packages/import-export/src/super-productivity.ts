@@ -38,6 +38,10 @@ import {
   type SourceCounter,
   type SourceEvaluation,
 } from "./super-productivity-counters.ts";
+import {
+  mapPluginSections,
+  type SuperProductivityPlugins,
+} from "./super-productivity-plugins.ts";
 
 const systemTagIds = new Set<string>(superProductivitySystemTagIds);
 
@@ -153,6 +157,8 @@ export const inventorySuperProductivity = (
   readonly workContexts: readonly SourceWorkContextDay[];
   readonly counters: readonly SourceCounter[];
   readonly evaluations: readonly SourceEvaluation[];
+  /** Opaque plugin data and inert plugin metadata (ADR 0026). */
+  readonly plugins: SuperProductivityPlugins;
 } => {
   const timeZone = options.timeZone ?? "UTC";
   if (Buffer.byteLength(raw, "utf8") > limits.bytes)
@@ -241,6 +247,8 @@ export const inventorySuperProductivity = (
         `${name} is configuration and is not applied; keep the original export`,
       );
   }
+  // ADR 0026: plugin data is kept opaque; malformed entries block.
+  const plugins = mapPluginSections(data, issue);
   const unknownFields = new Map<string, number>();
   const projects = entities(data.project, "project");
   const tags = entities(data.tag, "tag");
@@ -843,5 +851,6 @@ export const inventorySuperProductivity = (
     workContexts,
     counters,
     evaluations,
+    plugins,
   };
 };
