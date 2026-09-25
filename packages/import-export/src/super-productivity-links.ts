@@ -144,21 +144,30 @@ const giteaIssueUrl = (provider: Source, issueId: string): string | null => {
  * Maps a task's issue fields to one issue link. Returns null when the task has
  * no linked issue. Diagnostics never include issue IDs, URLs or provider data.
  */
+const identityFields: ReadonlySet<string> = new Set([
+  "issueProviderId",
+  "issueType",
+]);
+
 export const mapLinkedIssue = (
   task: Source,
   providers: Source,
   problem: Problem,
   notice: (detail: string) => void,
+  orphaned: (detail: string) => void = problem,
 ): ImportedIssueLink | null => {
   const hasIssue = populated(task.issueId);
   if (!hasIssue) {
     const stray = issueFields.filter(
       (field) => field !== "issueId" && populated(task[field]),
     );
-    if (stray.length > 0)
-      problem(
-        `${stray.join(", ")} ${stray.length === 1 ? "has" : "have"} no issueId; the linked issue cannot be identified`,
-      );
+    const detail = `${stray.join(", ")} ${stray.length === 1 ? "has" : "have"} no issueId; the linked issue cannot be identified`;
+    // Sync bookkeeping left behind after an unlink names no issue or provider,
+    // so there is no link to lose; it stays in provenance. A provider or issue
+    // type without an issue ID is an identity that cannot be resolved.
+    if (stray.some((field) => identityFields.has(field))) problem(detail);
+    else if (stray.length > 0)
+      orphaned(`${detail}; stale sync metadata is kept in import provenance`);
     return null;
   }
   const issueId = task.issueId;

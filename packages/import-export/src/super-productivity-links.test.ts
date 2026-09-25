@@ -257,7 +257,7 @@ it("blocks unreviewed, malformed or credential-bearing attachments with content-
 
 it("blocks unidentifiable or inconsistent issue fields without echoing them", () => {
   for (const fields of [
-    { issueWasUpdated: true },
+    { issueProviderId: "gitea" },
     { issueId: 42 },
     { issueId: "1", issueType: "not a key!" },
     { issueId: "1", issueProviderId: "gitea", issueType: "ICAL" },

@@ -90,7 +90,13 @@ address or credential was copied.
 - A link to a provider missing from the export, or with no provider, is kept
   with `providerRecorded: false` and reported as `issue_provider_missing`,
   which does not block apply.
-- These block apply: issue metadata without `issueId`; a non-text `issueId`;
+- Sync bookkeeping without `issueId`, `issueProviderId` or `issueType`
+  (`issueLastSyncedValues`, `issueWasUpdated`, `issueLastUpdated`,
+  `issueAttachmentNr`, `issuePoints`, `issueTimeTracked`) is left behind by an
+  unlink. It names no issue, so it is reported as `issue_metadata_orphaned`,
+  kept in import provenance and does not block (September 24, #47).
+- These block apply: a provider ID or issue type without `issueId`; a
+  non-text `issueId`;
   an invalid provider key or provider ID; `issueType` that disagrees with the
   provider's key; an invalid `issueLastUpdated`; last-synced values over
   64 KiB; unreviewed attachment fields or types; attachments with no path;
