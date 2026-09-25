@@ -121,12 +121,11 @@ without a timed deadline.
 ## Deferred
 
 - **Persisted Today and planner-day order** (`TODAY_TAG.taskIds`,
-  `planner.days`). This needs an ordering record, reorder API, drag UI and a
-  sync decision. Follow-up: #98. Today orders
-  date-only tasks by ID and overdue work by when it became due.
+  `planner.days`). Resolved by ADR 0027 (#98): a saved day order sorts
+  date-only tasks; overdue work still sorts by when it became due.
 - **Backlog planning, plan-for-tomorrow and finish-day rituals.** Project
   backlog data stays blocked under #28; ritual flows stay in the planning
   parity row.
-- **Start-of-next-day offset.** Super Productivity can move the day boundary;
-  Tadooer uses local midnight.
+- **Start-of-next-day offset.** Resolved by ADR 0027: an owner day start
+  moves Today's date boundary.
 - **Priorities** import as ordinary tags; board configuration stays #63.
