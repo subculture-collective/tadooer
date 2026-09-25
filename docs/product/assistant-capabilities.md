@@ -46,6 +46,7 @@ explicit authority boundary rather than silently counting as covered.
 | Project and tag inventory | covered | `projects.list`, `tags.list` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Project/tag lifecycle and task assignment | covered | `projects.mutate`, `tags.mutate`, `tasks.assign_project`, `tasks.set_tags` | [#55](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/55) |
 | Checklist creation, editing, ordering and deletion | covered | `subtasks.list`, `subtasks.mutate` | [#56](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/56) |
+| Child task creation, moves between parents or to top level, and child reorder | covered | `tasks.hierarchy` | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
 | Template and set libraries | covered | `templates.list`, `template-sets.list` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Template authoring, archive, from-task and set creation | gap | — | [#57](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/57) |
 | Instantiate a template or set | covered | `templates.instantiate`, `template_sets.instantiate` | [#33](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/33) |
@@ -58,7 +59,7 @@ explicit authority boundary rather than silently counting as covered.
 | Super Productivity preview and reviewed apply | gap | — | [#60](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/60) |
 | Issue/list/revoke scoped assistant credentials | owner-only | — | [#34](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/34) |
 | Execute approved catalog preview | internal | `automation.confirm` | [#33](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/33) |
-| Full hierarchy, archived history, recurrence and manual worklogs | future | — | [#32](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/32) |
+| Archived history, recurrence and manual worklogs | future | — | [#32](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/32) |
 | Calendar mapping/conflict/background bridge controls | future | — | [#48](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/48) |
 
 | Authenticated calendar ICS export | gap | — | [#60](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/60) |

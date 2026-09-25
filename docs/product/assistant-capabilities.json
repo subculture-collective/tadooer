@@ -233,6 +233,16 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "task-hierarchy",
+      "action": "Create child tasks, move tasks between parents or to top level, reorder children",
+      "webApi": [],
+      "catalog": ["tasks.hierarchy"],
+      "status": "covered",
+      "issue": 27,
+      "authority": "tasks:write; the preview freezes the task, target parent and every reordered child revision, and rejects depth, cycle and deleted-parent targets. The browser writes through the sync outbox (task.move), not api.ts. Hierarchy reads come from tasks.list parentId/childPosition.",
+      "source": "packages/contracts/src/index.ts"
+    },
+    {
       "id": "templates-read",
       "action": "Template and set libraries",
       "webApi": ["getTemplateLibrary", "getTemplateSets"],
@@ -375,12 +385,12 @@
     },
     {
       "id": "future-parity",
-      "action": "Full hierarchy, archived history, recurrence and manual worklogs",
+      "action": "Archived history, recurrence and manual worklogs",
       "webApi": [],
       "catalog": [],
       "status": "future",
       "issue": 32,
-      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #27, #38, #41, #42.",
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #38, #41, #42. Hierarchy (#27) is the task-hierarchy row.",
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {
