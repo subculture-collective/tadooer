@@ -16,6 +16,13 @@ import { Checkbox } from "../components/ui/checkbox.tsx";
 import { EmptyState } from "../components/ui/empty-state.tsx";
 import { PageHeader } from "../components/ui/page-header.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
+import { addCalendarDays, planningDate } from "@suite/domain";
+import {
+  dayMembersKey,
+  useDayOrders,
+  type DayOrderApi,
+} from "../day-order.tsx";
+import { PlanTomorrowPanel } from "../plan-tomorrow.tsx";
 
 export interface TodayPageProps {
   readonly dayPlan: DayPlanResponse | undefined;
@@ -43,6 +50,12 @@ export interface TodayPageProps {
   ) => Promise<void>;
   readonly onRemoveTimeBlock: (task: Task) => Promise<void>;
   readonly onViewTasks: () => void;
+  /** ADR 0027: enables saved day order and plan-tomorrow writes. */
+  readonly csrfToken?: string | undefined;
+  readonly online?: boolean | undefined;
+  /** Called after tasks were planned so the task list can refresh. */
+  readonly onTasksPlanned?: (() => void) | undefined;
+  readonly dayOrderApi?: DayOrderApi | undefined;
 }
 const calmStateLabel: Readonly<Record<DayPlanResponse["state"], string>> = {
   working: "Working",
@@ -81,6 +94,10 @@ export const TodayPage = (props: TodayPageProps) => {
     onSubmitTimeBlock,
     onRemoveTimeBlock,
     onViewTasks,
+    csrfToken,
+    online = false,
+    onTasksPlanned,
+    dayOrderApi,
   } = props;
   const [logicalAt, setLogicalAt] = useState(
     dayPlan?.at ?? new Date().toISOString(),
@@ -99,6 +116,22 @@ export const TodayPage = (props: TodayPageProps) => {
     return () => window.clearInterval(timer);
   }, []);
   const preferences = planningPreferences ?? dayPlan?.preferences;
+  // ADR 0027: today is the owner's planning date, which may start after
+  // local midnight.
+  const today = planningDate(
+    logicalAt,
+    preferences?.timeZone ?? "UTC",
+    preferences?.dayStartsAt,
+  );
+  const tomorrow = addCalendarDays(today, 1);
+  const dayOrders = useDayOrders({
+    from: today,
+    to: tomorrow,
+    csrfToken,
+    online: online && preferences !== undefined,
+    api: dayOrderApi,
+    membersKey: dayMembersKey(tasks, [today, tomorrow]),
+  });
   return (
     <div className="today-page mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
@@ -157,7 +190,37 @@ export const TodayPage = (props: TodayPageProps) => {
         onSubmitTimeBlock={onSubmitTimeBlock}
         onRemoveTimeBlock={onRemoveTimeBlock}
         onViewTasks={onViewTasks}
+        plannedTodayOrder={dayOrders.orders.get(today)?.taskIds}
+        onMovePlanned={
+          dayOrders.enabled
+            ? (taskId, direction) =>
+                void dayOrders.move(today, taskId, direction)
+            : undefined
+        }
       />
+      {dayOrders.message !== null ? (
+        <p className="message" role="status">
+          {dayOrders.message}
+        </p>
+      ) : null}
+      {preferences === undefined ? null : (
+        <PlanTomorrowPanel
+          date={tomorrow}
+          today={today}
+          tasks={tasks}
+          order={dayOrders.orders.get(tomorrow)}
+          available={dayOrders.enabled}
+          busy={busy || dayOrders.pending}
+          onPlan={async (selected) => {
+            const saved = await dayOrders.plan(tomorrow, selected);
+            if (saved) onTasksPlanned?.();
+            return saved;
+          }}
+          onMove={(taskId, direction) =>
+            void dayOrders.move(tomorrow, taskId, direction)
+          }
+        />
+      )}
       <Card className="week-plan" aria-labelledby="week-plan-title">
         <CardHeader>
           <SectionHeading

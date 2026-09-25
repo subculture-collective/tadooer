@@ -53,6 +53,7 @@ export const GooglePlanning = ({
     };
     const breakStart = value("breakStart");
     const breakEnd = value("breakEnd");
+    const dayStartsAt = value("dayStartsAt");
     void onSavePreferences({
       workingDays: [...days],
       workdayStart: value("workdayStart"),
@@ -60,6 +61,8 @@ export const GooglePlanning = ({
       breakStart: breakStart === "" ? null : breakStart,
       breakEnd: breakEnd === "" ? null : breakEnd,
       timeZone: value("timeZone"),
+      // ADR 0027: an empty field keeps local midnight.
+      dayStartsAt: dayStartsAt === "" ? "00:00" : dayStartsAt,
     });
   };
 
@@ -298,6 +301,22 @@ export const GooglePlanning = ({
                   autoComplete="off"
                 />
               </Field>
+              <Field>
+                <FieldLabel htmlFor="day-starts-at">
+                  New day starts at
+                </FieldLabel>
+                <Input
+                  id="day-starts-at"
+                  name="dayStartsAt"
+                  type="time"
+                  defaultValue={preferences.dayStartsAt ?? "00:00"}
+                  aria-describedby="day-starts-at-hint"
+                />
+              </Field>
+              <p className="hint" id="day-starts-at-hint">
+                Before this time, Today still shows the previous day. Use 00:00
+                for midnight.
+              </p>
               <datalist id="suite-time-zones">
                 <option value="America/Chicago" />
                 <option value="America/New_York" />

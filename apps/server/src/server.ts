@@ -36,6 +36,7 @@ import { handleRecurrence } from "./routes/recurrence.ts";
 import { handleTimeHistory } from "./routes/time-history.ts";
 import { handleCounters } from "./routes/counters.ts";
 import { handlePluginData } from "./routes/plugin-data.ts";
+import { handleDayOrder } from "./routes/day-order.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
@@ -302,6 +303,7 @@ export const startSuiteServer = async (
     handleTimeHistory,
     handleCounters,
     handlePluginData,
+    handleDayOrder,
     handleChoicePools,
     handleTemplates,
     handleStatic,

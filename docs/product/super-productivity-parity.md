@@ -47,7 +47,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | hierarchy              | partial        | Children import as full two-level child tasks in source order; deeper chains block apply. Parent time totals are derived in the worklog (ADR 0024).                                                                                                                                             | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
 | projects               | partial        | Colour, icon, order, hide-from-menu, completion, restore and backlog are stored, edited and imported (ADR 0019); menu folders (#63) and in-project task order remain.                                                                                                                           | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | tags                   | partial        | Colour, icon, order and archive/restore are stored and imported; Today and board system tags are never ordinary tags (#29, #63).                                                                                                                                                                | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
-| planning               | partial        | Today queue, timed blocks and date-only planned days exist (ADR 0020); persisted Today order, daily rituals, schedule hygiene and auto-planning remain.                                                                                                                                         | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
+| planning               | partial        | Today queue, timed blocks and date-only planned days exist (ADR 0020); saved Today and planner-day order, a day start and plan-tomorrow exist (ADR 0027); finish-day rituals, schedule hygiene and auto-planning remain.                                                                        | [#98](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/98) |
 | history                | partial        | Both archive stores apply as read-only history with historical references, review flags and a collapse-or-block duplicate policy (ADR 0022).                                                                                                                                                    | [#38](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/38) |
 | time                   | partial        | Focus intervals, imported daily totals and manual corrections form one worklog by day, week, task and project with CSV export (ADR 0024). Export rounding options, work start/end editing and idle handling remain.                                                                             | [#41](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/41) |
 | recurrence             | partial        | Repeat configurations import as recurring series with their rule, start time, reminder, completion anchor, wait-for-completion, skip-overdue, pause, child templates and deleted dates (ADR 0023). Instances link by occurrence date and are not regenerated. Habits are not used.              | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
@@ -89,8 +89,7 @@ no section is dropped without a report:
   task order inside projects and tags, note lock and background colour).
 - **blocked**: a populated value blocks apply (`unsupported_section` or
   `unsupported_import_data`, one finding per record).
-- **configuration**: `globalConfig`, `boards`, `planner` and `issueProvider`.
-  Reported as
+- **configuration**: `globalConfig`, `boards` and `issueProvider`. Reported as
   `configuration_not_imported`; never applied and does not block.
 - **ignored**: derived or view-only task state (`modified`, `hasPlannedTime`,
   `_hideSubTasksMode`, the leaked `subTasks` copy) and legacy project issue
@@ -100,7 +99,9 @@ Since #28 (ADR 0019), `note` and `menuTree` apply. `menuTree` supplies project
 and tag order; folders are reported with `configuration_not_imported` and not
 imported. The `TODAY`, `EM_URGENT`, `EM_IMPORTANT` and `KANBAN_IN_PROGRESS`
 system tags never become ordinary tags: unused ones are reported and skipped,
-while Today task order or a marker used by tasks blocks apply. Backlog or
+and a marker used by tasks blocks apply. Since #98 (ADR 0027), Today's task
+order and `planner.days` apply as saved day orders; see "Today and planner-day
+order" below. Backlog or
 `noteIds` entries that point at records missing from the export are reported
 and skipped; entries that contradict the task's project block.
 
@@ -251,6 +252,22 @@ aborts the import. A read-only run on `2026-09-24_231032.json` maps 12 counters
 80 metric days with 283 focus sessions (983,691,885 ms) that stay out of the
 worklog. The only counter finding is one `counter_notice`.
 
+### Today and planner-day order (#98)
+
+`TODAY_TAG.taskIds` imports as the saved order of the owner's planning date
+when the preview or apply runs, and `planner.days` as the order of each date
+(ADR 0027). Only entries that name an imported, open, date-only task planned
+for that date apply. Entries for missing tasks, and for timed, completed,
+archived or differently dated tasks, are non-blocking `day_order_notice`
+findings. An order is saved only for a date that has none, so a repeat import
+keeps the owner's edits. A malformed planner or an unreviewed planner key
+blocks. `startOfNextDayTime` is reported, not imported; set the Tadooer day
+start first so Today's order lands on the same date.
+
+The newest local backup (`2026-09-24_230532.json`, counts only) has 27 Today
+entries: 20 completed and 7 open timed tasks, so none applies. Its six planner
+dates are empty and its day starts at 03:00.
+
 ### September 24 backup (19.1.0)
 
 A read-only run of the updated importer found no unknown sections or fields. The
@@ -263,7 +280,8 @@ export still cannot be applied:
   flags, no blocking finding). Four configuration sections are reported.
 - 73 unsupported-data findings, one per source: 49 live tasks with blocked fields
   (34 with linked issues and 19 with reminders; 4 have both), 22 tasks with
-  day-only plans, the TODAY tag, and one finding for the archives.
+  day-only plans, the TODAY tag, and one finding for the archives. Since #98
+  the TODAY tag's order is reported as notices instead.
 - Integrity: 95 tasks exist both live and in `archiveYoung`, and the live index
   repeats 28 IDs (every retained backup from 14:25 to 16:45 CDT). The September 20
   backup had neither. #47 tracks resolving this in Super Productivity before a

@@ -154,6 +154,16 @@ import {
   type EvaluationMutationResponse,
   type EvaluationWriteRequest,
 } from "@suite/contracts";
+import {
+  dayOrderListResponseSchema,
+  dayOrderPlanRequestSchema,
+  dayOrderPlanResponseSchema,
+  dayOrderReorderRequestSchema,
+  dayOrderResponseSchema,
+  type DayOrder,
+  type DayOrderPlanRequest,
+  type Task as DayOrderPlannedTask,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -1517,3 +1527,48 @@ export const deletePluginMetadata = (
     method: "DELETE",
     headers: conditionalHeaders(revision, csrfToken),
   });
+// Saved Today and planner-day order (ADR 0027). Online-only.
+export const getDayOrders = (
+  from: string,
+  to: string,
+): Promise<readonly DayOrder[]> =>
+  request(
+    `/api/day-orders?${new URLSearchParams({ from, to }).toString()}`,
+    dayOrderListResponseSchema,
+  ).then(({ dayOrders }) => dayOrders);
+
+export const reorderDayOrder = (
+  date: string,
+  expectedRevision: number,
+  taskIds: readonly string[],
+  csrfToken: string,
+): Promise<DayOrder> =>
+  request(
+    `/api/day-orders/${encodeURIComponent(date)}`,
+    dayOrderResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(
+        dayOrderReorderRequestSchema.parse({ expectedRevision, taskIds }),
+      ),
+    },
+  ).then(({ dayOrder }) => dayOrder);
+
+export const planTasksForDay = (
+  date: string,
+  plan: DayOrderPlanRequest,
+  csrfToken: string,
+): Promise<{
+  readonly dayOrder: DayOrder;
+  readonly tasks: readonly DayOrderPlannedTask[];
+}> =>
+  request(
+    `/api/day-orders/${encodeURIComponent(date)}/tasks`,
+    dayOrderPlanResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(dayOrderPlanRequestSchema.parse(plan)),
+    },
+  );

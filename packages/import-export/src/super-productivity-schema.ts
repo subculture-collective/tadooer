@@ -42,7 +42,9 @@ export const superProductivitySections = {
   pluginUserData: "applied",
   // Counters and their day values apply since #64 (ADR 0025).
   simpleCounter: "applied",
-  planner: "configuration",
+  // Planner day order applies as saved day orders since #98 (ADR 0027); its
+  // keys are classified in super-productivity-day-order.ts.
+  planner: "applied",
   boards: "configuration",
   globalConfig: "configuration",
   // Provider configuration holds credentials. The importer reads only each
