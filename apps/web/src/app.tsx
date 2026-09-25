@@ -35,6 +35,7 @@ import type {
   Subtask,
   Tag,
   Task,
+  TaskPatchRequest,
   TemplatePoolSlot,
 } from "@suite/contracts";
 import { ApiRequestError } from "@suite/contracts";
@@ -90,6 +91,7 @@ import {
   login,
   logout,
   putTaskTimeBlock,
+  patchTask,
   removeTaskTimeBlock,
   resumeSession,
   setupOwner,
@@ -1388,6 +1390,30 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  // Planned day and reminders are online-only edits (ADR 0020).
+  const submitTaskPlanning = async (
+    task: Task,
+    patch: TaskPatchRequest,
+  ): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const result = await patchTask(
+        task.id,
+        task.revision,
+        patch,
+        state.session.csrfToken,
+      );
+      replaceTask(result.task);
+      await syncAfterLocalMutation();
+    } catch (error: unknown) {
+      handleTaskError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const removeTimeBlock = async (task: Task): Promise<void> => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
@@ -2404,6 +2430,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             onProjectsChange: setProjects,
             onTagsChange: setTags,
           }}
+          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+          onSubmitTaskPlanning={submitTaskPlanning}
         />
       )}
       {route === "habits" && (

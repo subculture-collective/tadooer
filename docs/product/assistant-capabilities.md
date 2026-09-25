@@ -36,7 +36,7 @@ explicit authority boundary rather than silently counting as covered.
 | Notification preferences, health and test delivery | covered | `notifications.preferences`, `notifications.status`, `notifications.update_preferences`, `notifications.send_test`, `notifications.delivery` | [#59](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/59) |
 | Active and deleted task inventory | covered | `tasks.list`, `tasks.deleted` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Plain or structured task capture | covered | `tasks.create` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
-| Title, notes, dates and estimate edits | covered | `tasks.update` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
+| Title, notes, dates, planned day, reminder and estimate edits | covered | `tasks.update` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Complete and reopen tasks | covered | `tasks.set_completed` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Delete and restore tasks | covered | `tasks.delete`, `tasks.restore` | [#33](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/33) |
 | Bounded planner and calendar projection | covered | `schedule.get` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |

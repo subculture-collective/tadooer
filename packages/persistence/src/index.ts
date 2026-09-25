@@ -16,6 +16,13 @@ import { SqliteCredentialStore } from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 import { SqliteNoteStore } from "./note-store.ts";
 export type { NoteMutationResult, NoteRecord } from "./note-store.ts";
+import {
+  dateOnlyPlanningMigration,
+  readTaskPlanning,
+  writeTaskPlanning,
+  type StoredStartReminder,
+} from "./task-planning-columns.ts";
+import { scheduledReminders } from "@suite/domain";
 
 interface Migration {
   readonly id: string;
@@ -134,6 +141,10 @@ export interface TaskRecord {
   readonly deadlineAt?: string | null;
   readonly projectId?: string | null;
   readonly tagIds?: readonly string[];
+  /** Owner-zone calendar date; exclusive with plannedStart (ADR 0020). */
+  readonly plannedDay?: string | null;
+  readonly startReminder?: StoredStartReminder;
+  readonly deadlineReminderMinutes?: number | null;
 }
 
 export interface TaskPatch {
@@ -143,6 +154,9 @@ export interface TaskPatch {
   readonly estimateMinutes?: number | null;
   readonly deadlineDate?: string | null;
   readonly deadlineAt?: string | null;
+  readonly plannedDay?: string | null;
+  readonly startReminder?: StoredStartReminder;
+  readonly deadlineReminderMinutes?: number | null;
 }
 
 export interface HabitRecord {
@@ -569,7 +583,7 @@ export interface NotificationDeliveryRecord {
   readonly ownerId: string;
   readonly taskId: string | null;
   readonly occurrenceStart: string;
-  readonly kind: "lead" | "at_start" | "test";
+  readonly kind: "lead" | "at_start" | "deadline" | "test";
   readonly taskRevision: number | null;
   readonly state:
     | "pending"
@@ -1341,6 +1355,7 @@ const migrations: readonly Migration[] = [
       CREATE INDEX notes_by_owner ON notes(owner_id, position, id);
     `,
   },
+  dateOnlyPlanningMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -2185,50 +2200,60 @@ export class SuiteDatabase {
     readonly preferences: NotificationPreferencesRecord;
     readonly now: string;
   }): void {
-    const scheduled = input.preferences.enabled
-      ? input.tasks.filter(
-          (task) =>
-            task.status === "open" &&
-            task.deletedAt === null &&
-            task.plannedStart !== null,
-        )
-      : [];
+    // Per-task settings and owner preferences resolve in the domain schedule
+    // (ADR 0020). Each row keeps the ADR 0016 identity: owner, task,
+    // occurrence and kind, so a delivered reminder is never recreated.
     const desired = new Set<string>();
-    const kinds: readonly ("lead" | "at_start")[] = [
-      ...(input.preferences.leadReminderEnabled ? (["lead"] as const) : []),
-      ...(input.preferences.atStartReminderEnabled
-        ? (["at_start"] as const)
-        : []),
-    ];
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
-      for (const task of scheduled) {
-        if (task.plannedStart === null) continue;
-        for (const kind of kinds) {
-          const occurrenceStart = task.plannedStart;
-          desired.add(`${task.id}\n${occurrenceStart}\n${kind}`);
-          const dueAt = new Date(
-            Date.parse(occurrenceStart) - (kind === "lead" ? 15 * 60_000 : 0),
-          ).toISOString();
-          this.#database
-            .prepare(
-              `INSERT OR IGNORE INTO notification_deliveries
-                (id,owner_id,task_id,occurrence_start,reminder_kind,task_revision,state,due_at,next_attempt_at,attempt_count,error_code,created_at,updated_at,delivered_at)
-               VALUES (?,?,?,?,?,?,'pending',?,?,0,NULL,?,?,NULL)`,
-            )
-            .run(
-              randomUUID(),
-              input.ownerId,
-              task.id,
-              occurrenceStart,
-              kind,
-              task.revision,
-              dueAt,
-              dueAt,
-              input.now,
-              input.now,
-            );
-        }
+      for (const reminder of input.tasks.flatMap((task) =>
+        scheduledReminders(task, input.preferences),
+      )) {
+        desired.add(
+          `${reminder.taskId}\n${reminder.occurrenceStart}\n${reminder.kind}`,
+        );
+        const task = input.tasks.find(({ id }) => id === reminder.taskId);
+        const inserted = this.#database
+          .prepare(
+            `INSERT OR IGNORE INTO notification_deliveries
+              (id,owner_id,task_id,occurrence_start,reminder_kind,task_revision,state,due_at,next_attempt_at,attempt_count,error_code,created_at,updated_at,delivered_at)
+             VALUES (?,?,?,?,?,?,'pending',?,?,0,NULL,?,?,NULL)`,
+          )
+          .run(
+            randomUUID(),
+            input.ownerId,
+            reminder.taskId,
+            reminder.occurrenceStart,
+            reminder.kind,
+            task?.revision ?? null,
+            reminder.dueAt,
+            reminder.dueAt,
+            input.now,
+            input.now,
+          );
+        if (Number(inserted.changes) === 1) continue;
+        // An offset change moves a row that has not been attempted. A row
+        // cancelled as obsolete was never published, so it may return to
+        // pending. Delivered, suppressed, failed or in-flight rows stay final.
+        this.#database
+          .prepare(
+            `UPDATE notification_deliveries
+             SET state='pending',due_at=?,next_attempt_at=?,attempt_count=0,error_code=NULL,task_revision=?,updated_at=?
+             WHERE owner_id=? AND task_id=? AND occurrence_start=? AND reminder_kind=?
+               AND ((state='pending' AND attempt_count=0 AND due_at<>?)
+                 OR (state='cancelled' AND error_code='OBSOLETE'))`,
+          )
+          .run(
+            reminder.dueAt,
+            reminder.dueAt,
+            task?.revision ?? null,
+            input.now,
+            input.ownerId,
+            reminder.taskId,
+            reminder.occurrenceStart,
+            reminder.kind,
+            reminder.dueAt,
+          );
       }
       const active = this.#database
         .prepare(
@@ -2240,7 +2265,7 @@ export class SuiteDatabase {
         readonly id: string;
         readonly task_id: string;
         readonly occurrence_start: string;
-        readonly reminder_kind: "lead" | "at_start";
+        readonly reminder_kind: "lead" | "at_start" | "deadline";
       }[];
       for (const delivery of active) {
         const key = `${delivery.task_id}\n${delivery.occurrence_start}\n${delivery.reminder_kind}`;
@@ -2743,13 +2768,15 @@ export class SuiteDatabase {
       const task: TaskRecord = {
         ...currentTask,
         plannedStart: input.plannedStart,
+        plannedDay: null,
         estimateMinutes: input.estimateMinutes,
         revision: currentTask.revision + 1,
         updatedAt: input.now,
       };
+      // A calendar block's exact start supersedes a date-only plan.
       this.#database
         .prepare(
-          `UPDATE tasks SET planned_start = ?, estimate_minutes = ?,
+          `UPDATE tasks SET planned_start = ?, planned_day = NULL, estimate_minutes = ?,
              revision = ?, updated_at = ? WHERE owner_id = ? AND id = ?`,
         )
         .run(
@@ -2919,6 +2946,9 @@ export class SuiteDatabase {
       /** Source task IDs, applied after the batch's tasks exist. */
       backlogTaskIds?: readonly string[];
       pinnedToToday?: boolean;
+      plannedDay?: string | null;
+      startReminder?: StoredStartReminder;
+      deadlineReminderMinutes?: number | null;
     }[],
     now: string,
   ): { created: number; existing: number } {
@@ -3034,6 +3064,9 @@ export class SuiteDatabase {
               createdAt,
               updatedAt: now,
               plannedStart: record.plannedStart,
+              plannedDay: record.plannedDay ?? null,
+              startReminder: record.startReminder ?? { kind: "default" },
+              deadlineReminderMinutes: record.deadlineReminderMinutes ?? null,
               deadlineDate: record.deadlineDate,
               deadlineAt: record.deadlineAt,
               estimateMinutes: record.estimateMinutes,
@@ -3112,6 +3145,7 @@ export class SuiteDatabase {
         TaskRecord,
         | "title"
         | "plannedStart"
+        | "plannedDay"
         | "deadlineDate"
         | "deadlineAt"
         | "projectId"
@@ -3180,6 +3214,9 @@ export class SuiteDatabase {
         deadlineAt: task.deadlineAt ?? null,
         projectId: task.projectId ?? null,
         tagIds: task.tagIds ?? [],
+        plannedDay: task.plannedDay ?? null,
+        startReminder: task.startReminder ?? { kind: "default" },
+        deadlineReminderMinutes: task.deadlineReminderMinutes ?? null,
       };
       this.#database
         .prepare(
@@ -3202,6 +3239,11 @@ export class SuiteDatabase {
           created.deadlineAt ?? null,
           created.estimateMinutes,
         );
+      writeTaskPlanning(this.#database, ownerId, created.id, {
+        plannedDay: created.plannedDay ?? null,
+        startReminder: created.startReminder ?? { kind: "default" },
+        deadlineReminderMinutes: created.deadlineReminderMinutes ?? null,
+      });
       const initialFieldVersion = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id, field, version) VALUES (?, ?, 1)",
       );
@@ -3411,6 +3453,24 @@ export class SuiteDatabase {
         ...(patch.deadlineAt === undefined
           ? {}
           : { deadlineAt: patch.deadlineAt }),
+        // A planned day and an exact start are exclusive; setting one
+        // clears the other (ADR 0020).
+        ...(patch.plannedDay === undefined
+          ? patch.plannedStart == null
+            ? {}
+            : { plannedDay: null }
+          : {
+              plannedDay: patch.plannedDay,
+              ...(patch.plannedDay === null || patch.plannedStart !== undefined
+                ? {}
+                : { plannedStart: null }),
+            }),
+        ...(patch.startReminder === undefined
+          ? {}
+          : { startReminder: patch.startReminder }),
+        ...(patch.deadlineReminderMinutes === undefined
+          ? {}
+          : { deadlineReminderMinutes: patch.deadlineReminderMinutes }),
       }),
       now,
     );
@@ -6186,11 +6246,25 @@ export class SuiteDatabase {
         this.#database.exec("RELEASE SAVEPOINT conditional_task;");
         return { kind: "precondition-failed", task: current };
       }
+      const updated = update(current);
       const next = {
-        ...update(current),
+        ...updated,
+        // Deadline reminders need a timed deadline; clearing or changing the
+        // deadline to a date removes the reminder, as in the source app.
+        deadlineReminderMinutes:
+          (updated.deadlineAt ?? null) === null
+            ? null
+            : (updated.deadlineReminderMinutes ?? null),
         revision: current.revision + 1,
         updatedAt: now,
       };
+      // Release exclusive planning columns so the consistency triggers see
+      // only the final state after both updates below.
+      writeTaskPlanning(this.#database, ownerId, taskId, {
+        ...readTaskPlanning(this.#database, ownerId, taskId),
+        plannedDay: null,
+        deadlineReminderMinutes: null,
+      });
       const changed = this.#database
         .prepare(
           `UPDATE tasks SET title = ?, notes = ?, status = ?, revision = ?,
@@ -6215,6 +6289,11 @@ export class SuiteDatabase {
           expectedRevision,
         ).changes;
       if (changed !== 1) throw new Error("Conditional task update was lost");
+      writeTaskPlanning(this.#database, ownerId, taskId, {
+        plannedDay: next.plannedDay ?? null,
+        startReminder: next.startReminder ?? { kind: "default" },
+        deadlineReminderMinutes: next.deadlineReminderMinutes,
+      });
       const fieldVersions = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
       );
@@ -6324,6 +6403,7 @@ export class SuiteDatabase {
       ...task,
       projectId: project?.project_id ?? null,
       tagIds: tags.map((tag) => tag.tag_id),
+      ...readTaskPlanning(this.#database, task.ownerId, task.id),
     };
   }
 

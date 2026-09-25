@@ -47,6 +47,12 @@ export interface TaskImportRecord {
   backlogEnabled?: boolean;
   backlogTaskIds?: string[];
   pinnedToToday?: boolean;
+  plannedDay: string | null;
+  startReminder:
+    | { kind: "default" }
+    | { kind: "none" }
+    | { kind: "before_start"; minutes: number };
+  deadlineReminderMinutes: number | null;
 }
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -103,6 +109,25 @@ const byOrder = <T extends { sourceId: string }>(
     .map(({ record }) => record);
 };
 
+/** Super Productivity TaskReminderOptionId offsets: AtStart, m5, m10, m15, m30, h1. */
+const reminderOffsets: readonly number[] = [0, 5, 10, 15, 30, 60];
+
+const reminderAndDayFields = new Set([
+  "dueDay",
+  "remindAt",
+  "deadlineRemindAt",
+]);
+
+/** Convert an absolute reminder to an offset only when it is exact; never round. */
+const exactOffset = (occurrence: string, remindAt: unknown) => {
+  if (typeof remindAt !== "number" || !Number.isSafeInteger(remindAt))
+    return undefined;
+  const difference = Date.parse(occurrence) - remindAt;
+  if (difference < 0 || difference % 60000 !== 0) return undefined;
+  const minutes = difference / 60000;
+  return reminderOffsets.includes(minutes) ? minutes : undefined;
+};
+
 /** Reject unsupported workflows as a whole; never offer a silent partial import. */
 export const prepareSuperProductivityImport = (raw: string) => {
   const inventory = previewSuperProductivity(raw);
@@ -127,11 +152,12 @@ export const prepareSuperProductivityImport = (raw: string) => {
   const preserve = (
     fields: Readonly<Record<string, FieldDisposition>>,
     source: Source,
+    keep: (key: string) => boolean = () => true,
   ) => {
     // Persist reviewed fields only, never provider configuration credentials.
     const preserved = Object.fromEntries(
       fieldsWith(fields, "applied", "retained")
-        .filter((key) => source[key] !== undefined)
+        .filter((key) => source[key] !== undefined && keep(key))
         .map((key) => [key, source[key]]),
     );
     const sourceJson = JSON.stringify(preserved);
@@ -221,11 +247,43 @@ export const prepareSuperProductivityImport = (raw: string) => {
           );
       }
       const task = kind === "task" ? taskById.get(sourceId) : undefined;
-      if (task?.scheduledDay !== null && task?.scheduledDay !== undefined)
-        problem(
-          sourceId,
-          "Day-only scheduling cannot be converted to an arbitrary time",
-        );
+      // Source reminders are absolute; keep them only as exact offsets from
+      // an exact start or deadline. A timed task without remindAt had no
+      // reminder in the source, so it imports with reminders disabled.
+      let startReminder: TaskImportRecord["startReminder"] = {
+        kind: "default",
+      };
+      let deadlineReminderMinutes: number | null = null;
+      if (task !== undefined) {
+        if (task.scheduledAt !== null) {
+          if (!populated(source.remindAt)) startReminder = { kind: "none" };
+          else {
+            const minutes = exactOffset(task.scheduledAt, source.remindAt);
+            if (minutes === undefined)
+              problem(
+                sourceId,
+                "remindAt is not exactly at start or 5, 10, 15, 30 or 60 minutes before dueWithTime; no rounding is applied",
+              );
+            else startReminder = { kind: "before_start", minutes };
+          }
+        } else if (populated(source.remindAt))
+          problem(
+            sourceId,
+            "remindAt requires an exact dueWithTime; a date-only plan has no reminder time",
+          );
+        if (populated(source.deadlineRemindAt)) {
+          const minutes =
+            task.deadlineAt === null
+              ? undefined
+              : exactOffset(task.deadlineAt, source.deadlineRemindAt);
+          if (minutes === undefined)
+            problem(
+              sourceId,
+              "deadlineRemindAt must be exactly at or 5, 10, 15, 30 or 60 minutes before a timed deadline; no rounding is applied",
+            );
+          else deadlineReminderMinutes = minutes;
+        }
+      }
       if (
         [task?.scheduledAt, task?.deadlineAt].some(
           (value) => value != null && value.length !== 24,
@@ -272,13 +330,27 @@ export const prepareSuperProductivityImport = (raw: string) => {
       const record: TaskImportRecord = {
         kind,
         sourceId,
-        ...preserve(fields, source),
+        // Fields applied since #29 are kept only when they carry a value that
+        // was applied, so provenance hashes of earlier imports stay stable. A
+        // dueDay superseded by dueWithTime is not applied.
+        ...preserve(
+          fields,
+          source,
+          (key) =>
+            kind !== "task" ||
+            !reminderAndDayFields.has(key) ||
+            (populated(source[key]) &&
+              (key !== "dueDay" || task?.scheduledDay != null)),
+        ),
         title,
         notes,
         projectId: task?.projectId ?? null,
         // TODAY in tagIds is legacy view membership, not a tag assignment.
         tagIds: strings(source.tagIds).filter((id) => id !== "TODAY"),
         plannedStart: task?.scheduledAt ?? null,
+        plannedDay: task?.scheduledDay ?? null,
+        startReminder,
+        deadlineReminderMinutes,
         deadlineDate: task?.deadlineDay ?? null,
         deadlineAt: task?.deadlineAt ?? null,
         estimateMinutes: estimate === 0 ? null : estimate / 60000,

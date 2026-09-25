@@ -77,6 +77,7 @@ describe("calm daily planning", () => {
     ).toEqual({
       overdueTaskIds: ["overdue-a", "overdue-b"],
       scheduledTodayTaskIds: ["now", "today"],
+      plannedTodayTaskIds: [],
       unscheduledTaskIds: ["unscheduled-a", "unscheduled-b"],
       futureScheduledCount: 1,
     });

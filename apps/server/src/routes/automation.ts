@@ -1,3 +1,4 @@
+import { planningPatch, planningPatchProblem } from "../task-planning.ts";
 import { readDayPlan } from "../day-plan.ts";
 import { readNotificationStatus } from "../notification-status.ts";
 import { StructuredCaptureError } from "@suite/domain";
@@ -924,6 +925,24 @@ export const handleAutomation: RouteHandler = async (
         deletionBlocked(token.ownerId, task.id)
       )
         return true;
+      const planningProblem =
+        command.operation === "tasks.update"
+          ? planningPatchProblem(
+              database,
+              token.ownerId,
+              task.id,
+              command.input.patch,
+            )
+          : undefined;
+      if (planningProblem !== undefined) {
+        sendError(
+          response,
+          planningProblem.status,
+          planningProblem.code,
+          planningProblem.message,
+        );
+        return true;
+      }
       taskSummary =
         command.operation === "tasks.delete"
           ? `Delete task "${task.title}"; it remains available in recovery`
@@ -1708,6 +1727,7 @@ export const handleAutomation: RouteHandler = async (
                   : deadline.kind === "date"
                     ? { deadlineDate: deadline.value, deadlineAt: null }
                     : { deadlineDate: null, deadlineAt: deadline.value }),
+              ...planningPatch(command.input.patch),
             },
             now,
           );

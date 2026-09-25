@@ -50,6 +50,8 @@ export const superProductivityTaskFields = {
   doneOn: "applied",
   created: "applied",
   dueWithTime: "applied",
+  // Date-only plan; superseded when dueWithTime is also set (ADR 0020).
+  dueDay: "applied",
   deadlineDay: "applied",
   deadlineWithTime: "applied",
   timeEstimate: "applied",
@@ -58,12 +60,14 @@ export const superProductivityTaskFields = {
   repeatCfgId: "parity",
   timeSpent: "parity",
   timeSpentOnDay: "parity",
-  dueDay: "parity",
   modified: "ignored",
   hasPlannedTime: "ignored",
   _hideSubTasksMode: "ignored",
-  remindAt: "blocked",
-  deadlineRemindAt: "blocked",
+  // Applied only when the absolute time is an exact supported offset before
+  // dueWithTime / deadlineWithTime; otherwise apply is blocked (ADR 0020).
+  remindAt: "applied",
+  deadlineRemindAt: "applied",
+  // Legacy link into the reminders section, which stays blocked.
   reminderId: "blocked",
   attachments: "blocked",
   issueId: "blocked",

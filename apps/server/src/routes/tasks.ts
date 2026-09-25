@@ -24,6 +24,7 @@ import {
 } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { taskResponse } from "./shared.ts";
+import { planningPatch, planningPatchProblem } from "../task-planning.ts";
 
 export const handleTasks: RouteHandler = async (
   request,
@@ -182,6 +183,21 @@ export const handleTasks: RouteHandler = async (
         sendError(response, 400, "INVALID_TASK", "Task input is invalid");
         return true;
       }
+      const planningProblem = planningPatchProblem(
+        database,
+        session.owner.id,
+        taskId,
+        parsed.data,
+      );
+      if (planningProblem !== undefined) {
+        sendError(
+          response,
+          planningProblem.status,
+          planningProblem.code,
+          planningProblem.message,
+        );
+        return true;
+      }
       sendConditionalTask(
         response,
         database.patchTask(
@@ -214,6 +230,7 @@ export const handleTasks: RouteHandler = async (
                       deadlineDate: null,
                       deadlineAt: parsed.data.deadline.value,
                     }),
+            ...planningPatch(parsed.data),
           },
           new Date().toISOString(),
         ),

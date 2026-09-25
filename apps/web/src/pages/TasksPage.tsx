@@ -7,7 +7,9 @@ import type {
   Subtask,
   Tag,
   Task,
+  TaskPatchRequest,
 } from "@suite/contracts";
+import { TaskPlanningForm } from "../components/tasks/TaskPlanningForm.tsx";
 import { Field } from "../field.tsx";
 import { TimeBlockForm } from "../time-block-form.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -77,6 +79,12 @@ export interface TasksPageProps {
     readonly onProjectsChange: (projects: readonly Project[]) => void;
     readonly onTagsChange: (tags: readonly Tag[]) => void;
   };
+  /** Owner planning zone for date-only plans (ADR 0020). */
+  readonly timeZone?: string;
+  readonly onSubmitTaskPlanning?: (
+    task: Task,
+    patch: TaskPatchRequest,
+  ) => Promise<void>;
 }
 
 export const TasksPage = ({
@@ -110,6 +118,8 @@ export const TasksPage = ({
   onChangeTaskStatus,
   onRemoveTask,
   onRecoverTask,
+  timeZone = "UTC",
+  onSubmitTaskPlanning,
 }: TasksPageProps) => {
   return (
     <>
@@ -241,6 +251,11 @@ export const TasksPage = ({
                   {task.estimateMinutes} minutes
                 </p>
               )}
+              {task.plannedStart == null && task.plannedDay != null && (
+                <p className="planned-time">
+                  Planned for {task.plannedDay} · no time set
+                </p>
+              )}
               <form
                 className="task-edit"
                 onSubmit={(event) => void onSubmitTaskEdit(event, task)}
@@ -282,6 +297,16 @@ export const TasksPage = ({
                 onSubmit={onSubmitTimeBlock}
                 onRemove={onRemoveTimeBlock}
               />
+              {onSubmitTaskPlanning !== undefined && (
+                <TaskPlanningForm
+                  key={`${task.id}:${String(task.revision)}`}
+                  task={task}
+                  timeZone={timeZone}
+                  busy={busy}
+                  available={calendarActionsAvailable}
+                  onSubmit={onSubmitTaskPlanning}
+                />
+              )}
               <form
                 className="task-edit"
                 onSubmit={(event) => void onSubmitTaskOrganization(event, task)}
