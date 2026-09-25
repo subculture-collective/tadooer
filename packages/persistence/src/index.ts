@@ -1529,6 +1529,7 @@ export class SuiteDatabase {
           now,
         );
       },
+    });
     this.timeEntries = new SqliteTimeEntryStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
         this.getTask(ownerId, taskId, includeInactive),

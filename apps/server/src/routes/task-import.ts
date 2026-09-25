@@ -41,10 +41,9 @@ export const handleTaskImport: RouteHandler = async (
   try {
     const input = await readJson(request, limits.bytes);
     const { report, records, recurrence, workContexts } =
-      prepareSuperProductivityImport(
-      JSON.stringify(input),
-      { timeZone: stores.getPlanningPreferences(session.owner.id).timeZone },
-    );
+      prepareSuperProductivityImport(JSON.stringify(input), {
+        timeZone: stores.getPlanningPreferences(session.owner.id).timeZone,
+      });
     if (url.pathname.endsWith("/preview")) {
       sendJson(response, 200, superProductivityPreviewSchema.parse(report));
     } else if (request.headers["x-import-hash"] !== report.inputHash) {

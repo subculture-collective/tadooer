@@ -1866,6 +1866,17 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
         preview.id,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
     } else if (isTimeEntryCommand(command)) {
       const confirmation = confirmTimeEntry(
         database,

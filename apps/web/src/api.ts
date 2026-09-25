@@ -1309,6 +1309,9 @@ export const changeRecurrenceOccurrence = (
       method: "POST",
       headers: conditionalHeaders(revision, csrfToken),
       body: JSON.stringify(recurrenceOccurrenceRequestSchema.parse({ action })),
+    },
+  );
+
 // Work history (ADR 0024) is online-only: reads and writes go to the server.
 export const getTimeReport = (from: string, to: string): Promise<TimeReport> =>
   request(

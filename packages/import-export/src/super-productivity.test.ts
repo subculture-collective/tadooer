@@ -71,10 +71,7 @@ describe("Super Productivity migration preview", () => {
     });
     expect(JSON.stringify(report)).not.toContain("must-not-appear");
     expect(report.issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining([
-        "recurrence_unmappable",
-        "time_reconciliation",
-      ]),
+      expect.arrayContaining(["recurrence_unmappable", "time_reconciliation"]),
     );
     // Work history applies since #41 (ADR 0024).
     expect(report.issues.map((issue) => issue.code)).not.toContain(
