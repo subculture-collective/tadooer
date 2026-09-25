@@ -13,6 +13,16 @@ import {
   superProductivitySystemTagIds,
   superProductivityTaskFields,
 } from "./super-productivity-schema.ts";
+import {
+  dayLimitMs,
+  readWorkContexts,
+  reconcileTaskTime,
+  reconciliationSummary,
+  type SourceTaskTime,
+  type SourceTimeEntry,
+  type SourceWorkContextDay,
+  type TimeReconciliation,
+} from "./super-productivity-time.ts";
 
 const systemTagIds = new Set<string>(superProductivitySystemTagIds);
 
@@ -35,6 +45,8 @@ export interface SuperProductivityPreview {
     readonly tags: number;
     readonly repeatConfigurations: number;
     readonly trackedMilliseconds: number;
+    /** Work history reconciliation (ADR 0024). */
+    readonly time: TimeReconciliation;
   };
   readonly tasks: readonly {
     readonly sourceId: string;
@@ -93,7 +105,19 @@ const divergentFields = (left: ObjectValue, right: ObjectValue): string[] => {
 /** Read-only inventory: never claims unsupported data has been migrated. */
 export const previewSuperProductivity = (
   raw: string,
-): SuperProductivityPreview => {
+): SuperProductivityPreview => inventorySuperProductivity(raw).preview;
+
+/**
+ * The preview together with the reconciled daily time entries per source
+ * task and the merged work start/end records (ADR 0024).
+ */
+export const inventorySuperProductivity = (
+  raw: string,
+): {
+  readonly preview: SuperProductivityPreview;
+  readonly timeEntries: ReadonlyMap<string, readonly SourceTimeEntry[]>;
+  readonly workContexts: readonly SourceWorkContextDay[];
+} => {
   if (Buffer.byteLength(raw, "utf8") > limits.bytes)
     throw new Error(`Export exceeds the ${limits.label} import limit`);
   const parsed: unknown = JSON.parse(raw);
@@ -164,10 +188,6 @@ export const previewSuperProductivity = (
     let blocking =
       disposition === "blocked" &&
       (Array.isArray(store?.ids) ? store.ids.length > 0 : populated(value));
-    if (name === "timeTracking")
-      blocking = Object.values(store ?? {}).some((contexts) =>
-        Object.values(object(contexts) ?? {}).some(populated),
-      );
     if (name === "simpleCounter")
       blocking = Object.values(object(store?.entities) ?? {}).some((counter) =>
         Object.values(object(object(counter)?.countOnDay) ?? {}).some(
@@ -212,17 +232,6 @@ export const previewSuperProductivity = (
           null,
           `${name}.${key} is not a reviewed Super Productivity 19.1.0 archive field`,
         );
-    // Archived daily time history needs work-history parity (#41).
-    if (
-      Object.values(object(archive.timeTracking) ?? {}).some((contexts) =>
-        Object.values(object(contexts) ?? {}).some(populated),
-      )
-    )
-      issue(
-        "unsupported_section",
-        null,
-        `${name}.timeTracking contains time history without Tadooer parity; keep the original export`,
-      );
     return entities(archive.task, `${name}.task`);
   };
   const sources: {
@@ -247,6 +256,7 @@ export const previewSuperProductivity = (
     historicalReferences: HistoricalReference[];
   };
   const tasks: InventoryTask[] = [];
+  const taskTimes: SourceTaskTime[] = [];
   // First copy by store order (live, archiveYoung, archiveOld).
   const seen = new Map<
     string,
@@ -465,11 +475,20 @@ export const previewSuperProductivity = (
           id,
           "timeSpentOnDay must map calendar dates to milliseconds",
         );
+      const dailyValues: Record<string, number> = {};
       if (daily !== undefined) {
         let total = 0;
         for (const [date, entry] of Object.entries(daily)) {
-          day(date, id, "timeSpentOnDay date");
-          total += number(entry, id, "timeSpentOnDay");
+          const value = number(entry, id, "timeSpentOnDay");
+          total += value;
+          if (value > dayLimitMs)
+            issue(
+              "time_day_exceeds_day",
+              id,
+              "A daily timeSpentOnDay value exceeds 24 hours; correct it in Super Productivity before importing",
+            );
+          if (day(date, id, "timeSpentOnDay date") !== null && value > 0)
+            dailyValues[date] = value;
         }
         if (!Number.isSafeInteger(total))
           issue(
@@ -477,13 +496,15 @@ export const previewSuperProductivity = (
             id,
             "Daily tracked time exceeds safe integer precision",
           );
-        if (total !== trackedMilliseconds)
-          issue(
-            "time_total_mismatch",
-            id,
-            "Daily tracked time does not equal the task total; do not sum parent and child totals blindly",
-          );
       }
+      // Totals are reconciled once the hierarchy is known (ADR 0024).
+      taskTimes.push({
+        sourceId: id,
+        parentId,
+        store: source.store,
+        trackedMilliseconds,
+        daily: dailyValues,
+      });
       const scheduledAt = timestamp(task.dueWithTime, id, "dueWithTime");
       const deadlineAt = timestamp(
         task.deadlineWithTime,
@@ -654,18 +675,39 @@ export const previewSuperProductivity = (
       null,
       "Task recurrence must be implemented before repeat configurations can be applied",
     );
-  if (tasks.some((task) => task.trackedMilliseconds > 0))
-    issue(
-      "time_history_parity_required",
-      null,
-      "Preserve daily time entries and archives before applying tracked history",
-    );
+  // Work history (ADR 0024): each tracked millisecond is imported once, as a
+  // leaf day or as the part of a parent day its children do not explain.
+  const reconciled = reconcileTaskTime(taskTimes, issue);
+  const workContexts = readWorkContexts(
+    [
+      { name: "timeTracking", value: data.timeTracking },
+      {
+        name: "archiveYoung",
+        value: object(data.archiveYoung)?.timeTracking,
+      },
+      { name: "archiveOld", value: object(data.archiveOld)?.timeTracking },
+    ],
+    {
+      projects,
+      tags: Object.fromEntries(
+        Object.entries(tags).filter(([id]) => !systemTagIds.has(id)),
+      ),
+    },
+    issue,
+  );
+  const time = { ...reconciled.totals, workContextDays: workContexts.length };
+  if (
+    time.taskDayEntries + time.parentResidualEntries + time.workContextDays >
+      0 ||
+    time.sourceLeafMs > 0
+  )
+    issue("time_reconciliation", null, reconciliationSummary(time));
   issue(
     "preview_only",
     null,
     "Inventory only: no data was written. Keep the original export for the later transactional import.",
   );
-  return {
+  const preview: SuperProductivityPreview = {
     source: "super_productivity",
     inputHash: createHash("sha256")
       .update(JSON.stringify(parsed))
@@ -683,8 +725,10 @@ export const previewSuperProductivity = (
       trackedMilliseconds: tasks
         .filter((task) => !parentIds.has(task.sourceId))
         .reduce((sum, task) => sum + task.trackedMilliseconds, 0),
+      time,
     },
     tasks,
     issues,
   };
+  return { preview, timeEntries: reconciled.entries, workContexts };
 };

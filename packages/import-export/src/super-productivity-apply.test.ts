@@ -57,7 +57,8 @@ it("blocks unsupported workflows without rounding estimates or inventing dates",
     { attachments: [{ path: "file" }] },
     { remindAt: 1700000000000 },
     { notes: "x".repeat(20001) },
-    { timeSpent: 60000 },
+    // One task-day never exceeds 24 hours (ADR 0024).
+    { timeSpentOnDay: { "2026-09-20": 86_400_001 } },
   ]) {
     const result = prepareSuperProductivityImport(
       JSON.stringify({
@@ -277,13 +278,25 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
     { metric: state({ "2026-09-24": { id: "2026-09-24" } }) },
     { reminders: [{ id: "r" }] },
     { pluginUserData: [{ id: "plugin", data: "{}" }] },
-    { timeTracking: { project: { p: { "2026-09-24": { s: 1 } } }, tag: {} } },
     { simpleCounter: state({ c: { id: "c", countOnDay: { d: 2 } } }) },
   ]) {
     const report = prepare(extra);
     expect(report.canApply).toBe(false);
     expect(codes(report)).toContain("unsupported_section");
   }
+  // Work start/end records apply since #41; malformed ones block.
+  expect(
+    prepare({
+      timeTracking: { project: { p: { "2026-09-24": { s: 1 } } }, tag: {} },
+    }).canApply,
+  ).toBe(true);
+  expect(
+    codes(
+      prepare({
+        timeTracking: { project: { p: { "2026-09-24": { s: -1 } } } },
+      }),
+    ),
+  ).toContain("invalid_time_tracking");
   expect(codes(prepare({ futureSection: {} }))).toContain("unknown_section");
   expect(codes(prepare({}, { futureField: 1 }))).toContain(
     "unknown_task_field",
