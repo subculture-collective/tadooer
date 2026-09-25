@@ -29,7 +29,7 @@ describe("Phase 8 operations surface", () => {
         ).toMatchObject({ version: "8.0.0-test", revision: "abcdef8" });
         expect(
           await (await fetch(`${server.baseUrl}/api/ready`)).json(),
-        ).toMatchObject({ status: "ok", migrationCount: 21 });
+        ).toMatchObject({ status: "ok", migrationCount: 22 });
         const metricsResponse = await fetch(`${server.baseUrl}/api/metrics`);
         const metrics = await metricsResponse.text();
         expect(metricsResponse.headers.get("content-type")).toContain(
