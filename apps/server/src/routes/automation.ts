@@ -1,3 +1,4 @@
+import { pluginDataListBody } from "./plugin-data.ts";
 import { planningPatch, planningPatchProblem } from "../task-planning.ts";
 import { readDayPlan } from "../day-plan.ts";
 import { readNotificationStatus } from "../notification-status.ts";
@@ -489,6 +490,9 @@ export const handleAutomation: RouteHandler = async (
       body = { tags: database.listTags(token.ownerId).map(tagResponse) };
     else if (resource === "notes.list")
       body = { notes: database.notes.list(token.ownerId).map(noteResponse) };
+    // ADR 0026: identity, sizes and flags only; the data is never returned.
+    else if (resource === "plugin_data.list")
+      body = pluginDataListBody(database, token.ownerId);
     else if (resource === "task_links.get") {
       const input = taskLinksResourceInputSchema.safeParse({
         taskId: url.searchParams.get("taskId"),
