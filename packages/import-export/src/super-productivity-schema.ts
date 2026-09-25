@@ -21,8 +21,10 @@ export const superProductivitySections = {
   project: "applied",
   tag: "applied",
   taskRepeatCfg: "parity",
-  archiveYoung: "parity",
-  archiveOld: "parity",
+  // Archived tasks apply as read-only history since #38 (ADR 0022). Their
+  // timeTracking part still blocks until work history parity (#41).
+  archiveYoung: "applied",
+  archiveOld: "applied",
   // Notes and menu order apply since #28 (ADR 0019); menuTree folders do not.
   note: "applied",
   menuTree: "applied",
@@ -39,6 +41,17 @@ export const superProductivitySections = {
   issueProvider: "configuration",
   pluginMetadata: "configuration",
 } as const satisfies Record<string, SectionDisposition>;
+
+/**
+ * Keys of an archiveYoung/archiveOld section (ArchiveModel). `task` applies;
+ * populated `timeTracking` blocks (#41); flush timestamps are transient.
+ */
+export const superProductivityArchiveKeys = {
+  task: "applied",
+  timeTracking: "parity",
+  lastTimeTrackingFlush: "ignored",
+  lastFlush: "ignored",
+} as const satisfies Record<string, FieldDisposition>;
 
 export const superProductivityTaskFields = {
   id: "applied",
@@ -80,6 +93,7 @@ export const superProductivityTaskFields = {
   issuePoints: "blocked",
   issueLastSyncedValues: "blocked",
   // Pre-v14 schedule; Super Productivity migrates it to dueWithTime on import.
+  // On an archived task it is inert history and kept in provenance (ADR 0022).
   plannedAt: "blocked",
   // Leaked TaskWithSubTasks view copy; the children are exported as tasks.
   subTasks: "ignored",

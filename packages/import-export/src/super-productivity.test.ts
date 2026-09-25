@@ -83,7 +83,8 @@ describe("Super Productivity migration preview", () => {
     const report = previewSuperProductivity(
       JSON.stringify({
         task: state({ t: task }),
-        archiveOld: { task: state({ t: task }) },
+        // Divergent copies block; identical copies would collapse (ADR 0022).
+        archiveOld: { task: state({ t: { ...task, isDone: true } }) },
       }),
     );
     expect(report.totals.tasks).toBe(1);
