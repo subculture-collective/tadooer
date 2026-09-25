@@ -50,7 +50,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | planning               | partial        | Today queue, timed blocks and date-only planned days exist (ADR 0020); persisted Today order, daily rituals, schedule hygiene and auto-planning remain.                                                                                                                                         | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
 | history                | partial        | Both archive stores apply as read-only history with historical references, review flags and a collapse-or-block duplicate policy (ADR 0022).                                                                                                                                                    | [#38](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/38) |
 | time                   | partial        | Active interval tracking exists; source daily history, correction and reporting remain unqualified.                                                                                                                                                                                             | [#41](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/41) |
-| recurrence             | missing        | Source has daily/weekly/monthly/yearly, completion-based generation, inherited child templates and deleted instances; habits do not substitute.                                                                                                                                                 | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
+| recurrence             | partial        | Repeat configurations import as recurring series with their rule, start time, reminder, completion anchor, wait-for-completion, skip-overdue, pause, child templates and deleted dates (ADR 0023). Instances link by occurrence date and are not regenerated. Habits are not used.              | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
 | notes                  | partial        | Project, tag and standalone Markdown notes with pin and order are stored and imported; image notes, legacy notes text and checklist/space workflows remain.                                                                                                                                     | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | linked-issues          | partial        | One issue link per task (provider key, provider instance ID, issue ID, last-synced provenance; Gitea address rebuilt) and attachments import and are edited online (ADR 0021). Local files and commands stay inert; credentials are never read; live provider access needs fresh authorization. | [#30](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/30) |
 | reminders              | partial        | Per-task and timed-deadline reminder offsets use the ntfy ledger (ADR 0020); exact source offsets import. Legacy reminders section stays blocked.                                                                                                                                               | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
@@ -76,8 +76,9 @@ exactly one workflow row in the JSON manifest. The preview and apply paths use t
 no section is dropped without a report:
 
 - **applied**: mapped into Tadooer records.
-- **parity**: inventoried; apply is blocked with a parity finding (recurrence,
-  time history). Archived tasks apply since #38; see "Archived history" below.
+- **parity**: inventoried; apply is blocked with a parity finding (time
+  history). Archived tasks apply since #38; see "Archived history" below.
+  Repeat configurations apply since #42; see "Repeat configurations" below.
   Hierarchy fields apply since #27, and a chain deeper
   than two levels blocks with `hierarchy_depth_unsupported`. Day-only plans
   (`dueDay`) and exact reminder offsets apply since #29; a reminder that is not
@@ -116,8 +117,9 @@ project/tag/note fields block apply until they are reviewed.
 
 Every finding carries `blocking`. Reported dispositions that do not block are
 `configuration_not_imported`, `duplicate_copy_collapsed`,
-`historical_reference`, `historical_parent_detached` and `history_review`; any
-other code blocks.
+`historical_reference`, `historical_parent_detached`, `history_review`,
+`recurrence_notice` and `recurrence_duplicate_occurrence`; any other code
+blocks.
 
 ### Archived history (#38)
 
@@ -144,7 +146,47 @@ A read-only rerun on the September 24 backup maps 4,275 archived records
 references: 1,100 projects and 2,930 tags missing from the export, 28 priority
 markers, and 1,311 repeat configuration IDs (657 missing, 654 existing). Six
 blank titles, one oversized note and two estimates are flagged for review.
-32 duplicate copies collapse; 63 differ in `isDone`/`doneOn` and block.
+32 duplicate copies collapse; 63 differ in `isDone`/`doneOn` and block. These
+counts predate #42: the 654 references to existing repeat configurations now
+link to recurring series instead of staying historical references.
+
+### Repeat configurations (#42)
+
+`taskRepeatCfg` applies as recurring series (ADR 0023). Every
+`TaskRepeatCfgCopy` field is classified in `super-productivity-recurrence.ts`
+(`repeatCfgFields` in the manifest):
+
+- The rule, start date, pause, `repeatFromCompletionDate`,
+  `waitForCompletion`, `skipOverdue`, notes, project, tags and default estimate
+  apply. The Nth-weekday anchor wins over `monthlyLastDay`, and an incomplete
+  anchor falls back to the start date's day, as in the source.
+- `startTime` applies together with `remindAt`; without a reminder option the
+  source creates date-only instances, so Tadooer does the same and reports
+  `recurrence_notice`.
+- `subTaskTemplates` become child task templates when `shouldInheritSubtasks`
+  is on; otherwise they are reported and kept in provenance.
+- `deletedInstanceDates` become deleted exceptions. `lastTaskCreationDay`, or
+  the legacy `lastTaskCreation` read in the owner's zone, seeds the cursor.
+- `order` and `disableAutoUpdateSubtasks` are retained; `quickSetting` is
+  ignored.
+
+Live and archived tasks whose `repeatCfgId` names an exported configuration link
+to its series. The occurrence date comes from the deterministic
+`rpt_<config>_<date>` ID, or from `created` in the owner's zone. Linked tasks
+are never recreated. A second task for the same date is linked and reported
+with `recurrence_duplicate_occurrence`. Any other unrepresentable option, such
+as a missing start date, a weekly rule with no weekday, an unknown reminder
+option or a priority tag, blocks with `recurrence_unmappable` for that
+configuration. A missing configuration on an archived task stays a historical
+reference; on a live task it still blocks.
+
+A read-only mapping run on the September 24 backup maps all 49 configurations
+without a blocking finding: 32 weekly, 7 daily, 8 monthly (3 on the start
+date's day of month, 4 on an Nth weekday, 1 on the last day) and 2 yearly. 47 skip overdue dates, 2 wait for completion, 15
+inherit child templates, and 6 have templates that are not inherited. 779
+instance records across the live and archive stores reference existing
+configurations; each has an occurrence date. This mapping run did not apply
+the export, which stays blocked by the sections listed below.
 
 ### September 24 backup (19.1.0)
 
@@ -184,8 +226,9 @@ until every section has an explicit supported mapping or reviewed disposition.
 1. #18 increases bounded preview capacity; #27 hierarchy and #38 historical
    identity unblock much of the actual archive. #28 organization and #29 planning
    can progress alongside those domain contracts.
-2. #41 work history and #42 recurrence require full source-child semantics;
-   preserve old missing references and explicitly reconcile mismatched totals.
+2. #41 work history requires full source-child semantics; preserve old missing
+   references and explicitly reconcile mismatched totals. #42 recurrence maps
+   repeat configurations and links their history (ADR 0023).
 3. #30 linked issues/attachments and #63–#67 boards, counters, focus preferences,
    plugins and configuration close the remaining inventoried areas. These child
    issues are linked under #31 rather than hidden in an omnibus parity promise.
