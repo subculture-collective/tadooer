@@ -436,9 +436,11 @@ export class SqliteTaskHierarchyStore {
       );
       return { kind: "moved", task: this.#required(input.ownerId, task.id) };
     }
+    const parent = this.deps.getTask(input.ownerId, input.parentId, true);
     const violation = validateTaskParent({
       taskId: task.id,
-      parent: this.deps.getTask(input.ownerId, input.parentId, true),
+      // Archived history is not a valid parent for an active task (ADR 0022).
+      parent: parent?.archivedAt != null ? undefined : parent,
       taskHasActiveChildren: this.childIds(input.ownerId, task.id).length > 0,
     });
     if (violation !== null) return { kind: "invalid", code: violation, task };

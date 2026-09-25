@@ -624,11 +624,14 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(48);
+    expect(automationCatalog).toHaveLength(51);
     expect(ids).toEqual(
       expect.arrayContaining([
         "tasks.update",
         "tasks.hierarchy",
+        "tasks.history",
+        "tasks.archive",
+        "tasks.unarchive",
         "tasks.set_completed",
         "pools.list",
         "placeholders.resolve",
