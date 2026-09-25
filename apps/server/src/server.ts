@@ -30,6 +30,7 @@ import { handleTags } from "./routes/tags.ts";
 import { handleNotes } from "./routes/notes.ts";
 import { handleSubtasks } from "./routes/subtasks.ts";
 import { handleTaskHierarchy } from "./routes/task-hierarchy.ts";
+import { handleTaskArchive } from "./routes/task-archive.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
@@ -279,6 +280,7 @@ export const startSuiteServer = async (
     handleNotes,
     handleSubtasks,
     handleTaskHierarchy,
+    handleTaskArchive,
     handleChoicePools,
     handleTemplates,
     handleStatic,

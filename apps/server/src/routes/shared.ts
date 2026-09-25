@@ -164,6 +164,8 @@ export const taskResponse = (task: TaskRecord): Task => ({
   tagIds: [...(task.tagIds ?? [])],
   parentId: task.parentId ?? null,
   childPosition: task.childPosition ?? null,
+  // ADR 0022: only archived history carries archivedAt.
+  ...(task.archivedAt == null ? {} : { archivedAt: task.archivedAt }),
 });
 
 export const calendarEventResponse = (
