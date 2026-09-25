@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import { previewSuperProductivity } from "./super-productivity.ts";
+import {
+  fieldsWith,
+  populated,
+  superProductivityProjectFields,
+  superProductivityTagFields,
+  superProductivityTaskFields,
+} from "./super-productivity-schema.ts";
 
 type Source = Record<string, unknown>;
 const object = (value: unknown): Source =>
@@ -27,6 +34,10 @@ export interface TaskImportRecord {
 export const prepareSuperProductivityImport = (raw: string) => {
   const inventory = previewSuperProductivity(raw);
   const issues = inventory.issues.filter(({ code }) => code !== "preview_only");
+  // Reported to the owner without blocking; see super-productivity-schema.ts.
+  const notices = issues.filter(
+    ({ code }) => code === "configuration_not_imported",
+  );
   const root = object(JSON.parse(raw) as unknown);
   const data = root.data === undefined ? root : object(root.data);
   const records: TaskImportRecord[] = [];
@@ -62,39 +73,26 @@ export const prepareSuperProductivityImport = (raw: string) => {
         notes.length > 20000
       )
         problem(sourceId, "Notes cannot be represented without changes");
-      if (kind !== "task" && notes !== "")
+      const fields = {
+        project: superProductivityProjectFields,
+        tag: superProductivityTagFields,
+        task: superProductivityTaskFields,
+      }[kind];
+      for (const field of Object.keys(source))
+        if (kind !== "task" && !Object.hasOwn(fields, field))
+          problem(sourceId, `Unreviewed ${kind} field ${field} blocks import`);
+      const blocked = fieldsWith(fields, "blocked").filter((field) =>
+        populated(source[field]),
+      );
+      if (blocked.length > 0)
         problem(
           sourceId,
-          "Project/tag notes need their own parity support before import",
+          `${blocked.join(", ")} need${blocked.length === 1 ? "s" : ""} parity support before import`,
         );
-      for (const field of [
-        "attachments",
-        "noteIds",
-        "issueId",
-        "remindAt",
-        "backlogTaskIds",
-      ])
-        if (
-          source[field] !== undefined &&
-          source[field] !== null &&
-          source[field] !== "" &&
-          (!Array.isArray(source[field]) || source[field].length > 0)
-        )
-          problem(sourceId, `${field} needs parity support before import`);
       if (kind === "tag" && sourceId === "TODAY")
         problem(
           sourceId,
           "The Today virtual view must not be imported as an ordinary tag",
-        );
-      if (kind !== "task" && source.isDone === true)
-        problem(
-          sourceId,
-          "Completed projects need project lifecycle support before import",
-        );
-      if (source.isArchived === true)
-        problem(
-          sourceId,
-          "Archived projects/tags need history support before import",
         );
       const task = kind === "task" ? taskById.get(sourceId) : undefined;
       if (task?.scheduledDay !== null && task?.scheduledDay !== undefined)
@@ -130,22 +128,9 @@ export const prepareSuperProductivityImport = (raw: string) => {
         problem(sourceId, "Creation timestamp is invalid");
       if (Array.isArray(source.tagIds) && source.tagIds.length > 25)
         problem(sourceId, "Task has more than 25 tags");
-      // Persist only task metadata, never project/provider configuration credentials.
+      // Persist reviewed fields only, never provider configuration credentials.
       const preserved = Object.fromEntries(
-        [
-          "id",
-          "title",
-          "notes",
-          "projectId",
-          "tagIds",
-          "created",
-          "doneOn",
-          "isDone",
-          "dueWithTime",
-          "deadlineDay",
-          "deadlineWithTime",
-          "timeEstimate",
-        ]
+        fieldsWith(fields, "applied", "retained")
           .filter((key) => source[key] !== undefined)
           .map((key) => [key, source[key]]),
       );
@@ -177,7 +162,11 @@ export const prepareSuperProductivityImport = (raw: string) => {
     );
   if (records.length === 0) problem("export", "No supported records to import");
   return {
-    report: { ...inventory, canApply: issues.length === 0, issues },
+    report: {
+      ...inventory,
+      canApply: issues.length === notices.length,
+      issues,
+    },
     records,
   };
 };
