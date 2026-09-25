@@ -57,7 +57,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | boards                 | missing        | Source board/section/task-view state has no qualified Tadooer mapping.                                                                                                                                                                                                                          | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
 | counters               | missing        | Source counters and metric history are not equivalent to habit streaks.                                                                                                                                                                                                                         | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
 | focus                  | partial        | Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.                                                                                                                                                                                  | [#65](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/65) |
-| plugins                | missing        | Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.                                                                                                                                                         | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
+| plugins                | partial        | Plugin data entries (plugin ID, key, opaque value, size) and enabled flags import as inert records that the owner lists, downloads and deletes (ADR 0026). No plugin code is imported or run; a plugin runtime needs an owner decision.                                                         | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
 | preferences            | partial        | Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.                                                                                                                                                        | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
 | calendar               | partial        | Google/Baikal federation exists; plugin calendars and opt-in canonical bridge need qualification.                                                                                                                                                                                               | [#50](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/50) |
 | platforms              | decision-gated | PWA and Linux packaging exist; platform-specific native delivery requires explicit platform design.                                                                                                                                                                                             | [#24](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/24) |
@@ -88,8 +88,8 @@ no section is dropped without a report:
   task order inside projects and tags, note lock and background colour).
 - **blocked**: a populated value blocks apply (`unsupported_section` or
   `unsupported_import_data`, one finding per record).
-- **configuration**: `globalConfig`, `boards`, `planner`, `issueProvider`,
-  `pluginMetadata` and counter definitions. Reported as
+- **configuration**: `globalConfig`, `boards`, `planner`, `issueProvider`
+  and counter definitions. Reported as
   `configuration_not_imported`; never applied and does not block.
 - **ignored**: derived or view-only task state (`modified`, `hasPlannedTime`,
   `_hideSubTasksMode`, the leaked `subTasks` copy) and legacy project issue
@@ -113,6 +113,13 @@ provider absent from the export is kept and reported as
 separately (`attachmentFields` in the manifest); addresses with embedded
 credentials block apply.
 
+Since #66 (ADR 0026), `pluginUserData` and `pluginMetadata` apply as inert
+records: each value is kept as opaque text of at most 1 MiB, never decoded or
+run, and each enabled flag is kept without enabling anything. Their fields are
+listed as `pluginUserDataFields` and `pluginMetadataFields` in the manifest. A
+malformed section or entry blocks with `plugin_data_invalid`; findings name
+the plugin ID, never the value or key.
+
 Unknown sections (`unknown_section`), task fields (`unknown_task_field`) and
 project/tag/note fields block apply until they are reviewed.
 
@@ -122,8 +129,8 @@ Every finding carries `blocking`. Reported dispositions that do not block are
 `historical_parent_detached`, `history_review`, the recurrence findings
 `recurrence_notice` and `recurrence_duplicate_occurrence`, and the work history
 findings `time_total_mismatch`, `time_parent_residual`, `time_parent_shortfall`,
-`time_reconciliation`, `work_context_merged` and `work_context_historical`; any
-other code blocks.
+`time_reconciliation`, `work_context_merged` and `work_context_historical`, and
+the plugin summary `plugin_data_preserved`; any other code blocks.
 
 ### Archived history (#38)
 
@@ -218,9 +225,10 @@ finding blocks.
 A read-only run of the updated importer found no unknown sections or fields. The
 export still cannot be applied:
 
-- `metric`, recorded `simpleCounter` values and `pluginUserData` block as
-  unsupported sections; six configuration sections are reported. `timeTracking`
-  applies since #41.
+- `metric` and recorded `simpleCounter` values block as unsupported sections;
+  configuration sections are reported. `timeTracking` applies since #41, and
+  plugin data since #66: a read-only run on `2026-09-24_224532.json` keeps one
+  61-byte `brain-dump` entry and six enabled flags without a blocking finding.
 - 73 unsupported-data findings, one per source: 49 live tasks with blocked fields
   (34 with linked issues and 19 with reminders; 4 have both), 22 tasks with
   day-only plans, the TODAY tag, and one finding for the archives.
