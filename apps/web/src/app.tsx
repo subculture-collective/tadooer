@@ -2,7 +2,7 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { usePlannerLoader } from "./use-planner-loader.ts";
 import { googleProjectionFreshness } from "@suite/domain";
-import { createTask } from "./api.ts";
+import { archiveTask, createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
 import {
   subscribeSessionFailure,
@@ -14,6 +14,7 @@ import {
   isHabitSyncOperation,
 } from "@suite/contracts";
 import { HabitsPage } from "./pages/HabitsPage.tsx";
+import { HistoryPage } from "./pages/HistoryPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
@@ -1075,6 +1076,18 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       return;
     }
     setFormError(messageFor(error));
+  };
+
+  // ADR 0022: archiving is online-only; the sync feed then drops the family.
+  const archiveTaskToHistory = async (task: Task): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setFormError(null);
+    try {
+      await archiveTask(task.id, task.revision, state.session.csrfToken);
+      await syncNow();
+    } catch (error: unknown) {
+      handleTaskError(error);
+    }
   };
 
   const taskHierarchyActions = createTaskHierarchyActions(
@@ -2442,6 +2455,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onChangeTaskStatus={changeTaskStatus}
           onRemoveTask={removeTask}
           onRecoverTask={recoverTask}
+          onArchiveTask={archiveTaskToHistory}
           organization={{
             csrfToken: state.session.csrfToken,
             online: networkOnline,
@@ -2451,6 +2465,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           timeZone={state.planningPreferences?.timeZone ?? "UTC"}
           onSubmitTaskPlanning={submitTaskPlanning}
           {...taskHierarchyActions}
+        />
+      )}
+      {route === "history" && (
+        <HistoryPage
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
+          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+          projects={projects}
+          onRestored={syncNow}
         />
       )}
       {route === "habits" && (

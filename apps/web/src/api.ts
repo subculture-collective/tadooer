@@ -108,6 +108,12 @@ import {
   type NotePatchRequest,
   type OrganizationOrderItem,
 } from "@suite/contracts";
+import {
+  taskArchiveMutationResponseSchema,
+  taskHistoryResponseSchema,
+  type TaskArchiveMutationResponse,
+  type TaskHistoryResponse,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -1113,3 +1119,52 @@ export const applyTaskImport = (
       body: rawJson,
     },
   );
+
+// ADR 0022 archived history. Online-only: archive state is not a sync v2
+// operation, so the browser never queues archive or restore offline.
+export const getTaskHistory = (
+  input: { readonly query?: string; readonly cursor?: string | null } = {},
+): Promise<TaskHistoryResponse> => {
+  const params = new URLSearchParams();
+  if (input.query !== undefined && input.query.trim() !== "")
+    params.set("query", input.query.trim());
+  if (input.cursor != null) params.set("cursor", input.cursor);
+  const query = params.toString();
+  return request(
+    `/api/tasks/history${query === "" ? "" : `?${query}`}`,
+    taskHistoryResponseSchema,
+  );
+};
+
+const taskArchiveRequest = (
+  action: "archive" | "unarchive",
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<TaskArchiveMutationResponse> =>
+  request(
+    `/api/tasks/${encodeURIComponent(taskId)}/${action}`,
+    taskArchiveMutationResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"${String(revision)}"`,
+      },
+      body: "{}",
+    },
+  );
+
+export const archiveTask = (
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<TaskArchiveMutationResponse> =>
+  taskArchiveRequest("archive", taskId, revision, csrfToken);
+
+export const unarchiveTask = (
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<TaskArchiveMutationResponse> =>
+  taskArchiveRequest("unarchive", taskId, revision, csrfToken);
