@@ -55,6 +55,24 @@ export {
   type TaskHistoryEntryRecord,
   type TaskHistoryPage,
 } from "./task-archive-store.ts";
+import {
+  SqliteRecurrenceStore,
+  recurrenceMigration,
+  type ImportedOccurrenceLink,
+  type ImportedRecurringSeries,
+} from "./recurrence-store.ts";
+export {
+  SqliteRecurrenceStore,
+  recurrenceGenerationBatch,
+  type ImportedOccurrenceLink,
+  type ImportedRecurringSeries,
+  type RecurrenceChildTemplate,
+  type RecurrenceExceptionRecord,
+  type RecurrenceMutationResult,
+  type RecurrenceViolation,
+  type RecurringSeriesFields,
+  type RecurringSeriesRecord,
+} from "./recurrence-store.ts";
 export {
   SqliteTaskHierarchyStore,
   TaskHierarchyError,
@@ -189,6 +207,11 @@ export interface TaskRecord {
   readonly childPosition?: number | null;
   /** Set while the task is archived history (ADR 0022). */
   readonly archivedAt?: string | null;
+  /** Series link of a recurring instance (ADR 0023). */
+  readonly recurrence?: {
+    readonly seriesId: string;
+    readonly occurrenceDate: string;
+  } | null;
 }
 
 export interface TaskPatch {
@@ -1437,6 +1460,7 @@ const migrations: readonly Migration[] = [
   },
   taskLinksMigration,
   taskArchiveMigration,
+  recurrenceMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1455,9 +1479,28 @@ export class SuiteDatabase {
   readonly taskHierarchy: SqliteTaskHierarchyStore;
   readonly taskLinks: SqliteTaskLinkStore;
   readonly taskArchive: SqliteTaskArchiveStore;
+  readonly recurrence: SqliteRecurrenceStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.recurrence = new SqliteRecurrenceStore(database, {
+      getTask: (ownerId, taskId, includeInactive) =>
+        this.getTask(ownerId, taskId, includeInactive),
+      createTask: (ownerId, key, task) =>
+        this.createTaskIdempotently(ownerId, key, "recurrence-instance", task),
+      createChild: (ownerId, parentId, now, create) =>
+        this.taskHierarchy.createChild({ ownerId, parentId, now, create }),
+      patchTask: (ownerId, taskId, revision, patch, now) =>
+        this.patchTask(ownerId, taskId, revision, patch, now),
+      assignProject: (ownerId, taskId, projectId, revision, now) =>
+        this.assignTaskProject(ownerId, taskId, projectId, revision, now),
+      setTags: (ownerId, taskId, tagIds, revision, now) =>
+        this.setTaskTags(ownerId, taskId, tagIds, revision, now),
+      deleteTask: (ownerId, taskId, revision, now) =>
+        this.deleteTask(ownerId, taskId, revision, now),
+      blockedIds: (ownerId, taskId) =>
+        this.taskArchive.blockedIds(ownerId, taskId),
+    });
     this.notes = new SqliteNoteStore(database);
     this.taskArchive = new SqliteTaskArchiveStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
@@ -3079,7 +3122,16 @@ export class SuiteDatabase {
       historicalReferences?: readonly HistoricalReference[];
     }[],
     now: string,
-  ): { created: number; existing: number } {
+    /** ADR 0023: repeat configurations and the instances that link to them. */
+    recurrence?: {
+      readonly series: readonly ImportedRecurringSeries[];
+      readonly links: readonly ImportedOccurrenceLink[];
+    },
+  ): {
+    created: number;
+    existing: number;
+    recurringSeries?: { created: number; existing: number };
+  } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
       const targets = new Map<string, string>();
@@ -3300,8 +3352,27 @@ export class SuiteDatabase {
         if (record.archived === true)
           this.taskArchive.markImportedArchived(ownerId, id, now);
       }
+      const recurringSeries =
+        recurrence === undefined
+          ? undefined
+          : this.recurrence.importInTransaction(
+              ownerId,
+              recurrence,
+              (kind, sourceId) => {
+                const target = targets.get(`${kind}:${sourceId}`);
+                if (target === undefined)
+                  throw new Error("IMPORT_REFERENCE_MISSING");
+                return target;
+              },
+              randomUUID,
+              now,
+            );
       this.#database.exec("COMMIT;");
-      return { created, existing };
+      return {
+        created,
+        existing,
+        ...(recurringSeries === undefined ? {} : { recurringSeries }),
+      };
     } catch (error) {
       this.#database.exec("ROLLBACK;");
       throw error;
@@ -6657,6 +6728,7 @@ export class SuiteDatabase {
       parentId: project?.parent_id ?? null,
       childPosition: project?.child_position ?? null,
       archivedAt: project?.archived_at ?? null,
+      recurrence: this.recurrence.linkOf(task.ownerId, task.id),
     };
   }
 
