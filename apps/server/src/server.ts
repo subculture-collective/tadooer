@@ -27,6 +27,7 @@ import { handleSync } from "./routes/sync.ts";
 import { handleActiveSession } from "./routes/active-session.ts";
 import { handleProjects } from "./routes/projects.ts";
 import { handleTags } from "./routes/tags.ts";
+import { handleNotes } from "./routes/notes.ts";
 import { handleSubtasks } from "./routes/subtasks.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
@@ -266,6 +267,7 @@ export const startSuiteServer = async (
     handlePlanner,
     handleProjects,
     handleTags,
+    handleNotes,
     handleSubtasks,
     handleChoicePools,
     handleTemplates,

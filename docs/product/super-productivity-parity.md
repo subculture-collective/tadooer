@@ -45,13 +45,13 @@ Excluded rows record an owner decision not to pursue that source capability.
 | ---------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | core-tasks             | partial        | Core titles/notes/timestamps/dates/estimates map transactionally; unsupported metadata blocks apply. Source IDs remain provenance, not destination IDs. | [#47](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/47) |
 | hierarchy              | missing        | Source children are full tasks, not checklist-only records.                                                                                             | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
-| projects               | partial        | Basic project identity/title exists; completion, backlog, notes, folders/order need parity.                                                             | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
-| tags                   | partial        | Basic tags/assignment exist; virtual Today and source context/config are not ordinary imported tags.                                                    | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
+| projects               | partial        | Colour, icon, order, hide-from-menu, completion, restore and backlog are stored, edited and imported (ADR 0019); menu folders (#63) and in-project task order remain. | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
+| tags                   | partial        | Colour, icon, order and archive/restore are stored and imported; Today and board system tags are never ordinary tags (#29, #63). | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | planning               | partial        | Today queue and timed blocks exist; date-only planning, source ordering, daily rituals, schedule hygiene and automatic planning need explicit parity.   | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
 | history                | missing        | Both stores inventoried; archived task apply blocked. Preserve unknown historical project/tag/repeat identity and blank-title dispositions.             | [#38](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/38) |
 | time                   | partial        | Active interval tracking exists; source daily history, correction and reporting remain unqualified.                                                     | [#41](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/41) |
 | recurrence             | missing        | Source has daily/weekly/monthly/yearly, completion-based generation, inherited child templates and deleted instances; habits do not substitute.         | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
-| notes                  | partial        | Task notes exist; standalone/project notes and markdown/checklist/space workflows require mapping.                                                      | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
+| notes                  | partial        | Project, tag and standalone Markdown notes with pin and order are stored and imported; image notes, legacy notes text and checklist/space workflows remain. | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | linked-issues          | missing        | Issue identity/provider fields and attachments currently block full import; provider credentials are excluded.                                          | [#30](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/30) |
 | reminders              | partial        | ntfy scheduled reminders exist; source task/deadline reminder timing needs parity.                                                                      | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
 | boards                 | missing        | Source board/section/task-view state has no qualified Tadooer mapping.                                                                                  | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
@@ -71,26 +71,34 @@ Excluded rows record an owner decision not to pursue that source capability.
 ## Import dispositions
 
 `packages/import-export/src/super-productivity-schema.ts` classifies every export
-section and every task, project and tag field. Each field belongs to exactly one
-workflow row in the JSON manifest. The preview and apply paths use the tables, so
+section and every task, project, tag and note field. Each field belongs to
+exactly one workflow row in the JSON manifest. The preview and apply paths use the tables, so
 no section is dropped without a report:
 
 - **applied**: mapped into Tadooer records.
 - **parity**: inventoried; apply is blocked with a parity finding (hierarchy,
   recurrence, time history, day-only plans, archives).
-- **retained**: not applied, but kept in the import provenance JSON (icons,
-  colours, themes, ordering, backlog flag).
+- **retained**: not applied, but kept in the import provenance JSON (themes,
+  task order inside projects and tags, note lock and background colour).
 - **blocked**: a populated value blocks apply (`unsupported_section` or
   `unsupported_import_data`, one finding per record).
-- **configuration**: `globalConfig`, `menuTree`, `boards`, `planner`,
-  `issueProvider`, `pluginMetadata` and counter definitions. Reported as
+- **configuration**: `globalConfig`, `boards`, `planner`, `issueProvider`,
+  `pluginMetadata` and counter definitions. Reported as
   `configuration_not_imported`; never applied and does not block.
 - **ignored**: derived or view-only task state (`modified`, `hasPlannedTime`,
   `_hideSubTasksMode`, the leaked `subTasks` copy) and legacy project issue
   configuration, which can hold credentials.
 
+Since #28 (ADR 0019), `note` and `menuTree` apply. `menuTree` supplies project
+and tag order; folders are reported with `configuration_not_imported` and not
+imported. The `TODAY`, `EM_URGENT`, `EM_IMPORTANT` and `KANBAN_IN_PROGRESS`
+system tags never become ordinary tags: unused ones are reported and skipped,
+while Today task order or a marker used by tasks blocks apply. Backlog or
+`noteIds` entries that point at records missing from the export are reported
+and skipped; entries that contradict the task's project block.
+
 Unknown sections (`unknown_section`), task fields (`unknown_task_field`) and
-project/tag fields block apply until they are reviewed.
+project/tag/note fields block apply until they are reviewed.
 
 ### September 24 backup (19.1.0)
 

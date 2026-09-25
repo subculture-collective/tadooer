@@ -17,6 +17,7 @@ import { EmptyState } from "../components/ui/empty-state.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
+import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
 
 export interface TasksPageProps {
   readonly tasks: readonly Task[];
@@ -69,9 +70,18 @@ export interface TasksPageProps {
   ) => Promise<boolean>;
   readonly onRemoveTask: (task: Task) => Promise<void>;
   readonly onRecoverTask: (task: Task) => Promise<void>;
+  /** Enables project/tag/note management when a session is available. */
+  readonly organization?: {
+    readonly csrfToken: string;
+    readonly online: boolean;
+    readonly onProjectsChange: (projects: readonly Project[]) => void;
+    readonly onTagsChange: (tags: readonly Tag[]) => void;
+  };
 }
 
 export const TasksPage = ({
+  tasks,
+  organization,
   visibleTasks,
   recovery,
   projects,
@@ -130,6 +140,14 @@ export const TasksPage = ({
           </div>
         </CardContent>
       </Card>
+      {organization !== undefined && (
+        <OrganizationPanel
+          projects={projects}
+          tags={tags}
+          tasks={tasks}
+          {...organization}
+        />
+      )}
       <Card className="task-filter-bar" role="search" aria-label="Filter tasks">
         <CardContent className="flex flex-wrap items-end gap-2 pt-4">
           <label>
@@ -164,11 +182,16 @@ export const TasksPage = ({
               }
             >
               <option value="">All projects</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.title}
-                </option>
-              ))}
+              {projects
+                .filter(
+                  (project) =>
+                    !project.hiddenFromMenu || project.id === taskProjectFilter,
+                )
+                .map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.title}
+                  </option>
+                ))}
             </NativeSelect>
           </label>
           <label>

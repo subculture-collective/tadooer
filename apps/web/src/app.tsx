@@ -2398,6 +2398,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onChangeTaskStatus={changeTaskStatus}
           onRemoveTask={removeTask}
           onRecoverTask={recoverTask}
+          organization={{
+            csrfToken: state.session.csrfToken,
+            online: networkOnline,
+            onProjectsChange: setProjects,
+            onTagsChange: setTags,
+          }}
         />
       )}
       {route === "habits" && (
