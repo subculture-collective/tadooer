@@ -413,14 +413,16 @@
       "sourceFeatures": [],
       "exportSections": ["pluginUserData", "pluginMetadata"],
       "issue": 66,
-      "status": "missing",
-      "mapping": "Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.",
-      "acceptance": "Map plugin capabilities and installed metadata to permissioned equivalents or an explicit extension contract.",
-      "offlineSync": "Plugin state must follow the same ownership and synchronization rules as app state.",
+      "status": "partial",
+      "mapping": "pluginUserData entries import as opaque, owner-scoped records (plugin ID, key, up to 1 MiB of text kept code unit for code unit, size, format, provenance) and pluginMetadata as inert enabled flags (ADR 0026). The owner lists, downloads and deletes them under Connections. Tadooer never decodes, parses, renders or runs plugin data, imports no plugin code and has no plugin runtime; plugin secrets are local-only in the source and absent from exports. Plugin capabilities are inventoried in ADR 0026: task hooks and data access are covered by the assistant catalog and MCP, issue providers by linked issues (#30), calendar providers by #50. A permissioned extension runtime needs a separate owner decision.",
+      "acceptance": "Recover every plugin data entry and enabled flag from a real export with matching counts and sizes, download an entry that matches its source value, delete one, and repeat the import without duplicates or restoring the deleted entry. Plugin runtime parity is decision-gated.",
+      "offlineSync": "Online-only: outside the sync change feed and offline cache; listing, download and delete need HTTP, and deletes use If-Match revisions. No plugin code or hook runs on any device.",
       "assistantIssue": 32,
       "taskFields": [],
       "projectFields": [],
-      "tagFields": []
+      "tagFields": [],
+      "pluginUserDataFields": ["id", "data"],
+      "pluginMetadataFields": ["id", "isEnabled"]
     },
     {
       "id": "preferences",

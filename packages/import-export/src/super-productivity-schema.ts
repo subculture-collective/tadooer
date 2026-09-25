@@ -35,7 +35,9 @@ export const superProductivitySections = {
   metric: "blocked",
   // Work start/end and breaks per project, tag and day (ADR 0024).
   timeTracking: "applied",
-  pluginUserData: "blocked",
+  // Opaque plugin data and plugin enabled flags are kept as inert records
+  // since #66 (ADR 0026); their fields are in super-productivity-plugins.ts.
+  pluginUserData: "applied",
   // Counter definitions are configuration; recorded values block (see preview).
   simpleCounter: "blocked",
   planner: "configuration",
@@ -45,7 +47,7 @@ export const superProductivitySections = {
   // provider's id and key (and a Gitea host and repository to rebuild issue
   // addresses); nothing from this section is stored.
   issueProvider: "configuration",
-  pluginMetadata: "configuration",
+  pluginMetadata: "applied",
 } as const satisfies Record<string, SectionDisposition>;
 
 /**

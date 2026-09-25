@@ -3,6 +3,7 @@ export * from "./super-productivity.ts";
 export * from "./super-productivity-apply.ts";
 export * from "./super-productivity-links.ts";
 export * from "./super-productivity-time.ts";
+export * from "./super-productivity-plugins.ts";
 
 export type ImportSourceKind = "ics" | "google_ics";
 

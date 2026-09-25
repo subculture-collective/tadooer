@@ -109,6 +109,8 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "time_reconciliation",
     "work_context_merged",
     "work_context_historical",
+    // ADR 0026: plugin records are kept as inert data.
+    "plugin_data_preserved",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -759,5 +761,6 @@ export const prepareSuperProductivityImport = (
     records: ordered,
     recurrence,
     workContexts: sourceInventory.workContexts,
+    plugins: sourceInventory.plugins,
   };
 };
