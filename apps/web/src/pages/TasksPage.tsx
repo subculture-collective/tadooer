@@ -26,6 +26,7 @@ import { Input } from "../components/ui/input.tsx";
 import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
 import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
+import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
 
 export interface TasksPageProps extends TaskHierarchyActions {
   readonly tasks: readonly Task[];
@@ -322,6 +323,13 @@ export const TasksPage = ({
             renderTask(child, allChildren.get(task.id) ?? [])
           }
           onCreateChildTask={onCreateChildTask}
+        />
+      )}
+      {organization !== undefined && (
+        <TaskLinksPanel
+          taskId={task.id}
+          csrfToken={organization.csrfToken}
+          online={organization.online}
         />
       )}
       <div className="task-actions">

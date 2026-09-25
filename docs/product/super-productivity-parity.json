@@ -279,10 +279,10 @@
       "sourceFeatures": ["issue", "issue-panel"],
       "exportSections": ["issueProvider", "task"],
       "issue": 30,
-      "status": "missing",
-      "mapping": "Issue identity/provider fields and attachments currently block full import; provider credentials are excluded.",
+      "status": "partial",
+      "mapping": "One imported issue link per task keeps provider key, provider instance ID, issue ID, last-updated time and last-synced values as provenance (ADR 0021); a Gitea issue address is rebuilt from the provider host and repository. Links to providers absent from the export are kept and reported. LINK/IMG web addresses open; NOTE text imports; local files, local images and commands are inert unavailable records. Owners add, edit and remove link and note attachments. Provider credentials are never read; live polling, issue refresh and write-back need a fresh provider authorization that does not exist yet.",
       "acceptance": "Recover linked issues and supported attachments; preserve missing/external references and require fresh authorization.",
-      "offlineSync": "External provider operations need durable outcomes; offline links are read-only until qualified.",
+      "offlineSync": "Links and attachments are online-only: outside the sync change feed and offline cache; writes require HTTP with If-Match revisions. No provider operations run.",
       "assistantIssue": 32,
       "taskFields": [
         "attachments",
@@ -297,7 +297,15 @@
         "issueLastSyncedValues"
       ],
       "projectFields": ["issueIntegrationCfgs"],
-      "tagFields": []
+      "tagFields": [],
+      "attachmentFields": [
+        "id",
+        "type",
+        "title",
+        "path",
+        "icon",
+        "originalImgPath"
+      ]
     },
     {
       "id": "reminders",

@@ -52,7 +52,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | time                   | partial        | Active interval tracking exists; source daily history, correction and reporting remain unqualified.                                                     | [#41](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/41) |
 | recurrence             | missing        | Source has daily/weekly/monthly/yearly, completion-based generation, inherited child templates and deleted instances; habits do not substitute.         | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
 | notes                  | partial        | Project, tag and standalone Markdown notes with pin and order are stored and imported; image notes, legacy notes text and checklist/space workflows remain. | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
-| linked-issues          | missing        | Issue identity/provider fields and attachments currently block full import; provider credentials are excluded.                                          | [#30](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/30) |
+| linked-issues          | partial        | One issue link per task (provider key, provider instance ID, issue ID, last-synced provenance; Gitea address rebuilt) and attachments import and are edited online (ADR 0021). Local files and commands stay inert; credentials are never read; live provider access needs fresh authorization. | [#30](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/30) |
 | reminders              | partial        | Per-task and timed-deadline reminder offsets use the ntfy ledger (ADR 0020); exact source offsets import. Legacy reminders section stays blocked.       | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
 | boards                 | missing        | Source board/section/task-view state has no qualified Tadooer mapping.                                                                                  | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
 | counters               | missing        | Source counters and metric history are not equivalent to habit streaks.                                                                                 | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
@@ -99,6 +99,16 @@ system tags never become ordinary tags: unused ones are reported and skipped,
 while Today task order or a marker used by tasks blocks apply. Backlog or
 `noteIds` entries that point at records missing from the export are reported
 and skipped; entries that contradict the task's project block.
+
+Since #30 (ADR 0021), `attachments`, `issueId`, `issueProviderId`,
+`issueType` and `issueLastUpdated` apply; the other last-synced issue fields are
+retained and copied into the link's opaque metadata. From `issueProvider` the
+importer reads only provider `id` and key, plus a Gitea host and repository to
+rebuild issue addresses; nothing from that section is stored. A link to a
+provider absent from the export is kept and reported as
+`issue_provider_missing` without blocking. Attachment fields are reviewed
+separately (`attachmentFields` in the manifest); addresses with embedded
+credentials block apply.
 
 Unknown sections (`unknown_section`), task fields (`unknown_task_field`) and
 project/tag/note fields block apply until they are reviewed.

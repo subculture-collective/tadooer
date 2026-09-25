@@ -108,6 +108,13 @@ import {
   type NotePatchRequest,
   type OrganizationOrderItem,
 } from "@suite/contracts";
+import {
+  taskAttachmentCreateRequestSchema,
+  taskAttachmentPatchRequestSchema,
+  taskLinksResponseSchema,
+  type TaskAttachmentPatchRequest,
+  type TaskLinksResponse,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -1113,3 +1120,60 @@ export const applyTaskImport = (
       body: rawJson,
     },
   );
+
+/**
+ * Task attachments and imported issue links are online-only (ADR 0021): they
+ * are not cached or queued offline, and no call contacts an issue provider.
+ */
+export const getTaskLinks = (taskId: string): Promise<TaskLinksResponse> =>
+  request(`/api/tasks/${taskId}/links`, taskLinksResponseSchema);
+
+export const createTaskAttachment = (
+  taskId: string,
+  input: z.input<typeof taskAttachmentCreateRequestSchema>,
+  csrfToken: string,
+): Promise<TaskLinksResponse> =>
+  request(`/api/tasks/${taskId}/attachments`, taskLinksResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(taskAttachmentCreateRequestSchema.parse(input)),
+  });
+
+export const patchTaskAttachment = (
+  taskId: string,
+  attachmentId: string,
+  revision: number,
+  input: TaskAttachmentPatchRequest,
+  csrfToken: string,
+): Promise<TaskLinksResponse> =>
+  request(
+    `/api/tasks/${taskId}/attachments/${attachmentId}`,
+    taskLinksResponseSchema,
+    {
+      method: "PATCH",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify(taskAttachmentPatchRequestSchema.parse(input)),
+    },
+  );
+
+export const deleteTaskAttachment = (
+  taskId: string,
+  attachmentId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/tasks/${taskId}/attachments/${attachmentId}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const deleteTaskIssueLink = (
+  taskId: string,
+  linkId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/tasks/${taskId}/issue-link/${linkId}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
