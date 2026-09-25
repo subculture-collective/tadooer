@@ -60,6 +60,16 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "application-preferences",
+      "action": "Application preferences and keyboard shortcuts: read the record; change theme, locale, start page, capture defaults, completion and reminder defaults, daily note and shortcut bindings",
+      "webApi": ["getApplicationPreferences", "updateApplicationPreferences"],
+      "catalog": ["application.preferences", "application.update_preferences"],
+      "status": "covered",
+      "issue": 67,
+      "authority": "Dedicated application:read and application:write scopes; one persisted revision shared with browser saves, frozen in the preview and checked again at confirmation. Shortcut conflicts and inactive default projects are rejected at preview.",
+      "source": "apps/server/src/routes/automation-application-preferences.ts"
+    },
+    {
       "id": "notifications",
       "action": "Notification preferences, health and test delivery",
       "webApi": [
@@ -522,12 +532,12 @@
     },
     {
       "id": "future-parity",
-      "action": "Remaining parity actions: boards and views, focus preferences, plugins and application settings",
+      "action": "Remaining parity actions: boards and views, focus preferences and plugins",
       "webApi": [],
       "catalog": [],
       "status": "future",
       "issue": 32,
-      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #63, #65, #66, #67. Hierarchy (#27), archived history (#38), work history (#41), recurrence (#42) and counters and evaluations (#64) have their own rows.",
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #63, #65, #66. Hierarchy (#27), archived history (#38), work history (#41), recurrence (#42), counters and evaluations (#64) and application preferences (#67) have their own rows.",
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {
