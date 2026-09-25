@@ -122,7 +122,7 @@ without a timed deadline.
 
 - **Persisted Today and planner-day order** (`TODAY_TAG.taskIds`,
   `planner.days`). This needs an ordering record, reorder API, drag UI and a
-  sync decision. Follow-up: #TBD (assigned by the coordinator). Today orders
+  sync decision. Follow-up: #98. Today orders
   date-only tasks by ID and overdue work by when it became due.
 - **Backlog planning, plan-for-tomorrow and finish-day rituals.** Project
   backlog data stays blocked under #28; ritual flows stay in the planning
