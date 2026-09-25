@@ -31,6 +31,14 @@ interface TaskListItemProps {
     task: Task,
   ) => Promise<void>;
   readonly onRemoveTimeBlock: (task: Task) => Promise<void>;
+  /** ADR 0027: move controls for a saved day order. */
+  readonly moveControls?:
+    | {
+        readonly canMoveUp: boolean;
+        readonly canMoveDown: boolean;
+        readonly onMove: (direction: -1 | 1) => void;
+      }
+    | undefined;
 }
 
 const taskTime = (value: string, timeZone: string): string =>
@@ -54,6 +62,7 @@ export const TaskListItem = ({
   onChangeTaskStatus,
   onSubmitTimeBlock,
   onRemoveTimeBlock,
+  moveControls,
 }: TaskListItemProps) => {
   const hasNonterminalFocus =
     activeSession !== null &&
@@ -86,6 +95,30 @@ export const TaskListItem = ({
         </p>
       </div>
       <div className="today-task-actions">
+        {moveControls === undefined ? null : (
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={busy || !moveControls.canMoveUp}
+              aria-label={`Move “${task.title}” up`}
+              onClick={() => moveControls.onMove(-1)}
+            >
+              Up
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={busy || !moveControls.canMoveDown}
+              aria-label={`Move “${task.title}” down`}
+              onClick={() => moveControls.onMove(1)}
+            >
+              Down
+            </Button>
+          </>
+        )}
         <Button
           type="button"
           disabled={busy}

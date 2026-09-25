@@ -38,7 +38,9 @@ export const superProductivitySections = {
   pluginUserData: "blocked",
   // Counter definitions are configuration; recorded values block (see preview).
   simpleCounter: "blocked",
-  planner: "configuration",
+  // Planner day order applies as saved day orders since #98 (ADR 0027); its
+  // keys are classified in super-productivity-day-order.ts.
+  planner: "applied",
   boards: "configuration",
   globalConfig: "configuration",
   // Provider configuration holds credentials. The importer reads only each

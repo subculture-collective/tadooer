@@ -113,6 +113,11 @@ const divergentFields = (left: ObjectValue, right: ObjectValue): string[] => {
 export interface SuperProductivityImportOptions {
   /** Owner planning zone; reads source creation times as calendar dates. */
   readonly timeZone?: string;
+  /**
+   * ADR 0027: the owner's current planning date, which receives
+   * TODAY_TAG.taskIds. Defaults to the current date in `timeZone`.
+   */
+  readonly today?: string;
 }
 
 /** Repeat configurations mapped to series, and the instances linked to them. */

@@ -91,12 +91,17 @@ it("keeps Today and board system tags out of ordinary tags", () => {
     "configuration_not_imported",
     "configuration_not_imported",
   ]);
-  // Today's order and used priority markers need #29 / #63 first.
+  // Today's order applies as a saved day order (ADR 0027); an entry that is
+  // not planned for that date is a notice, not a blocker.
+  const today = prepare({
+    tag: state({ TODAY: { id: "TODAY", title: "Today", taskIds: ["t"] } }),
+  });
+  expect(today.report.canApply).toBe(true);
+  expect(today.records.filter(({ kind }) => kind === "tag")).toEqual([]);
   expect(
-    prepare({
-      tag: state({ TODAY: { id: "TODAY", title: "Today", taskIds: ["t"] } }),
-    }).report.canApply,
-  ).toBe(false);
+    today.report.issues.filter(({ code }) => code === "day_order_notice"),
+  ).toHaveLength(2);
+  // Used priority markers need #63 first.
   expect(
     prepare(
       { tag: state({ EM_URGENT: { id: "EM_URGENT", title: "urgent" } }) },

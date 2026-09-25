@@ -197,15 +197,16 @@
         "finish-day-before-close"
       ],
       "exportSections": ["planner", "task"],
-      "issue": 29,
+      "issue": 98,
       "status": "partial",
-      "mapping": "Today queue, timed blocks and date-only planned days (dueDay, owner time zone, exclusive with dueWithTime) exist per ADR 0020. Persisted Today/planner-day order, daily rituals, schedule hygiene and automatic planning still need parity.",
-      "acceptance": "Exercise plan-today/order/reschedule/clear/finish-day and date-only workflows with imported data, including DST.",
-      "offlineSync": "Planned day is online-only like planned start (ADR 0020); snapshots carry it, sync v2 operations do not. Offline planning edits remain #92.",
+      "mapping": "Today queue, timed blocks and date-only planned days (dueDay, owner time zone, exclusive with dueWithTime) exist per ADR 0020. A saved order per owner and date ranks the date-only tasks of Today and each planner day; TODAY_TAG.taskIds imports as the order of the owner's planning date at import and planner.days as each date's order, with missing or non-member entries reported. An owner day start (startOfNextDayTime equivalent, not imported) moves Today's date boundary, and plan-tomorrow assigns tomorrow as the planned day in a chosen order (ADR 0027). Finish-day rituals (#52), schedule hygiene and automatic planning remain.",
+      "acceptance": "Tests cover America/Chicago midnight and DST boundaries, the day start, stale and partial reorders (412), replay, tasks leaving the day, import with missing references and restart. A real-backup import of the Today order and six planner days remains #47.",
+      "offlineSync": "Planned day is online-only like planned start (ADR 0020); snapshots carry it, sync v2 operations do not. Day orders are online-only HTTP records outside the sync feed and offline cache; offline Today shows the derived order and disables reordering. Offline planning edits remain #92.",
       "assistantIssue": 32,
       "taskFields": ["dueWithTime", "dueDay", "hasPlannedTime", "plannedAt"],
       "projectFields": [],
-      "tagFields": []
+      "tagFields": [],
+      "plannerFields": ["days", "addPlannedTasksDialogLastShown"]
     },
     {
       "id": "history",

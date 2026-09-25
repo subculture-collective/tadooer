@@ -2390,6 +2390,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onSubmitTimeBlock={submitTimeBlock}
           onRemoveTimeBlock={removeTimeBlock}
           onViewTasks={() => navigate("tasks")}
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
+          onTasksPlanned={() => void syncNow()}
         />
       )}
       {route === "inbox" && (
@@ -2423,6 +2426,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           calendars={state.baikal.calendars}
           onSubmitTimeBlock={submitPlannerTimeBlock}
           onRemoveTimeBlock={removePlannerTimeBlock}
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
         />
       )}
       {route === "tasks" && (

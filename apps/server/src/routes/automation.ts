@@ -23,6 +23,7 @@ import {
   templateSearchRequestSchema,
   taskHistoryQuerySchema,
   timeReportQuerySchema,
+  dayOrderResourceInputSchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -67,6 +68,13 @@ import {
   previewTimeEntry,
 } from "./automation-time-entries.ts";
 import { timeReportBody } from "./time-history.ts";
+import {
+  confirmDayOrder,
+  dayOrderResourceDate,
+  isDayOrderCommand,
+  previewDayOrder,
+} from "./automation-day-order.ts";
+import { readDayOrder } from "./day-order.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -481,6 +489,32 @@ export const handleAutomation: RouteHandler = async (
         input.data,
         ctx.sessionClock.now().toISOString(),
       );
+    } else if (resource === "day_order.get") {
+      // ADR 0027: one date's saved order; the owner's planning date by default.
+      const input = dayOrderResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_DAY_ORDER_DATE",
+          "Provide a calendar date or omit it for today",
+        );
+        return true;
+      }
+      body = {
+        dayOrder: readDayOrder(
+          database,
+          token.ownerId,
+          dayOrderResourceDate(
+            database,
+            token.ownerId,
+            input.data.date,
+            ctx.sessionClock.now(),
+          ),
+        ),
+      };
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -925,6 +959,16 @@ export const handleAutomation: RouteHandler = async (
       }
       affected.push(...planned.affected);
       baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isDayOrderCommand(command)) {
+      // ADR 0027: no entity revision to freeze; confirmation re-checks the
+      // day order revision and exact membership.
+      const planned = previewDayOrder(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
       taskSummary = planned.summary;
     } else if (isTimeEntryCommand(command)) {
       // ADR 0024: freezes the entry revision, or the task for an addition.
@@ -1873,6 +1917,23 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
         preview.id,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isDayOrderCommand(command)) {
+      const confirmation = confirmDayOrder(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
       );
       if (!confirmation.ok) {
         sendError(

@@ -35,6 +35,11 @@ export interface TodayQueueProps {
   ) => Promise<void>;
   readonly onRemoveTimeBlock: (task: Task) => Promise<void>;
   readonly onViewTasks: () => void;
+  /** ADR 0027: saved order of today's date-only tasks (server IDs). */
+  readonly plannedTodayOrder?: readonly string[] | undefined;
+  /** ADR 0027: moves within today's saved order; absent offline. */
+  readonly onMovePlanned?:
+    ((taskId: string, direction: -1 | 1) => void) | undefined;
 }
 
 export const TodayQueue = ({
@@ -51,6 +56,8 @@ export const TodayQueue = ({
   onSubmitTimeBlock,
   onRemoveTimeBlock,
   onViewTasks,
+  plannedTodayOrder,
+  onMovePlanned,
 }: TodayQueueProps) => {
   const [recentlyCompletedIds, setRecentlyCompletedIds] = useState<
     ReadonlySet<string>
@@ -62,7 +69,13 @@ export const TodayQueue = ({
   const queue =
     preferences === undefined
       ? undefined
-      : buildTodayQueue({ at, timeZone: preferences.timeZone, tasks });
+      : buildTodayQueue({
+          at,
+          timeZone: preferences.timeZone,
+          dayStartsAt: preferences.dayStartsAt,
+          tasks,
+          plannedTodayOrder,
+        });
   const planning =
     queue === undefined
       ? tasks
@@ -118,6 +131,19 @@ export const TodayQueue = ({
       return next;
     });
   };
+  // Only tasks the server already lists in today's order can move (ADR 0027).
+  const saved = new Set(plannedTodayOrder ?? []);
+  const movable = plannedToday.filter((task) => saved.has(task.id));
+  const moveControls = (task: Task, state: TaskListItemState) => {
+    if (state !== "planned-day" || onMovePlanned === undefined)
+      return undefined;
+    const index = movable.findIndex(({ id }) => id === task.id);
+    return {
+      canMoveUp: index > 0,
+      canMoveDown: index !== -1 && index < movable.length - 1,
+      onMove: (direction: -1 | 1) => onMovePlanned(task.id, direction),
+    };
+  };
   const row = (task: Task, state: TaskListItemState) => {
     return (
       <TaskListItem
@@ -137,6 +163,7 @@ export const TodayQueue = ({
         }}
         onSubmitTimeBlock={onSubmitTimeBlock}
         onRemoveTimeBlock={onRemoveTimeBlock}
+        moveControls={moveControls(task, state)}
       />
     );
   };

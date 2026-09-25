@@ -5,6 +5,7 @@ export * from "./task-links.ts";
 export * from "./task-archive.ts";
 export * from "./recurrence.ts";
 export * from "./time-history.ts";
+export * from "./day-order.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -50,6 +51,13 @@ import {
   timeReportQuerySchema,
   timeReportResponseSchema,
 } from "./time-history.ts";
+import {
+  automationDayOrderReorderInputSchema,
+  dayOrderResourceInputSchema,
+  dayOrderResponseSchema,
+  dayOrderSchema,
+  dayStartsAtSchema,
+} from "./day-order.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -357,6 +365,11 @@ export const taskMutationResponseSchema = z.object({
   replayed: z.boolean(),
 });
 
+/** ADR 0027: tasks planned for a date and the date's resulting order. */
+export const dayOrderPlanResponseSchema = z
+  .object({ dayOrder: dayOrderSchema, tasks: z.array(taskSchema) })
+  .strict();
+
 export const taskListResponseSchema = z.object({
   tasks: z.array(taskSchema),
 });
@@ -550,6 +563,8 @@ export const planningPreferencesSchema = z
       .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
       .nullable(),
     timeZone: ianaTimeZoneSchema,
+    /** ADR 0027: local start of a planning day; absent means "00:00". */
+    dayStartsAt: dayStartsAtSchema.optional(),
   })
   .refine(({ workdayStart, workdayEnd }) => workdayStart < workdayEnd, {
     message: "Workday end must follow start",
@@ -1664,6 +1679,7 @@ export const automationOperationSchema = z.enum([
   "recurrence.set_state",
   "recurrence.occurrence",
   "time_entries.mutate",
+  "day_order.reorder",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1875,6 +1891,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationTimeEntryMutationInputSchema,
     }),
     z.object({
+      operation: z.literal("day_order.reorder"),
+      input: automationDayOrderReorderInputSchema,
+    }),
+    z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
     }),
@@ -2068,6 +2088,11 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: automationTimeEntryMutationInputSchema,
+    });
+  if (operation === "day_order.reorder")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationDayOrderReorderInputSchema,
     });
   if (operation === "tasks.assign_project")
     return z.object({
@@ -2285,6 +2310,7 @@ export const automationExecutionResultSchema = z.union([
   taskArchiveMutationResponseSchema,
   recurringSeriesMutationResponseSchema,
   timeEntryMutationResponseSchema,
+  dayOrderResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2480,6 +2506,17 @@ export const automationCatalog = [
     outputSchema: timeReportResponseSchema,
   },
   {
+    id: "day_order.get",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/day-order",
+    mcpName: "suite.day_order.get",
+    mcpUri: "suite://v1/day-order{?date}",
+    inputSchema: dayOrderResourceInputSchema,
+    outputSchema: dayOrderResponseSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2601,7 +2638,8 @@ export const automationCatalog = [
                       : id.startsWith("tasks.") ||
                           id.startsWith("recurrence.") ||
                           id === "subtasks.mutate" ||
-                          id === "time_entries.mutate"
+                          id === "time_entries.mutate" ||
+                          id === "day_order.reorder"
                         ? "tasks:write"
                         : id === "schedule.create_time_block"
                           ? "schedule:write"
@@ -3003,5 +3041,7 @@ export const taskImportApplyResponseSchema = z
       })
       .strict()
       .optional(),
+    /** ADR 0027: dates whose Today or planner-day order was saved. */
+    dayOrders: z.number().int().nonnegative().optional(),
   })
   .strict();

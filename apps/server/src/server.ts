@@ -34,6 +34,7 @@ import { handleTaskHierarchy } from "./routes/task-hierarchy.ts";
 import { handleTaskArchive } from "./routes/task-archive.ts";
 import { handleRecurrence } from "./routes/recurrence.ts";
 import { handleTimeHistory } from "./routes/time-history.ts";
+import { handleDayOrder } from "./routes/day-order.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
@@ -298,6 +299,7 @@ export const startSuiteServer = async (
     handleTaskArchive,
     handleRecurrence,
     handleTimeHistory,
+    handleDayOrder,
     handleChoicePools,
     handleTemplates,
     handleStatic,

@@ -1,4 +1,5 @@
 import { prepareSuperProductivityImport } from "@suite/import-export";
+import { planningDate } from "@suite/domain";
 import {
   superProductivityPreviewSchema,
   superProductivityImportLimits as limits,
@@ -40,9 +41,17 @@ export const handleTaskImport: RouteHandler = async (
   }
   try {
     const input = await readJson(request, limits.bytes);
-    const { report, records, recurrence, workContexts } =
+    const preferences = stores.getPlanningPreferences(session.owner.id);
+    const { report, records, recurrence, workContexts, dayOrders } =
       prepareSuperProductivityImport(JSON.stringify(input), {
-        timeZone: stores.getPlanningPreferences(session.owner.id).timeZone,
+        timeZone: preferences.timeZone,
+        // ADR 0027: TODAY_TAG.taskIds is the order of the owner's current
+        // planning date when the preview or apply runs.
+        today: planningDate(
+          new Date(),
+          preferences.timeZone,
+          preferences.dayStartsAt,
+        ),
       });
     if (url.pathname.endsWith("/preview")) {
       sendJson(response, 200, superProductivityPreviewSchema.parse(report));
@@ -67,7 +76,7 @@ export const handleTaskImport: RouteHandler = async (
           records,
           new Date().toISOString(),
           recurrence,
-          { workContexts },
+          { workContexts, dayOrders },
         );
         sendJson(response, 200, outcome);
       } catch {

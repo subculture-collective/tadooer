@@ -328,6 +328,16 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "day-order",
+      "action": "Read and reorder the saved order of Today and each planned day; plan tasks for tomorrow",
+      "webApi": ["getDayOrders", "reorderDayOrder", "planTasksForDay"],
+      "catalog": ["day_order.get", "day_order.reorder"],
+      "status": "partial",
+      "issue": 98,
+      "authority": "tasks:read for one date's order (the owner's planning date by default); tasks:write for a full-list reorder. A day order has no entity revision to freeze, so confirmation repeats the preview's day-order revision and exact-membership checks. Plan-for-tomorrow has no dedicated tool: the assistant sets planned days with tasks.update and then reorders. Online-only in the browser (ADR 0027).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "templates-read",
       "action": "Template and set libraries",
       "webApi": ["getTemplateLibrary", "getTemplateSets"],
