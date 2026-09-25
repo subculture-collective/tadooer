@@ -17,6 +17,8 @@ export interface PlannerTimeGridProps {
   readonly events: readonly CalendarEventProjection[];
   readonly tasks: readonly Task[];
   readonly onSelectEntry?: (entry: PlannerGridEntry) => void;
+  /** ADR 0027: saved order of each date's date-only tasks. */
+  readonly dayOrders?: ReadonlyMap<string, readonly string[]> | undefined;
 }
 
 export type PlannerGridEntry =
@@ -258,6 +260,7 @@ export function PlannerTimeGrid({
   events,
   tasks,
   onSelectEntry,
+  dayOrders,
 }: PlannerTimeGridProps) {
   const [now, setNow] = useState(() => new Date());
   const days = plannerCalendarDays(range, view, timeZone);
@@ -295,8 +298,23 @@ export function PlannerTimeGrid({
           const allDay = allDayFor(events, day);
           // Date-only tasks have no time; they sit in the all-day lane of
           // their owner-zone day and never create a timed overlap (ADR 0020).
-          const dayTasks = tasks.filter(
-            (task) => task.plannedStart == null && task.plannedDay === day.key,
+          const dayTasks = tasks
+            .filter(
+              (task) =>
+                task.plannedStart == null && task.plannedDay === day.key,
+            )
+            .toSorted((left, right) => left.id.localeCompare(right.id));
+          const rank = new Map(
+            (dayOrders?.get(day.key) ?? []).map((id, position) => [
+              id,
+              position,
+            ]),
+          );
+          // Saved order first, then the derived order (ADR 0027).
+          dayTasks.sort(
+            (left, right) =>
+              (rank.get(left.id) ?? rank.size) -
+              (rank.get(right.id) ?? rank.size),
           );
           const positioned = positionTimedEntries(entries, day);
           const currentTimeTop =

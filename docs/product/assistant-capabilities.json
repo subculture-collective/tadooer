@@ -255,6 +255,21 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "plugin-data",
+      "action": "Imported plugin data: list plugin IDs, keys, sizes and enabled flags; download an entry's data; delete an entry or enabled flag",
+      "webApi": [
+        "getPluginData",
+        "getPluginDataContent",
+        "deletePluginDataEntry",
+        "deletePluginMetadata"
+      ],
+      "catalog": ["plugin_data.list"],
+      "status": "partial",
+      "issue": 66,
+      "authority": "Dedicated plugin_data:read scope lists identity, sizes and flags only; no assistant operation returns plugin data. Download and permanent deletion stay owner-only in the browser (session, CSRF and If-Match revisions). Nothing decodes or runs plugin data. Online-only (ADR 0026).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "checklists",
       "action": "Checklist child create/edit/reorder/delete",
       "webApi": [
@@ -325,6 +340,43 @@
       "status": "covered",
       "issue": 41,
       "authority": "tasks:read for the owner-zone worklog report (at most 366 days); tasks:write for corrections. The preview freezes the entry revision, or the task revision and new entry ID for an addition; confirmation rechecks the 0 to 24 hour task-day bound and running focus. Focus entries and archived history are read-only. Online-only in the browser (ADR 0024).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "counters",
+      "action": "Read counter values with derived streaks; set, raise or lower a day's value; start and stop a stopwatch; create, edit and delete counters",
+      "webApi": [
+        "getCounterHistory",
+        "createCounter",
+        "updateCounter",
+        "deleteCounter",
+        "recordCounterDay",
+        "controlCounterStopwatch"
+      ],
+      "catalog": ["counters.history", "counters.mutate", "counters.record"],
+      "status": "covered",
+      "issue": 64,
+      "authority": "metrics:read for owner-zone counter history (at most 366 days); metrics:write for writes. Day writes name the day revision read (0 when empty) and are rechecked at confirmation; definition edits, deletes and stopwatch start/stop freeze the counter revision. Deleting removes the counter's recorded days. Online-only in the browser (ADR 0025).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "evaluations",
+      "action": "Read daily evaluations with Tadooer focus per day; create or edit a day's evaluation",
+      "webApi": ["getEvaluations", "saveEvaluation"],
+      "catalog": ["evaluations.list", "evaluations.write"],
+      "status": "covered",
+      "issue": 64,
+      "authority": "metrics:read for evaluations and derived focus over at most 366 days; metrics:write for writes, which name the evaluation revision read (0 for a new day). Imported focus session durations are read-only history (ADR 0025).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "day-order",
+      "action": "Read and reorder the saved order of Today and each planned day; plan tasks for tomorrow",
+      "webApi": ["getDayOrders", "reorderDayOrder", "planTasksForDay"],
+      "catalog": ["day_order.get", "day_order.reorder"],
+      "status": "partial",
+      "issue": 98,
+      "authority": "tasks:read for one date's order (the owner's planning date by default); tasks:write for a full-list reorder. A day order has no entity revision to freeze, so confirmation repeats the preview's day-order revision and exact-membership checks. Plan-for-tomorrow has no dedicated tool: the assistant sets planned days with tasks.update and then reorders. Online-only in the browser (ADR 0027).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -470,12 +522,12 @@
     },
     {
       "id": "future-parity",
-      "action": "Remaining parity actions: boards and views, counters and metrics, focus preferences, plugins and application settings",
+      "action": "Remaining parity actions: boards and views, focus preferences, plugins and application settings",
       "webApi": [],
       "catalog": [],
       "status": "future",
       "issue": 32,
-      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #63, #64, #65, #66, #67. Hierarchy (#27), archived history (#38), work history (#41) and recurrence (#42) have their own rows.",
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #63, #65, #66, #67. Hierarchy (#27), archived history (#38), work history (#41), recurrence (#42) and counters and evaluations (#64) have their own rows.",
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {

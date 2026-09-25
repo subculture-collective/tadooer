@@ -60,6 +60,27 @@ export {
   type TimeReportTaskRecord,
 } from "./time-entry-store.ts";
 import {
+  SqliteCounterStore,
+  countersMigration,
+  type ImportedCounter,
+  type ImportedEvaluation,
+} from "./counter-store.ts";
+export {
+  SqliteCounterStore,
+  type CounterDayValueRecord,
+  type CounterDefinitionInput,
+  type CounterImportOutcome,
+  type CounterPatch,
+  type CounterRecord,
+  type CounterViolation,
+  type CounterWriteResult,
+  type DailyEvaluationRecord,
+  type EvaluationPatch,
+  type EvaluationWriteResult,
+  type ImportedCounter,
+  type ImportedEvaluation,
+} from "./counter-store.ts";
+import {
   SqliteTaskArchiveStore,
   taskArchiveMigration,
 } from "./task-archive-store.ts";
@@ -90,6 +111,27 @@ export {
   type RecurringSeriesFields,
   type RecurringSeriesRecord,
 } from "./recurrence-store.ts";
+import {
+  SqlitePluginDataStore,
+  pluginDataMigration,
+  type ImportedPluginDataEntry,
+  type ImportedPluginMetadata,
+} from "./plugin-data-store.ts";
+export {
+  SqlitePluginDataStore,
+  type ImportedPluginDataEntry,
+  type ImportedPluginMetadata,
+  type PluginDataDeleteResult,
+  type PluginDataEntryRecord,
+  type PluginMetadataRecord,
+} from "./plugin-data-store.ts";
+import { SqliteDayOrderStore, dayOrderMigration } from "./day-order-store.ts";
+export {
+  SqliteDayOrderStore,
+  type DayOrderPlanResult,
+  type DayOrderRecord,
+  type DayOrderReorderResult,
+} from "./day-order-store.ts";
 export {
   SqliteTaskHierarchyStore,
   TaskHierarchyError,
@@ -655,6 +697,8 @@ export interface PlanningPreferencesRecord {
   readonly breakStart: string | null;
   readonly breakEnd: string | null;
   readonly timeZone: string;
+  /** ADR 0027: local start of a planning day; stored default "00:00". */
+  readonly dayStartsAt?: string | undefined;
 }
 export interface NotificationPreferencesRecord {
   readonly enabled: boolean;
@@ -1479,6 +1523,9 @@ const migrations: readonly Migration[] = [
   taskArchiveMigration,
   recurrenceMigration,
   timeHistoryMigration,
+  countersMigration,
+  pluginDataMigration,
+  dayOrderMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1499,9 +1546,36 @@ export class SuiteDatabase {
   readonly taskArchive: SqliteTaskArchiveStore;
   readonly recurrence: SqliteRecurrenceStore;
   readonly timeEntries: SqliteTimeEntryStore;
+  readonly counters: SqliteCounterStore;
+  readonly pluginData: SqlitePluginDataStore;
+  readonly dayOrders: SqliteDayOrderStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.counters = new SqliteCounterStore(database);
+    this.dayOrders = new SqliteDayOrderStore(database, {
+      planTask: (ownerId, taskId, expectedRevision, date, now) => {
+        const task = this.getTask(ownerId, taskId);
+        if (task?.status !== "open") return "invalid";
+        if (task.revision !== expectedRevision) return "conflict";
+        if (task.plannedStart === null && task.plannedDay === date)
+          return "unchanged";
+        if (this.getTaskCalendarBlock(ownerId, taskId) !== undefined)
+          return "blocked";
+        const result = this.patchTask(
+          ownerId,
+          taskId,
+          expectedRevision,
+          { plannedDay: date },
+          now,
+        );
+        return result.kind === "updated"
+          ? "applied"
+          : result.kind === "precondition-failed"
+            ? "conflict"
+            : "invalid";
+      },
+    });
     this.recurrence = new SqliteRecurrenceStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
         this.getTask(ownerId, taskId, includeInactive),
@@ -1535,6 +1609,7 @@ export class SuiteDatabase {
         this.getTask(ownerId, taskId, includeInactive),
     });
     this.notes = new SqliteNoteStore(database);
+    this.pluginData = new SqlitePluginDataStore(database);
     this.taskArchive = new SqliteTaskArchiveStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
         this.getTask(ownerId, taskId, includeInactive),
@@ -3171,11 +3246,30 @@ export class SuiteDatabase {
         ImportedWorkContextDay,
         "projectId" | "tagId"
       >[];
+      /** Counters with day values and daily evaluations (ADR 0025). */
+      readonly counters?: readonly ImportedCounter[];
+      readonly evaluations?: readonly ImportedEvaluation[];
+      /** Opaque plugin data and inert plugin metadata (ADR 0026). */
+      readonly pluginData?: {
+        readonly entries: readonly ImportedPluginDataEntry[];
+        readonly plugins: readonly ImportedPluginMetadata[];
+      };
+      /**
+       * ADR 0027: Today and planner-day orders by source task ID. A date's
+       * order is saved only when the date has no saved order yet.
+       */
+      readonly dayOrders?: readonly {
+        readonly date: string;
+        readonly sourceTaskIds: readonly string[];
+      }[];
     } = {},
   ): {
     created: number;
     existing: number;
     recurringSeries?: { created: number; existing: number };
+    counters?: ReturnType<SqliteCounterStore["importInTransaction"]>;
+    pluginData?: { created: number; existing: number };
+    dayOrders?: number;
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3438,11 +3532,58 @@ export class SuiteDatabase {
               randomUUID,
               now,
             );
+      // Only an export with counters or metric days reports their counts.
+      const counters =
+        (options.counters ?? []).length === 0 &&
+        (options.evaluations ?? []).length === 0
+          ? undefined
+          : this.counters.importInTransaction(
+              ownerId,
+              {
+                counters: options.counters ?? [],
+                evaluations: options.evaluations ?? [],
+              },
+              randomUUID,
+              now,
+            );
+      // Only an export with plugin records reports plugin data counts.
+      const pluginData =
+        options.pluginData === undefined ||
+        options.pluginData.entries.length +
+          options.pluginData.plugins.length ===
+          0
+          ? undefined
+          : this.pluginData.importInTransaction(
+              ownerId,
+              options.pluginData,
+              randomUUID,
+              now,
+            );
+      // Orders last: membership depends on final planned days and archive
+      // state. Unknown source IDs were reported by the preview and are
+      // dropped here.
+      const dayOrders =
+        options.dayOrders === undefined || options.dayOrders.length === 0
+          ? undefined
+          : this.dayOrders.importOrders(
+              ownerId,
+              options.dayOrders.map((order) => ({
+                date: order.date,
+                taskIds: order.sourceTaskIds.flatMap((sourceId) => {
+                  const target = targets.get(`task:${sourceId}`);
+                  return target === undefined ? [] : [target];
+                }),
+              })),
+              now,
+            );
       this.#database.exec("COMMIT;");
       return {
         created,
         existing,
         ...(recurringSeries === undefined ? {} : { recurringSeries }),
+        ...(counters === undefined ? {} : { counters }),
+        ...(pluginData === undefined ? {} : { pluginData }),
+        ...(dayOrders === undefined ? {} : { dayOrders }),
       };
     } catch (error) {
       this.#database.exec("ROLLBACK;");

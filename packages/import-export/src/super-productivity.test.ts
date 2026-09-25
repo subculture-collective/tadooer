@@ -61,6 +61,16 @@ describe("Super Productivity migration preview", () => {
         datedExcessMs: 0,
         workContextDays: 0,
       },
+      // No counters or metric days in this export (ADR 0025).
+      counters: {
+        definitions: 0,
+        dayValues: 0,
+        clickCount: 0,
+        stopwatchMs: 0,
+        evaluations: 0,
+        focusSessions: 0,
+        focusSessionMs: 0,
+      },
     });
     expect(
       report.tasks.find((task) => task.sourceId === "child"),

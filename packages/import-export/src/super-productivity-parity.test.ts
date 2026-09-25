@@ -9,6 +9,15 @@ import {
 } from "./super-productivity-schema.ts";
 import { superProductivityAttachmentFields } from "./super-productivity-links.ts";
 import { superProductivityRepeatCfgFields } from "./super-productivity-recurrence.ts";
+import {
+  superProductivityMetricFields,
+  superProductivitySimpleCounterFields,
+} from "./super-productivity-counters.ts";
+import {
+  superProductivityPluginMetadataFields,
+  superProductivityPluginUserDataFields,
+} from "./super-productivity-plugins.ts";
+import { superProductivityPlannerKeys } from "./super-productivity-day-order.ts";
 
 type FieldKey =
   | "taskFields"
@@ -16,7 +25,12 @@ type FieldKey =
   | "tagFields"
   | "noteFields"
   | "attachmentFields"
-  | "repeatCfgFields";
+  | "repeatCfgFields"
+  | "simpleCounterFields"
+  | "metricFields"
+  | "pluginUserDataFields"
+  | "pluginMetadataFields"
+  | "plannerFields";
 const manifest = JSON.parse(
   readFileSync(
     new URL(
@@ -44,6 +58,11 @@ it("assigns every reviewed entity field to exactly one workflow row", () => {
     ["noteFields", superProductivityNoteFields],
     ["attachmentFields", superProductivityAttachmentFields],
     ["repeatCfgFields", superProductivityRepeatCfgFields],
+    ["simpleCounterFields", superProductivitySimpleCounterFields],
+    ["metricFields", superProductivityMetricFields],
+    ["pluginUserDataFields", superProductivityPluginUserDataFields],
+    ["pluginMetadataFields", superProductivityPluginMetadataFields],
+    ["plannerFields", superProductivityPlannerKeys],
   ] as const) {
     const mapped = manifest.rows.flatMap((row) => row[key] ?? []);
     expect(new Set(mapped).size, key).toBe(mapped.length);

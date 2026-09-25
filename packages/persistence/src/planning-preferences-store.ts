@@ -17,6 +17,7 @@ export class SqlitePlanningPreferencesStore implements PlanningPreferencesStore 
           breakStart: "12:00",
           breakEnd: "12:30",
           timeZone: "America/Chicago",
+          dayStartsAt: "00:00",
         }
       : {
           workingDays: JSON.parse(String(row.working_days_json)) as number[],
@@ -25,6 +26,7 @@ export class SqlitePlanningPreferencesStore implements PlanningPreferencesStore 
           breakStart: row.break_start === null ? null : String(row.break_start),
           breakEnd: row.break_end === null ? null : String(row.break_end),
           timeZone: String(row.time_zone),
+          dayStartsAt: row.day_starts_at ?? "00:00",
         };
   }
 
@@ -33,9 +35,14 @@ export class SqlitePlanningPreferencesStore implements PlanningPreferencesStore 
     record: PlanningPreferencesRecord,
   ): PlanningPreferencesRecord {
     const now = new Date().toISOString();
+    // ADR 0027: a client that omits dayStartsAt keeps the saved value.
+    const dayStartsAt =
+      record.dayStartsAt ??
+      this.getPlanningPreferences(ownerId).dayStartsAt ??
+      "00:00";
     this.db
       .prepare(
-        `INSERT INTO owner_planning_preferences (owner_id,working_days_json,workday_start,workday_end,break_start,break_end,time_zone,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET working_days_json=excluded.working_days_json,workday_start=excluded.workday_start,workday_end=excluded.workday_end,break_start=excluded.break_start,break_end=excluded.break_end,time_zone=excluded.time_zone,updated_at=excluded.updated_at`,
+        `INSERT INTO owner_planning_preferences (owner_id,working_days_json,workday_start,workday_end,break_start,break_end,time_zone,day_starts_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET working_days_json=excluded.working_days_json,workday_start=excluded.workday_start,workday_end=excluded.workday_end,break_start=excluded.break_start,break_end=excluded.break_end,time_zone=excluded.time_zone,day_starts_at=excluded.day_starts_at,updated_at=excluded.updated_at`,
       )
       .run(
         ownerId,
@@ -45,6 +52,7 @@ export class SqlitePlanningPreferencesStore implements PlanningPreferencesStore 
         record.breakStart,
         record.breakEnd,
         record.timeZone,
+        dayStartsAt,
         now,
       );
     return this.getPlanningPreferences(ownerId);

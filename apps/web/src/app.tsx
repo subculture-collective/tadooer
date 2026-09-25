@@ -16,6 +16,7 @@ import {
 import { HabitsPage } from "./pages/HabitsPage.tsx";
 import { HistoryPage } from "./pages/HistoryPage.tsx";
 import { WorklogPage } from "./pages/WorklogPage.tsx";
+import { CountersPage } from "./pages/CountersPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
@@ -2390,6 +2391,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onSubmitTimeBlock={submitTimeBlock}
           onRemoveTimeBlock={removeTimeBlock}
           onViewTasks={() => navigate("tasks")}
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
+          onTasksPlanned={() => void syncNow()}
         />
       )}
       {route === "inbox" && (
@@ -2423,6 +2427,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           calendars={state.baikal.calendars}
           onSubmitTimeBlock={submitPlannerTimeBlock}
           onRemoveTimeBlock={removePlannerTimeBlock}
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
         />
       )}
       {route === "tasks" && (
@@ -2484,6 +2490,13 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           timeZone={state.planningPreferences?.timeZone ?? "UTC"}
           tasks={state.tasks.filter((task) => task.deletedAt === null)}
           projects={projects}
+        />
+      )}
+      {route === "counters" && (
+        <CountersPage
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
+          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
         />
       )}
       {route === "habits" && (

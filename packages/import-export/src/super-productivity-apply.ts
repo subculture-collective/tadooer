@@ -12,6 +12,11 @@ import {
 } from "./super-productivity.ts";
 import type { SourceTimeEntry } from "./super-productivity-time.ts";
 import {
+  mapSuperProductivityDayOrders,
+  type DayOrderTask,
+} from "./super-productivity-day-order.ts";
+import { localDate } from "./super-productivity-recurrence.ts";
+import {
   fieldsWith,
   populated,
   superProductivityNoteFields,
@@ -113,6 +118,14 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "time_reconciliation",
     "work_context_merged",
     "work_context_historical",
+    // ADR 0025 counters and evaluations: explained, nothing silently dropped.
+    "counter_notice",
+    "counter_reconciliation",
+    "metric_field_retained",
+    // ADR 0026: plugin records are kept as inert data.
+    "plugin_data_preserved",
+    // ADR 0027: Today and planner-day order entries that are not applied.
+    "day_order_notice",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -325,12 +338,14 @@ export const prepareSuperProductivityImport = (
       const archived = inventoried?.archived === true;
       if (kind === "tag" && systemTags.has(sourceId)) {
         // Derived views and board markers are never ordinary imported tags.
-        if (sourceId === "TODAY" && strings(source.taskIds).length > 0)
-          problem(
-            sourceId,
-            "Today's task order needs date-only planning parity (#29); it is not an ordinary tag",
-          );
-        else if (referencedTags.has(sourceId))
+        // Today's task order applies as a saved day order (ADR 0027).
+        if (sourceId === "TODAY") {
+          if (strings(source.taskIds).length === 0)
+            notice(
+              sourceId,
+              "Super Productivity system tag is a derived view and is not imported",
+            );
+        } else if (referencedTags.has(sourceId))
           problem(
             sourceId,
             "Tasks use this Super Productivity system tag; priority and board markers need board parity (#63) and are not imported as ordinary tags",
@@ -750,8 +765,42 @@ export const prepareSuperProductivityImport = (
     ...records.filter(({ kind }) => kind === "task"),
     ...byOrder(noteRecords, noteOrder),
   ];
-  if (ordered.length === 0 && recurrence.series.length === 0)
+  if (
+    ordered.length === 0 &&
+    recurrence.series.length === 0 &&
+    sourceInventory.counters.length === 0 &&
+    sourceInventory.evaluations.length === 0
+  )
     problem("export", "No supported records to import");
+  // ADR 0027: Today and planner-day order, over the tasks as imported.
+  const dayOrderTasks = new Map<string, DayOrderTask>(
+    records
+      .filter(({ kind }) => kind === "task")
+      .map((record) => [
+        record.sourceId,
+        {
+          sourceId: record.sourceId,
+          archived: record.archived === true,
+          completed: record.completedAt !== null,
+          plannedStart: record.plannedStart,
+          plannedDay: record.plannedDay,
+        },
+      ]),
+  );
+  const dayOrders = mapSuperProductivityDayOrders({
+    todayTaskIds: object(tagEntities.TODAY).taskIds,
+    planner: data.planner,
+    startOfNextDayTime: object(object(data.globalConfig).misc)
+      .startOfNextDayTime,
+    today:
+      options.today ??
+      localDate(Date.now(), options.timeZone ?? "UTC") ??
+      new Date().toISOString().slice(0, 10),
+    tasks: dayOrderTasks,
+    problem,
+    notice: (sourceId, detail) =>
+      issues.push({ code: "day_order_notice", sourceId, detail }),
+  });
   const reported = issues.map((issue) => ({
     ...issue,
     blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
@@ -769,5 +818,9 @@ export const prepareSuperProductivityImport = (
     records: ordered,
     recurrence,
     workContexts: sourceInventory.workContexts,
+    counters: sourceInventory.counters,
+    evaluations: sourceInventory.evaluations,
+    plugins: sourceInventory.plugins,
+    dayOrders,
   };
 };

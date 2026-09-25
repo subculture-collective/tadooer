@@ -5,6 +5,9 @@ export * from "./task-links.ts";
 export * from "./task-archive.ts";
 export * from "./recurrence.ts";
 export * from "./time-history.ts";
+export * from "./counters.ts";
+export * from "./plugin-data.ts";
+export * from "./day-order.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -50,6 +53,25 @@ import {
   timeReportQuerySchema,
   timeReportResponseSchema,
 } from "./time-history.ts";
+import {
+  automationCounterMutationInputSchema,
+  automationCounterRecordInputSchema,
+  automationEvaluationWriteInputSchema,
+  counterHistoryQuerySchema,
+  counterHistoryResponseSchema,
+  counterMutationResponseSchema,
+  evaluationListQuerySchema,
+  evaluationListResponseSchema,
+  evaluationMutationResponseSchema,
+} from "./counters.ts";
+import { pluginDataListResponseSchema } from "./plugin-data.ts";
+import {
+  automationDayOrderReorderInputSchema,
+  dayOrderResourceInputSchema,
+  dayOrderResponseSchema,
+  dayOrderSchema,
+  dayStartsAtSchema,
+} from "./day-order.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -357,6 +379,11 @@ export const taskMutationResponseSchema = z.object({
   replayed: z.boolean(),
 });
 
+/** ADR 0027: tasks planned for a date and the date's resulting order. */
+export const dayOrderPlanResponseSchema = z
+  .object({ dayOrder: dayOrderSchema, tasks: z.array(taskSchema) })
+  .strict();
+
 export const taskListResponseSchema = z.object({
   tasks: z.array(taskSchema),
 });
@@ -550,6 +577,8 @@ export const planningPreferencesSchema = z
       .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
       .nullable(),
     timeZone: ianaTimeZoneSchema,
+    /** ADR 0027: local start of a planning day; absent means "00:00". */
+    dayStartsAt: dayStartsAtSchema.optional(),
   })
   .refine(({ workdayStart, workdayEnd }) => workdayStart < workdayEnd, {
     message: "Workday end must follow start",
@@ -1587,6 +1616,10 @@ export const automationTokenScopeSchema = z.enum([
   "notes:write",
   "task_links:read",
   "task_links:write",
+  "metrics:read",
+  "metrics:write",
+  // Imported plugin data (ADR 0026): listing only, never the data itself.
+  "plugin_data:read",
 ]);
 
 export const automationTokenSchema = z
@@ -1664,6 +1697,10 @@ export const automationOperationSchema = z.enum([
   "recurrence.set_state",
   "recurrence.occurrence",
   "time_entries.mutate",
+  "counters.mutate",
+  "counters.record",
+  "evaluations.write",
+  "day_order.reorder",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1875,6 +1912,22 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationTimeEntryMutationInputSchema,
     }),
     z.object({
+      operation: z.literal("counters.mutate"),
+      input: automationCounterMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("counters.record"),
+      input: automationCounterRecordInputSchema,
+    }),
+    z.object({
+      operation: z.literal("evaluations.write"),
+      input: automationEvaluationWriteInputSchema,
+    }),
+    z.object({
+      operation: z.literal("day_order.reorder"),
+      input: automationDayOrderReorderInputSchema,
+    }),
+    z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
     }),
@@ -2069,6 +2122,26 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationTimeEntryMutationInputSchema,
     });
+  if (operation === "counters.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCounterMutationInputSchema,
+    });
+  if (operation === "counters.record")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCounterRecordInputSchema,
+    });
+  if (operation === "evaluations.write")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationEvaluationWriteInputSchema,
+    });
+  if (operation === "day_order.reorder")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationDayOrderReorderInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2200,6 +2273,8 @@ export const automationAffectedEntitySchema = z
       "planning_placeholder",
       "pool_item",
       "recurring_series",
+      "counter",
+      "daily_evaluation",
     ]),
     entityId: entityIdSchema,
   })
@@ -2224,6 +2299,8 @@ const existingAutomationBaseRevisionSchema = z
       "planning_placeholder",
       "pool_item",
       "recurring_series",
+      "counter",
+      "daily_evaluation",
     ]),
     entityId: entityIdSchema,
     revision: revisionSchema,
@@ -2285,6 +2362,9 @@ export const automationExecutionResultSchema = z.union([
   taskArchiveMutationResponseSchema,
   recurringSeriesMutationResponseSchema,
   timeEntryMutationResponseSchema,
+  counterMutationResponseSchema,
+  evaluationMutationResponseSchema,
+  dayOrderResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2480,6 +2560,39 @@ export const automationCatalog = [
     outputSchema: timeReportResponseSchema,
   },
   {
+    id: "counters.history",
+    kind: "resource",
+    scopes: ["metrics:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/counters",
+    mcpName: "suite.counters.history",
+    mcpUri: "suite://v1/counters{?from,to}",
+    inputSchema: counterHistoryQuerySchema,
+    outputSchema: counterHistoryResponseSchema,
+  },
+  {
+    id: "evaluations.list",
+    kind: "resource",
+    scopes: ["metrics:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/evaluations",
+    mcpName: "suite.evaluations.list",
+    mcpUri: "suite://v1/evaluations{?from,to}",
+    inputSchema: evaluationListQuerySchema,
+    outputSchema: evaluationListResponseSchema,
+  },
+  {
+    id: "day_order.get",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/day-order",
+    mcpName: "suite.day_order.get",
+    mcpUri: "suite://v1/day-order{?date}",
+    inputSchema: dayOrderResourceInputSchema,
+    outputSchema: dayOrderResponseSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2533,6 +2646,17 @@ export const automationCatalog = [
     mcpUri: "suite://v1/task-links{?taskId}",
     inputSchema: taskLinksResourceInputSchema,
     outputSchema: taskLinksResponseSchema,
+  },
+  {
+    id: "plugin_data.list",
+    kind: "resource",
+    scopes: ["plugin_data:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/plugin-data",
+    mcpName: "suite.plugin_data.list",
+    mcpUri: "suite://v1/plugin-data",
+    inputSchema: z.object({}).strict(),
+    outputSchema: pluginDataListResponseSchema,
   },
   {
     id: "active-session.get",
@@ -2598,19 +2722,22 @@ export const automationCatalog = [
                     ? "task_links:write"
                     : id === "habits.mutate"
                       ? "habits:write"
-                      : id.startsWith("tasks.") ||
-                          id.startsWith("recurrence.") ||
-                          id === "subtasks.mutate" ||
-                          id === "time_entries.mutate"
-                        ? "tasks:write"
-                        : id === "schedule.create_time_block"
-                          ? "schedule:write"
-                          : id.startsWith("templates.") ||
-                              id.startsWith("template_sets.")
-                            ? "templates:write"
-                            : id === "placeholders.resolve"
-                              ? "pools:write"
-                              : "focus:write",
+                      : id.startsWith("counters.") || id === "evaluations.write"
+                        ? "metrics:write"
+                        : id.startsWith("tasks.") ||
+                            id.startsWith("recurrence.") ||
+                            id === "subtasks.mutate" ||
+                            id === "time_entries.mutate" ||
+                            id === "day_order.reorder"
+                          ? "tasks:write"
+                          : id === "schedule.create_time_block"
+                            ? "schedule:write"
+                            : id.startsWith("templates.") ||
+                                id.startsWith("template_sets.")
+                              ? "templates:write"
+                              : id === "placeholders.resolve"
+                                ? "pools:write"
+                                : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -2635,6 +2762,7 @@ export const automationCatalog = [
       "habits:write",
       "notes:write",
       "task_links:write",
+      "metrics:write",
     ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",
@@ -2953,6 +3081,18 @@ export const superProductivityPreviewSchema = z.object({
         workContextDays: z.number().int().nonnegative(),
       })
       .optional(),
+    /** Counters and daily evaluations (ADR 0025). */
+    counters: z
+      .object({
+        definitions: z.number().int().nonnegative(),
+        dayValues: z.number().int().nonnegative(),
+        clickCount: z.number().int().nonnegative(),
+        stopwatchMs: z.number().int().nonnegative(),
+        evaluations: z.number().int().nonnegative(),
+        focusSessions: z.number().int().nonnegative(),
+        focusSessionMs: z.number().int().nonnegative(),
+      })
+      .optional(),
   }),
   tasks: z.array(
     z.object({
@@ -3003,5 +3143,27 @@ export const taskImportApplyResponseSchema = z
       })
       .strict()
       .optional(),
+    /** ADR 0025: counters, their day values and daily evaluations. */
+    counters: z
+      .object({
+        created: z.number().int().nonnegative(),
+        existing: z.number().int().nonnegative(),
+        dayValuesCreated: z.number().int().nonnegative(),
+        dayValuesExisting: z.number().int().nonnegative(),
+        evaluationsCreated: z.number().int().nonnegative(),
+        evaluationsExisting: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    /** ADR 0026: opaque plugin data entries and plugin metadata records. */
+    pluginData: z
+      .object({
+        created: z.number().int().nonnegative(),
+        existing: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    /** ADR 0027: dates whose Today or planner-day order was saved. */
+    dayOrders: z.number().int().nonnegative().optional(),
   })
   .strict();

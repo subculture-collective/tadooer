@@ -32,20 +32,26 @@ export const superProductivitySections = {
   menuTree: "applied",
   section: "blocked",
   reminders: "blocked",
-  metric: "blocked",
+  // Metric days apply as daily evaluations since #64 (ADR 0025); their
+  // fields are classified in super-productivity-counters.ts.
+  metric: "applied",
   // Work start/end and breaks per project, tag and day (ADR 0024).
   timeTracking: "applied",
-  pluginUserData: "blocked",
-  // Counter definitions are configuration; recorded values block (see preview).
-  simpleCounter: "blocked",
-  planner: "configuration",
+  // Opaque plugin data and plugin enabled flags are kept as inert records
+  // since #66 (ADR 0026); their fields are in super-productivity-plugins.ts.
+  pluginUserData: "applied",
+  // Counters and their day values apply since #64 (ADR 0025).
+  simpleCounter: "applied",
+  // Planner day order applies as saved day orders since #98 (ADR 0027); its
+  // keys are classified in super-productivity-day-order.ts.
+  planner: "applied",
   boards: "configuration",
   globalConfig: "configuration",
   // Provider configuration holds credentials. The importer reads only each
   // provider's id and key (and a Gitea host and repository to rebuild issue
   // addresses); nothing from this section is stored.
   issueProvider: "configuration",
-  pluginMetadata: "configuration",
+  pluginMetadata: "applied",
 } as const satisfies Record<string, SectionDisposition>;
 
 /**

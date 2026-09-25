@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   BaikalStatusResponse,
   DayPlanResponse,
@@ -8,6 +9,7 @@ import { GooglePlanning } from "../google-planning.tsx";
 import { CalendarMigration } from "../calendar-migration.tsx";
 import { AssistantAccess } from "../components/AssistantAccess.tsx";
 import { SuperProductivityImport } from "../components/SuperProductivityImport.tsx";
+import { ImportedPluginData } from "../components/ImportedPluginData.tsx";
 import { Alert, AlertDescription } from "../components/ui/alert.tsx";
 import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
 import { EmptyState } from "../components/ui/empty-state.tsx";
@@ -44,6 +46,8 @@ export const ConnectionsPage = ({
   onDisconnectGoogle,
   onSavePlanningPreferences,
 }: ConnectionsPageProps) => {
+  // Reloads the imported plugin data list after an import (ADR 0026).
+  const [imports, setImports] = useState(0);
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
@@ -51,7 +55,14 @@ export const ConnectionsPage = ({
         description="Manage imports, assistant access, and calendar integrations."
       />
       <AssistantAccess csrfToken={csrfToken} />
-      <SuperProductivityImport csrfToken={csrfToken} onApplied={onTaskImport} />
+      <SuperProductivityImport
+        csrfToken={csrfToken}
+        onApplied={async () => {
+          setImports((count) => count + 1);
+          await onTaskImport();
+        }}
+      />
+      <ImportedPluginData csrfToken={csrfToken} refreshKey={imports} />
       {calendarMessage && (
         <Alert variant="info" role="status" aria-live="polite">
           <AlertDescription>{calendarMessage}</AlertDescription>

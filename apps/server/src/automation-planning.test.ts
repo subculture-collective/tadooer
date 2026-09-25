@@ -99,7 +99,7 @@ it("shares browser planning reads and redacted notification health with explicit
         planningPreferencesSchema.parse(
           await (await read(schedule.token, "planning-preferences")).json(),
         ),
-      ).toEqual(preferences);
+      ).toEqual({ ...preferences, dayStartsAt: "00:00" });
       for (const at of [
         "2026-03-08T07:30:00.000Z",
         "2026-11-01T07:30:00.000Z",

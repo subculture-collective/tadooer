@@ -91,12 +91,17 @@ it("keeps Today and board system tags out of ordinary tags", () => {
     "configuration_not_imported",
     "configuration_not_imported",
   ]);
-  // Today's order and used priority markers need #29 / #63 first.
+  // Today's order applies as a saved day order (ADR 0027); an entry that is
+  // not planned for that date is a notice, not a blocker.
+  const today = prepare({
+    tag: state({ TODAY: { id: "TODAY", title: "Today", taskIds: ["t"] } }),
+  });
+  expect(today.report.canApply).toBe(true);
+  expect(today.records.filter(({ kind }) => kind === "tag")).toEqual([]);
   expect(
-    prepare({
-      tag: state({ TODAY: { id: "TODAY", title: "Today", taskIds: ["t"] } }),
-    }).report.canApply,
-  ).toBe(false);
+    today.report.issues.filter(({ code }) => code === "day_order_notice"),
+  ).toHaveLength(2);
+  // Used priority markers need #63 first.
   expect(
     prepare(
       { tag: state({ EM_URGENT: { id: "EM_URGENT", title: "urgent" } }) },
@@ -260,30 +265,37 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
   const codes = (report: ReturnType<typeof prepare>) =>
     report.issues.map(({ code }) => code);
 
-  // Configuration is reported without blocking; default counters are setup.
+  // Configuration is reported without blocking. Counters and metric days
+  // apply since #64 (ADR 0025).
   const configured = prepare({
     boards: { boardCfgs: [{ id: "kanban" }] },
     menuTree: { projectTree: [], tagTree: [] },
-    simpleCounter: state({ c: { id: "c", countOnDay: {} } }),
+    simpleCounter: state({
+      c: { id: "c", title: "C", type: "ClickCounter", countOnDay: {} },
+    }),
+    metric: state({ "2026-09-24": { id: "2026-09-24" } }),
     note: { ...state({}), todayOrder: [] },
     timeTracking: { project: {}, tag: {} },
   });
   expect(configured.canApply).toBe(true);
   expect(codes(configured)).toEqual([
     "configuration_not_imported",
-    "configuration_not_imported",
+    "counter_reconciliation",
   ]);
 
-  for (const extra of [
-    { metric: state({ "2026-09-24": { id: "2026-09-24" } }) },
-    { reminders: [{ id: "r" }] },
-    { pluginUserData: [{ id: "plugin", data: "{}" }] },
-    { simpleCounter: state({ c: { id: "c", countOnDay: { d: 2 } } }) },
-  ]) {
+  for (const extra of [{ reminders: [{ id: "r" }] }]) {
     const report = prepare(extra);
     expect(report.canApply).toBe(false);
     expect(codes(report)).toContain("unsupported_section");
   }
+  // Plugin data is kept as inert records since #66 (ADR 0026); only a
+  // malformed shape blocks.
+  expect(
+    codes(prepare({ pluginUserData: [{ id: "plugin", data: "{}" }] })),
+  ).toEqual(["plugin_data_preserved"]);
+  expect(codes(prepare({ pluginUserData: { plugin: "{}" } }))).toEqual([
+    "plugin_data_invalid",
+  ]);
   // Work start/end records apply since #41; malformed ones block.
   expect(
     prepare({

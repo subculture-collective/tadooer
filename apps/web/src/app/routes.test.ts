@@ -7,6 +7,7 @@ describe("routeFromPath", () => {
     ["/tasks", "tasks"],
     ["/history", "history"],
     ["/worklog", "worklog"],
+    ["/counters", "counters"],
     ["/unknown", "today"],
   ] as const)("maps %s to %s", (path, expected) => {
     expect(routeFromPath(path)).toBe(expected);

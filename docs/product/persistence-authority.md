@@ -4,12 +4,12 @@
 
 The retained adapters have live callers:
 
-| Adapter | Caller and responsibility |
-| --- | --- |
-| `SqliteHabitStore` | `SuiteDatabase.habits`; habit routes and automation, with sync callback using the same connection |
-| `SqliteCredentialStore` | `SuiteDatabase.credentials`; connector credential and Google cursor methods |
-| `SqliteCalendarProjectionStore` | `SuiteDatabase.calendarProjections`; calendar projection and write-reservation methods |
-| `SqlitePlanningPreferencesStore` | `SuiteDatabase.planningPreferences`; planning preference reads and writes |
+| Adapter                          | Caller and responsibility                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `SqliteHabitStore`               | `SuiteDatabase.habits`; habit routes and automation, with sync callback using the same connection |
+| `SqliteCredentialStore`          | `SuiteDatabase.credentials`; connector credential and Google cursor methods                       |
+| `SqliteCalendarProjectionStore`  | `SuiteDatabase.calendarProjections`; calendar projection and write-reservation methods            |
+| `SqlitePlanningPreferencesStore` | `SuiteDatabase.planningPreferences`; planning preference reads and writes                         |
 
 Issue #74 removed the uninstantiated automation, notification, task, organization, checklist, reuse, sync, import, feed, owner, session and metadata store copies. Their unused interfaces and the unconstructed `ServerStores` aggregate were also removed. In particular there is no alternate metadata path with a hard-coded migration count, or alternate task path that can omit newer deadline and field-version semantics.
 

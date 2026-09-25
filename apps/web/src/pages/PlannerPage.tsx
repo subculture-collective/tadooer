@@ -16,7 +16,17 @@ import {
   type CalendarRange,
   type CalendarView,
 } from "../components/calendar/calendar-range.ts";
-import { PlannerTimeGrid } from "../components/calendar/PlannerTimeGrid.tsx";
+import {
+  PlannerTimeGrid,
+  plannerCalendarDays,
+} from "../components/calendar/PlannerTimeGrid.tsx";
+import {
+  DayOrderList,
+  dayMembersKey,
+  orderedDayTasks,
+  useDayOrders,
+  type DayOrderApi,
+} from "../day-order.tsx";
 import {
   PlannerDetailsSheet,
   type PlannerDetailsSelection,
@@ -58,6 +68,10 @@ interface PlannerPageProps {
     task: Task,
     window: CalendarRange,
   ) => Promise<boolean>;
+  /** ADR 0027: saved planner-day order; online writes need the CSRF token. */
+  readonly csrfToken?: string | undefined;
+  readonly online?: boolean | undefined;
+  readonly dayOrderApi?: DayOrderApi | undefined;
 }
 
 const calendarViewLabel: Readonly<Record<CalendarView, string>> = {
@@ -89,6 +103,9 @@ export const PlannerPage = ({
   calendars,
   onSubmitTimeBlock,
   onRemoveTimeBlock,
+  csrfToken,
+  online = false,
+  dayOrderApi,
 }: PlannerPageProps) => {
   const [view, setView] = useState<CalendarView>("week");
   const [anchor, setAnchor] = useState(() => new Date());
@@ -104,6 +121,24 @@ export const PlannerPage = ({
     planner !== null &&
     planner.window.from === range.from &&
     planner.window.to === range.to;
+  const dayKeys = useMemo(
+    () => plannerCalendarDays(range, view, timeZone).map(({ key }) => key),
+    [range, view, timeZone],
+  );
+  const dayOrders = useDayOrders({
+    from: dayKeys[0] ?? "",
+    to: dayKeys.at(-1) ?? "",
+    csrfToken,
+    online: online && dayKeys.length > 0,
+    api: dayOrderApi,
+    membersKey: dayMembersKey(tasks, dayKeys),
+  });
+  const orderedDays = dayKeys
+    .map((date) => ({
+      date,
+      items: orderedDayTasks(tasks, date, dayOrders.orders.get(date)),
+    }))
+    .filter(({ items }) => items.length > 1);
 
   useEffect(() => {
     void onLoadPlanner(range);
@@ -242,6 +277,14 @@ export const PlannerPage = ({
                 timeZone={timeZone}
                 events={planner.events}
                 tasks={planner.tasks}
+                dayOrders={
+                  new Map(
+                    [...dayOrders.orders].map(([date, order]) => [
+                      date,
+                      order.taskIds,
+                    ]),
+                  )
+                }
                 onSelectEntry={(entry) => {
                   setOpener(
                     document.activeElement instanceof HTMLElement
@@ -255,6 +298,39 @@ export const PlannerPage = ({
           )}
         </CardContent>
       </Card>
+      {orderedDays.length > 0 ? (
+        <Card aria-labelledby="planner-day-order-title">
+          <CardHeader>
+            <h2 id="planner-day-order-title" className="text-base font-medium">
+              Day order
+            </h2>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {!dayOrders.enabled ? (
+              <p className="hint">Reconnect to change the order of a day.</p>
+            ) : null}
+            {dayOrders.message !== null ? (
+              <p className="message" role="status">
+                {dayOrders.message}
+              </p>
+            ) : null}
+            {orderedDays.map(({ date, items }) => (
+              <section key={date} aria-label={`Order for ${date}`}>
+                <h3 className="text-sm font-medium">{date}</h3>
+                <DayOrderList
+                  label={`Tasks planned for ${date}`}
+                  items={items}
+                  available={dayOrders.enabled}
+                  busy={busy || dayOrders.pending}
+                  onMove={(taskId, direction) =>
+                    void dayOrders.move(date, taskId, direction)
+                  }
+                />
+              </section>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
       <PlannerDetailsSheet
         selection={selection}
         tasks={tasks}

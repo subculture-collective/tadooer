@@ -47,7 +47,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | hierarchy              | partial        | Children import as full two-level child tasks in source order; deeper chains block apply. Parent time totals are derived in the worklog (ADR 0024).                                                                                                                                             | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
 | projects               | partial        | Colour, icon, order, hide-from-menu, completion, restore and backlog are stored, edited and imported (ADR 0019); menu folders (#63) and in-project task order remain.                                                                                                                           | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | tags                   | partial        | Colour, icon, order and archive/restore are stored and imported; Today and board system tags are never ordinary tags (#29, #63).                                                                                                                                                                | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
-| planning               | partial        | Today queue, timed blocks and date-only planned days exist (ADR 0020); persisted Today order, daily rituals, schedule hygiene and auto-planning remain.                                                                                                                                         | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
+| planning               | partial        | Today queue, timed blocks and date-only planned days exist (ADR 0020); saved Today and planner-day order, a day start and plan-tomorrow exist (ADR 0027); finish-day rituals, schedule hygiene and auto-planning remain.                                                                        | [#98](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/98) |
 | history                | partial        | Both archive stores apply as read-only history with historical references, review flags and a collapse-or-block duplicate policy (ADR 0022).                                                                                                                                                    | [#38](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/38) |
 | time                   | partial        | Focus intervals, imported daily totals and manual corrections form one worklog by day, week, task and project with CSV export (ADR 0024). Export rounding options, work start/end editing and idle handling remain.                                                                             | [#41](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/41) |
 | recurrence             | partial        | Repeat configurations import as recurring series with their rule, start time, reminder, completion anchor, wait-for-completion, skip-overdue, pause, child templates and deleted dates (ADR 0023). Instances link by occurrence date and are not regenerated. Habits are not used.              | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
@@ -55,9 +55,9 @@ Excluded rows record an owner decision not to pursue that source capability.
 | linked-issues          | partial        | One issue link per task (provider key, provider instance ID, issue ID, last-synced provenance; Gitea address rebuilt) and attachments import and are edited online (ADR 0021). Local files and commands stay inert; credentials are never read; live provider access needs fresh authorization. | [#30](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/30) |
 | reminders              | partial        | Per-task and timed-deadline reminder offsets use the ntfy ledger (ADR 0020); exact source offsets import. Legacy reminders section stays blocked.                                                                                                                                               | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
 | boards                 | missing        | Source board/section/task-view state has no qualified Tadooer mapping.                                                                                                                                                                                                                          | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
-| counters               | missing        | Source counters and metric history are not equivalent to habit streaks.                                                                                                                                                                                                                         | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
+| counters               | partial        | Counters and their day values import with provenance (counts, or stopwatch milliseconds); metric days import as daily evaluations, and their focus sessions stay evaluation history rather than time entries (ADR 0025). Streaks are derived, never imported. Not habits.                       | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
 | focus                  | partial        | Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.                                                                                                                                                                                  | [#65](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/65) |
-| plugins                | missing        | Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.                                                                                                                                                         | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
+| plugins                | partial        | Plugin data entries (plugin ID, key, opaque value, size) and enabled flags import as inert records that the owner lists, downloads and deletes (ADR 0026). No plugin code is imported or run; a plugin runtime needs an owner decision.                                                         | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
 | preferences            | partial        | Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.                                                                                                                                                        | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
 | calendar               | partial        | Google/Baikal federation exists; plugin calendars and opt-in canonical bridge need qualification.                                                                                                                                                                                               | [#50](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/50) |
 | platforms              | decision-gated | PWA and Linux packaging exist; platform-specific native delivery requires explicit platform design.                                                                                                                                                                                             | [#24](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/24) |
@@ -79,7 +79,8 @@ no section is dropped without a report:
 - **parity**: inventoried; apply is blocked with a parity finding. Archived
   tasks apply since #38; see "Archived history" below. Repeat configurations
   apply since #42; see "Repeat configurations" below. Work history applies
-  since #41; see "Work history" below.
+  since #41; see "Work history" below. Counters and metric days apply since
+  #64; see "Counters and daily evaluations" below.
   Hierarchy fields apply since #27, and a chain deeper
   than two levels blocks with `hierarchy_depth_unsupported`. Day-only plans
   (`dueDay`) and exact reminder offsets apply since #29; a reminder that is not
@@ -88,8 +89,7 @@ no section is dropped without a report:
   task order inside projects and tags, note lock and background colour).
 - **blocked**: a populated value blocks apply (`unsupported_section` or
   `unsupported_import_data`, one finding per record).
-- **configuration**: `globalConfig`, `boards`, `planner`, `issueProvider`,
-  `pluginMetadata` and counter definitions. Reported as
+- **configuration**: `globalConfig`, `boards` and `issueProvider`. Reported as
   `configuration_not_imported`; never applied and does not block.
 - **ignored**: derived or view-only task state (`modified`, `hasPlannedTime`,
   `_hideSubTasksMode`, the leaked `subTasks` copy) and legacy project issue
@@ -99,7 +99,9 @@ Since #28 (ADR 0019), `note` and `menuTree` apply. `menuTree` supplies project
 and tag order; folders are reported with `configuration_not_imported` and not
 imported. The `TODAY`, `EM_URGENT`, `EM_IMPORTANT` and `KANBAN_IN_PROGRESS`
 system tags never become ordinary tags: unused ones are reported and skipped,
-while Today task order or a marker used by tasks blocks apply. Backlog or
+and a marker used by tasks blocks apply. Since #98 (ADR 0027), Today's task
+order and `planner.days` apply as saved day orders; see "Today and planner-day
+order" below. Backlog or
 `noteIds` entries that point at records missing from the export are reported
 and skipped; entries that contradict the task's project block.
 
@@ -113,6 +115,13 @@ provider absent from the export is kept and reported as
 separately (`attachmentFields` in the manifest); addresses with embedded
 credentials block apply.
 
+Since #66 (ADR 0026), `pluginUserData` and `pluginMetadata` apply as inert
+records: each value is kept as opaque text of at most 1 MiB, never decoded or
+run, and each enabled flag is kept without enabling anything. Their fields are
+listed as `pluginUserDataFields` and `pluginMetadataFields` in the manifest. A
+malformed section or entry blocks with `plugin_data_invalid`; findings name
+the plugin ID, never the value or key.
+
 Unknown sections (`unknown_section`), task fields (`unknown_task_field`) and
 project/tag/note fields block apply until they are reviewed.
 
@@ -123,7 +132,9 @@ Every finding carries `blocking`. Reported dispositions that do not block are
 `historical_parent_detached`, `history_review`, the recurrence findings
 `recurrence_notice` and `recurrence_duplicate_occurrence`, and the work history
 findings `time_total_mismatch`, `time_parent_residual`, `time_parent_shortfall`,
-`time_reconciliation`, `work_context_merged` and `work_context_historical`; any
+`time_reconciliation`, `work_context_merged` and `work_context_historical`, and
+the counter findings `counter_notice`, `counter_reconciliation` and
+`metric_field_retained`, and the plugin summary `plugin_data_preserved`; any
 other code blocks.
 
 ### Archived history (#38)
@@ -214,17 +225,64 @@ dated days, which its parent's days include; and an `archiveOld` task with
 projects or tags that are not imported and keep their source IDs. No time
 finding blocks.
 
+### Counters and daily evaluations (#64)
+
+`simpleCounter` and `metric` apply (ADR 0025). Their fields are classified in
+`super-productivity-counters.ts` (`simpleCounterFields` and `metricFields` in
+the manifest):
+
+- Counter definitions keep their kind, enabled and hidden state, icon, streak
+  settings and countdown length. Positive `countOnDay` values import as day
+  values in the owner's zone, with the source value kept for replay checks.
+  Stopwatch values are milliseconds and may not exceed the day's length. `isOn`
+  is running state and is only reported.
+- Metric days import as daily evaluations: notes, the single reflection,
+  impact, energy and remind-tomorrow. `focusSessions` stay on the evaluation
+  as history; the same work is in `timeSpentOnDay`, so they never become time
+  entries. `totalWorkMinutes`, `completedTasks` and `plannedTasks` are kept in
+  provenance.
+- A missing title, an unusable icon, a streak without a minimum, a repeated
+  countdown (its timer is not ported) and a running counter are reported with
+  `counter_notice`. Out-of-range or malformed values, more than one reflection
+  and unreviewed fields block.
+
+A replay adds nothing and keeps Tadooer edits; a later export may add days. A
+changed source record, or a source day that meets a value recorded in Tadooer,
+aborts the import. A read-only run on `2026-09-24_231032.json` maps 12 counters
+(10 click, 1 stopwatch, 1 repeated countdown), 140 day values counting 209, and
+80 metric days with 283 focus sessions (983,691,885 ms) that stay out of the
+worklog. The only counter finding is one `counter_notice`.
+
+### Today and planner-day order (#98)
+
+`TODAY_TAG.taskIds` imports as the saved order of the owner's planning date
+when the preview or apply runs, and `planner.days` as the order of each date
+(ADR 0027). Only entries that name an imported, open, date-only task planned
+for that date apply. Entries for missing tasks, and for timed, completed,
+archived or differently dated tasks, are non-blocking `day_order_notice`
+findings. An order is saved only for a date that has none, so a repeat import
+keeps the owner's edits. A malformed planner or an unreviewed planner key
+blocks. `startOfNextDayTime` is reported, not imported; set the Tadooer day
+start first so Today's order lands on the same date.
+
+The newest local backup (`2026-09-24_230532.json`, counts only) has 27 Today
+entries: 20 completed and 7 open timed tasks, so none applies. Its six planner
+dates are empty and its day starts at 03:00.
+
 ### September 24 backup (19.1.0)
 
 A read-only run of the updated importer found no unknown sections or fields. The
 export still cannot be applied:
 
-- `metric`, recorded `simpleCounter` values and `pluginUserData` block as
-  unsupported sections; six configuration sections are reported. `timeTracking`
-  applies since #41.
+- No section blocks as unsupported any more: `timeTracking` applies since #41,
+  `metric` and `simpleCounter` since #64 (read-only run on
+  `2026-09-24_231032.json`) and plugin data since #66 (read-only run on
+  `2026-09-24_224532.json`: one 61-byte `brain-dump` entry and six enabled
+  flags, no blocking finding). Four configuration sections are reported.
 - 73 unsupported-data findings, one per source: 49 live tasks with blocked fields
   (34 with linked issues and 19 with reminders; 4 have both), 22 tasks with
-  day-only plans, the TODAY tag, and one finding for the archives.
+  day-only plans, the TODAY tag, and one finding for the archives. Since #98
+  the TODAY tag's order is reported as notices instead.
 - Integrity: 95 tasks exist both live and in `archiveYoung`, and the live index
   repeats 28 IDs (every retained backup from 14:25 to 16:45 CDT). The September 20
   backup had neither. #47 tracks resolving this in Super Productivity before a

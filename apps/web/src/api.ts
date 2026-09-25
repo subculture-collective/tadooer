@@ -135,6 +135,34 @@ import {
   type TimeEntryMutationResponse,
   type TimeEntryPatchRequest,
   type TimeReport,
+  pluginDataContentResponseSchema,
+  pluginDataListResponseSchema,
+  type PluginDataContentResponse,
+  type PluginDataListResponse,
+} from "@suite/contracts";
+import {
+  counterHistoryResponseSchema,
+  counterMutationResponseSchema,
+  evaluationListResponseSchema,
+  evaluationMutationResponseSchema,
+  type CounterCreateRequest,
+  type CounterDayWriteRequest,
+  type CounterHistory,
+  type CounterMutationResponse,
+  type CounterPatchRequest,
+  type EvaluationList,
+  type EvaluationMutationResponse,
+  type EvaluationWriteRequest,
+} from "@suite/contracts";
+import {
+  dayOrderListResponseSchema,
+  dayOrderPlanRequestSchema,
+  dayOrderPlanResponseSchema,
+  dayOrderReorderRequestSchema,
+  dayOrderResponseSchema,
+  type DayOrder,
+  type DayOrderPlanRequest,
+  type Task as DayOrderPlannedTask,
 } from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
@@ -1362,5 +1390,185 @@ export const deleteTimeEntry = (
         "X-CSRF-Token": csrfToken,
         "If-Match": `"${String(revision)}"`,
       },
+    },
+  );
+
+// Counters and daily evaluations (ADR 0025) are online-only HTTP records.
+export const getCounterHistory = (
+  from: string,
+  to: string,
+): Promise<CounterHistory> =>
+  request(
+    `/api/counters?${new URLSearchParams({ from, to }).toString()}`,
+    counterHistoryResponseSchema,
+  );
+
+export const createCounter = (
+  counter: CounterCreateRequest,
+  csrfToken: string,
+): Promise<CounterMutationResponse> =>
+  request("/api/counters", counterMutationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(counter),
+  });
+
+export const updateCounter = (
+  id: string,
+  revision: number,
+  patch: CounterPatchRequest,
+  csrfToken: string,
+): Promise<CounterMutationResponse> =>
+  request(
+    `/api/counters/${encodeURIComponent(id)}`,
+    counterMutationResponseSchema,
+    {
+      method: "PATCH",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify(patch),
+    },
+  );
+
+export const deleteCounter = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<CounterMutationResponse> =>
+  request(
+    `/api/counters/${encodeURIComponent(id)}`,
+    counterMutationResponseSchema,
+    { method: "DELETE", headers: conditionalHeaders(revision, csrfToken) },
+  );
+
+export const recordCounterDay = (
+  id: string,
+  day: string,
+  write: CounterDayWriteRequest,
+  csrfToken: string,
+): Promise<CounterMutationResponse> =>
+  request(
+    `/api/counters/${encodeURIComponent(id)}/days/${encodeURIComponent(day)}`,
+    counterMutationResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(write),
+    },
+  );
+
+export const controlCounterStopwatch = (
+  id: string,
+  revision: number,
+  action: "start" | "stop",
+  csrfToken: string,
+): Promise<CounterMutationResponse> =>
+  request(
+    `/api/counters/${encodeURIComponent(id)}/stopwatch`,
+    counterMutationResponseSchema,
+    {
+      method: "POST",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify({ action }),
+    },
+  );
+
+export const getEvaluations = (
+  from: string,
+  to: string,
+): Promise<EvaluationList> =>
+  request(
+    `/api/evaluations?${new URLSearchParams({ from, to }).toString()}`,
+    evaluationListResponseSchema,
+  );
+
+export const saveEvaluation = (
+  day: string,
+  write: EvaluationWriteRequest,
+  csrfToken: string,
+): Promise<EvaluationMutationResponse> =>
+  request(
+    `/api/evaluations/${encodeURIComponent(day)}`,
+    evaluationMutationResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(write),
+    },
+  );
+// Imported plugin data (ADR 0026) is online-only. Listings carry sizes and
+// flags; only an explicit download reads an entry's opaque data.
+export const getPluginData = (): Promise<PluginDataListResponse> =>
+  request("/api/plugin-data", pluginDataListResponseSchema);
+
+export const getPluginDataContent = (
+  id: string,
+): Promise<PluginDataContentResponse> =>
+  request(
+    `/api/plugin-data/entries/${encodeURIComponent(id)}`,
+    pluginDataContentResponseSchema,
+  );
+
+export const deletePluginDataEntry = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/plugin-data/entries/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const deletePluginMetadata = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/plugin-data/plugins/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+// Saved Today and planner-day order (ADR 0027). Online-only.
+export const getDayOrders = (
+  from: string,
+  to: string,
+): Promise<readonly DayOrder[]> =>
+  request(
+    `/api/day-orders?${new URLSearchParams({ from, to }).toString()}`,
+    dayOrderListResponseSchema,
+  ).then(({ dayOrders }) => dayOrders);
+
+export const reorderDayOrder = (
+  date: string,
+  expectedRevision: number,
+  taskIds: readonly string[],
+  csrfToken: string,
+): Promise<DayOrder> =>
+  request(
+    `/api/day-orders/${encodeURIComponent(date)}`,
+    dayOrderResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(
+        dayOrderReorderRequestSchema.parse({ expectedRevision, taskIds }),
+      ),
+    },
+  ).then(({ dayOrder }) => dayOrder);
+
+export const planTasksForDay = (
+  date: string,
+  plan: DayOrderPlanRequest,
+  csrfToken: string,
+): Promise<{
+  readonly dayOrder: DayOrder;
+  readonly tasks: readonly DayOrderPlannedTask[];
+}> =>
+  request(
+    `/api/day-orders/${encodeURIComponent(date)}/tasks`,
+    dayOrderPlanResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(dayOrderPlanRequestSchema.parse(plan)),
     },
   );

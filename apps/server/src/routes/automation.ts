@@ -1,3 +1,4 @@
+import { pluginDataListBody } from "./plugin-data.ts";
 import { planningPatch, planningPatchProblem } from "../task-planning.ts";
 import { readDayPlan } from "../day-plan.ts";
 import { readNotificationStatus } from "../notification-status.ts";
@@ -23,6 +24,9 @@ import {
   templateSearchRequestSchema,
   taskHistoryQuerySchema,
   timeReportQuerySchema,
+  counterHistoryQuerySchema,
+  evaluationListQuerySchema,
+  dayOrderResourceInputSchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -67,6 +71,19 @@ import {
   previewTimeEntry,
 } from "./automation-time-entries.ts";
 import { timeReportBody } from "./time-history.ts";
+import {
+  confirmCounter,
+  isCounterCommand,
+  previewCounter,
+} from "./automation-counters.ts";
+import { counterHistoryBody, evaluationListBody } from "./counters.ts";
+import {
+  confirmDayOrder,
+  dayOrderResourceDate,
+  isDayOrderCommand,
+  previewDayOrder,
+} from "./automation-day-order.ts";
+import { readDayOrder } from "./day-order.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -481,6 +498,56 @@ export const handleAutomation: RouteHandler = async (
         input.data,
         ctx.sessionClock.now().toISOString(),
       );
+    } else if (
+      resource === "counters.history" ||
+      resource === "evaluations.list"
+    ) {
+      // ADR 0025: counter values with derived streaks, or evaluations.
+      const input = (
+        resource === "counters.history"
+          ? counterHistoryQuerySchema
+          : evaluationListQuerySchema
+      ).safeParse(Object.fromEntries(url.searchParams.entries()));
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_RANGE",
+          "Provide from and to calendar dates at most 366 days apart",
+        );
+        return true;
+      }
+      const at = ctx.sessionClock.now().toISOString();
+      body =
+        resource === "counters.history"
+          ? counterHistoryBody(database, token.ownerId, input.data, at)
+          : evaluationListBody(database, token.ownerId, input.data, at);
+    } else if (resource === "day_order.get") {
+      // ADR 0027: one date's saved order; the owner's planning date by default.
+      const input = dayOrderResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_DAY_ORDER_DATE",
+          "Provide a calendar date or omit it for today",
+        );
+        return true;
+      }
+      body = {
+        dayOrder: readDayOrder(
+          database,
+          token.ownerId,
+          dayOrderResourceDate(
+            database,
+            token.ownerId,
+            input.data.date,
+            ctx.sessionClock.now(),
+          ),
+        ),
+      };
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -489,6 +556,9 @@ export const handleAutomation: RouteHandler = async (
       body = { tags: database.listTags(token.ownerId).map(tagResponse) };
     else if (resource === "notes.list")
       body = { notes: database.notes.list(token.ownerId).map(noteResponse) };
+    // ADR 0026: identity, sizes and flags only; the data is never returned.
+    else if (resource === "plugin_data.list")
+      body = pluginDataListBody(database, token.ownerId);
     else if (resource === "task_links.get") {
       const input = taskLinksResourceInputSchema.safeParse({
         taskId: url.searchParams.get("taskId"),
@@ -702,6 +772,8 @@ export const handleAutomation: RouteHandler = async (
         | "planning_placeholder"
         | "pool_item"
         | "recurring_series"
+        | "counter"
+        | "daily_evaluation"
         | "habit";
       entityId: string;
     }[] = [];
@@ -724,6 +796,8 @@ export const handleAutomation: RouteHandler = async (
         | "planning_placeholder"
         | "pool_item"
         | "recurring_series"
+        | "counter"
+        | "daily_evaluation"
         | "habit";
       entityId: string;
       revision: number;
@@ -926,6 +1000,16 @@ export const handleAutomation: RouteHandler = async (
       affected.push(...planned.affected);
       baseRevisions.push(...planned.baseRevisions);
       taskSummary = planned.summary;
+    } else if (isDayOrderCommand(command)) {
+      // ADR 0027: no entity revision to freeze; confirmation re-checks the
+      // day order revision and exact membership.
+      const planned = previewDayOrder(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      taskSummary = planned.summary;
     } else if (isTimeEntryCommand(command)) {
       // ADR 0024: freezes the entry revision, or the task for an addition.
       const planned = previewTimeEntry(
@@ -934,6 +1018,16 @@ export const handleAutomation: RouteHandler = async (
         command,
         ctx.sessionClock.now().toISOString(),
       );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isCounterCommand(command)) {
+      // ADR 0025: freezes the counter, or checks the day/evaluation revision.
+      const planned = previewCounter(database, token.ownerId, command);
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1685,6 +1779,8 @@ export const handleAutomation: RouteHandler = async (
         database.taskLinks.getAttachment(token.ownerId, entityId) ??
         database.taskLinks.getIssueLink(token.ownerId, entityId) ??
         database.timeEntries.get(token.ownerId, entityId) ??
+        database.counters.get(token.ownerId, entityId) ??
+        database.counters.getEvaluationById(token.ownerId, entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1884,8 +1980,42 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       applyLocalMutation = confirmation.apply;
+    } else if (isDayOrderCommand(command)) {
+      const confirmation = confirmDayOrder(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
     } else if (isTimeEntryCommand(command)) {
       const confirmation = confirmTimeEntry(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isCounterCommand(command)) {
+      const confirmation = confirmCounter(
         database,
         token.ownerId,
         command,
