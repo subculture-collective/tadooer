@@ -37,6 +37,7 @@ import { handleTimeHistory } from "./routes/time-history.ts";
 import { handleCounters } from "./routes/counters.ts";
 import { handlePluginData } from "./routes/plugin-data.ts";
 import { handleDayOrder } from "./routes/day-order.ts";
+import { handleApplicationPreferences } from "./routes/application-preferences.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
@@ -304,6 +305,7 @@ export const startSuiteServer = async (
     handleCounters,
     handlePluginData,
     handleDayOrder,
+    handleApplicationPreferences,
     handleChoicePools,
     handleTemplates,
     handleStatic,

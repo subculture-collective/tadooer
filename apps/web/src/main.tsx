@@ -5,6 +5,10 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app.tsx";
 import "@fontsource-variable/inter";
 import "@fontsource-variable/atkinson-hyperlegible-mono";
+import { applyTheme, readStoredTheme } from "./theme.ts";
+
+// ADR 0030: the stored theme paints before the preference record loads.
+applyTheme(readStoredTheme());
 
 const styleNonce = document.querySelector<HTMLMetaElement>(
   'meta[name="style-nonce"]',

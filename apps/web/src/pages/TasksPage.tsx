@@ -27,6 +27,8 @@ import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
 import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
 import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
+import { NoteMarkdown } from "../components/notes/NoteMarkdown.tsx";
+import { useApplicationPreferences } from "../application-preferences.tsx";
 import {
   RecurringSeriesManager,
   TaskRecurrencePanel,
@@ -137,6 +139,8 @@ export const TasksPage = ({
   onCreateChildTask,
   onMoveTask,
 }: TasksPageProps) => {
+  // ADR 0030: task notes use the same safe Markdown subset as notes.
+  const { markdownInNotes } = useApplicationPreferences().snapshot.preferences;
   const visibleIds = new Set(visibleTasks.map(({ id }) => id));
   const today = zonedCalendarDate(new Date(), timeZone);
   // Children render under a visible parent; a child whose parent is filtered
@@ -167,7 +171,12 @@ export const TasksPage = ({
           {task.revision}
         </small>
       </div>
-      {task.notes !== "" && <span>{task.notes}</span>}
+      {task.notes !== "" &&
+        (markdownInNotes ? (
+          <NoteMarkdown content={task.notes} />
+        ) : (
+          <span>{task.notes}</span>
+        ))}
       {provenance[task.id] !== undefined && (
         <p className="template-provenance">Created from a reusable template.</p>
       )}

@@ -4,7 +4,10 @@ import type {
   NotificationPreferences,
   NotificationStatusResponse,
   PlanningPreferences,
+  Project,
 } from "@suite/contracts";
+import type { ApplicationPreferencesState } from "../application-preferences.tsx";
+import { ApplicationPreferencesSettings } from "../components/settings/ApplicationPreferencesSettings.tsx";
 import { GooglePlanning } from "../google-planning.tsx";
 import { NotificationSettings } from "../notification-settings.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -32,6 +35,9 @@ export interface SettingsPageProps {
   readonly onTestNotification: (() => Promise<void>) | undefined;
   readonly onSyncNow: () => Promise<void>;
   readonly onExportDiagnostics: () => Promise<void>;
+  /** ADR 0030 application preferences and shortcuts. */
+  readonly applicationPreferences?: ApplicationPreferencesState | undefined;
+  readonly projects?: readonly Project[] | undefined;
 }
 
 export const SettingsPage = ({
@@ -52,6 +58,8 @@ export const SettingsPage = ({
   onTestNotification,
   onSyncNow,
   onExportDiagnostics,
+  applicationPreferences,
+  projects = [],
 }: SettingsPageProps) => {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -91,6 +99,17 @@ export const SettingsPage = ({
             onTest={onTestNotification}
           />
         )}
+      {applicationPreferences !== undefined && (
+        <ApplicationPreferencesSettings
+          preferences={applicationPreferences.snapshot.preferences}
+          revision={applicationPreferences.snapshot.revision}
+          projects={projects}
+          busy={busy}
+          online={syncStatus === "online" && applicationPreferences.loaded}
+          error={applicationPreferences.error}
+          onSave={applicationPreferences.save}
+        />
+      )}
       <Button
         type="button"
         variant="outline"

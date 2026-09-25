@@ -4,6 +4,7 @@ import { Button } from "./components/ui/button.tsx";
 import { Card, CardContent, CardHeader } from "./components/ui/card.tsx";
 import { NativeSelect } from "./components/ui/native-select.tsx";
 import { SectionHeading } from "./components/ui/section-heading.tsx";
+import { useApplicationPreferences } from "./application-preferences.tsx";
 
 export type FocusPanelCommand =
   | {
@@ -99,6 +100,8 @@ export const FocusPanel = ({
   onCommand,
   showStartForm = true,
 }: FocusPanelProps) => {
+  const { notifyWhenEstimateExceeded } =
+    useApplicationPreferences().snapshot.preferences;
   const session = activeSession;
   const isTerminal = terminal(session);
 
@@ -138,6 +141,16 @@ export const FocusPanel = ({
 
   const owner = session.controllerClientId === clientId;
   const controlsDisabled = busy || !online;
+  // ADR 0030 notifyWhenEstimateExceeded: session time since start against
+  // the task estimate (breaks included; net focus time is server-side).
+  const focusTask = tasks.find((task) => task.id === session.taskId);
+  const exceeded =
+    notifyWhenEstimateExceeded &&
+    focusTask?.estimateMinutes != null &&
+    Date.now() - Date.parse(session.startedAt) >
+      focusTask.estimateMinutes * 60_000
+      ? { title: focusTask.title, minutes: focusTask.estimateMinutes }
+      : undefined;
   const phaseLabel = session.phase === "focus" ? "Focus" : "Break";
   const stateLabel = session.state === "running" ? "Running" : "Paused";
   const command = (name: Exclude<FocusPanelCommand["command"], "start">) => {
@@ -157,6 +170,12 @@ export const FocusPanel = ({
         <p className="hint">
           {phaseLabel} · {stateLabel}
         </p>
+        {exceeded !== undefined ? (
+          <p className="message message-warning" role="status">
+            This session has run longer than the {exceeded.minutes}
+            -minute estimate for “{exceeded.title}”.
+          </p>
+        ) : null}
         {!online ? (
           <p className="hint">Reconnect to control this session.</p>
         ) : null}

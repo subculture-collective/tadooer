@@ -11,25 +11,34 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
+import { useApplicationPreferences } from "@/application-preferences";
+import { formatBinding, shortcutActionFor } from "@/shortcuts";
 
 interface CommandBarProps {
   readonly onNavigate: (route: WorkspaceRoute) => void;
   readonly onSyncNow: () => void;
   readonly syncAvailable: boolean;
+  readonly onShowShortcuts?: (() => void) | undefined;
 }
 
 export const CommandBar = ({
   onNavigate,
   onSyncNow,
   syncAvailable,
+  onShowShortcuts,
 }: CommandBarProps) => {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  // ADR 0030: the binding is owner-editable; Ctrl+K by default.
+  const overrides = useApplicationPreferences().snapshot.preferences.shortcuts;
+  const binding = Object.hasOwn(overrides, "command_bar.open")
+    ? (overrides["command_bar.open"] ?? null)
+    : "Ctrl+K";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (shortcutActionFor(event, overrides) === "command_bar.open") {
         event.preventDefault();
         if (!open) {
           returnFocusRef.current =
@@ -42,7 +51,7 @@ export const CommandBar = ({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [open, overrides]);
 
   const navigate = (route: WorkspaceRoute): void => {
     onNavigate(route);
@@ -64,7 +73,9 @@ export const CommandBar = ({
       >
         <CommandIcon aria-hidden="true" />
         Command
-        <CommandShortcut>⌘K</CommandShortcut>
+        {binding !== null && (
+          <CommandShortcut>{formatBinding(binding)}</CommandShortcut>
+        )}
       </Button>
       <CommandDialog
         open={open}
@@ -103,6 +114,17 @@ export const CommandBar = ({
             >
               Sync now
             </CommandItem>
+            {onShowShortcuts !== undefined && (
+              <CommandItem
+                value="keyboard shortcuts"
+                onSelect={() => {
+                  onShowShortcuts();
+                  setOpen(false);
+                }}
+              >
+                Keyboard shortcuts
+              </CommandItem>
+            )}
           </CommandGroup>
         </CommandList>
       </CommandDialog>

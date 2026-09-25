@@ -85,6 +85,13 @@ import {
 } from "./automation-day-order.ts";
 import { readDayOrder } from "./day-order.ts";
 import {
+  applicationPreferencesEntityKind,
+  confirmApplicationPreferences,
+  isApplicationPreferencesCommand,
+  previewApplicationPreferences,
+} from "./automation-application-preferences.ts";
+import { readApplicationPreferences } from "./application-preferences.ts";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -381,6 +388,8 @@ export const handleAutomation: RouteHandler = async (
         ...database.getPlanningPreferences(token.ownerId),
         revision: database.getPreferenceRevision(token.ownerId, "planning"),
       };
+    else if (resource === "application.preferences")
+      body = readApplicationPreferences(database, token.ownerId);
     else if (resource === "notifications.preferences")
       body = {
         ...database.getNotificationPreferences(token.ownerId),
@@ -756,6 +765,7 @@ export const handleAutomation: RouteHandler = async (
       entityKind:
         | "planning_preferences"
         | "notification_preferences"
+        | "application_preferences"
         | "subtask"
         | "task"
         | "calendar"
@@ -781,6 +791,7 @@ export const handleAutomation: RouteHandler = async (
       entityKind:
         | "planning_preferences"
         | "notification_preferences"
+        | "application_preferences"
         | "subtask"
         | "task"
         | "active_session"
@@ -999,6 +1010,27 @@ export const handleAutomation: RouteHandler = async (
       }
       affected.push(...planned.affected);
       baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isApplicationPreferencesCommand(command)) {
+      // ADR 0030: freezes the preference record revision.
+      const planned = previewApplicationPreferences(
+        database,
+        token.ownerId,
+        command,
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push({
+        entityKind: applicationPreferencesEntityKind,
+        entityId: token.ownerId,
+      });
+      baseRevisions.push({
+        entityKind: applicationPreferencesEntityKind,
+        entityId: token.ownerId,
+        revision: planned.revision,
+      });
       taskSummary = planned.summary;
     } else if (isDayOrderCommand(command)) {
       // ADR 0027: no entity revision to freeze; confirmation re-checks the
@@ -1753,15 +1785,21 @@ export const handleAutomation: RouteHandler = async (
             ? "notifications"
             : undefined;
       const preferenceCurrent =
-        preferenceKind === undefined
-          ? undefined
-          : {
+        preview.operation === "application.update_preferences"
+          ? {
               id: token.ownerId,
-              revision: database.getPreferenceRevision(
-                token.ownerId,
-                preferenceKind,
-              ),
-            };
+              revision: database.applicationPreferences.get(token.ownerId)
+                .revision,
+            }
+          : preferenceKind === undefined
+            ? undefined
+            : {
+                id: token.ownerId,
+                revision: database.getPreferenceRevision(
+                  token.ownerId,
+                  preferenceKind,
+                ),
+              };
       const current =
         preferenceCurrent ??
         database.habits.list(token.ownerId).find(({ id }) => id === entityId) ??
@@ -1969,6 +2007,23 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
         preview.id,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isApplicationPreferencesCommand(command)) {
+      const confirmation = confirmApplicationPreferences(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
       );
       if (!confirmation.ok) {
         sendError(

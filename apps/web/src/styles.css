@@ -2138,3 +2138,64 @@
     opacity: 0.6;
   }
 }
+
+/* ── Light theme (ADR 0030) ────────────────────────────────────── */
+/* Catppuccin Latte surfaces with darkened accents so text on tints and
+   accent buttons keeps at least 4.5:1 contrast. `data-theme` is set on
+   <html> by apps/web/src/theme.ts before first paint. */
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --crust: #dce0e8;
+  --mantle: #e6e9ef;
+  --base: #eff1f5;
+  --surface-0: #ffffff;
+  --surface-1: #e6e9ef;
+  --surface-2: #ccd0da;
+  --overlay-0: #9ca0b0;
+  --overlay-1: #8c8fa1;
+
+  --text: #4c4f69;
+  --subtext: #5c5f77;
+  --subtext-2: #6c6f85;
+
+  --line: #ccd0da;
+  --line-strong: #bcc0cc;
+
+  --purple: #7a2fe6;
+  --pink: #d13c9d;
+  --cyan: #1a6fb0;
+  --green: #2f7d21;
+  --orange: #c4540a;
+  --red: #c11d38;
+  --yellow: #9a6a0a;
+  --teal: #167a72;
+
+  --primary-foreground: #ffffff;
+  --destructive-foreground: #ffffff;
+}
+
+/* ── Shortcut help and settings (ADR 0030) ─────────────────────── */
+
+.shortcut-list {
+  display: grid;
+  gap: 0.25rem;
+}
+.shortcut-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+}
+.shortcut-list dt {
+  color: var(--subtext);
+  font-size: var(--text-sm);
+}
+.shortcut-field {
+  display: grid;
+  gap: 0.25rem;
+}
+.application-preferences legend {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}

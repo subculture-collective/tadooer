@@ -48,6 +48,10 @@ import {
   googleConnectorStatusResponseSchema,
   googleSyncResponseSchema,
   planningPreferencesSchema,
+  applicationPreferenceMutationInputSchema,
+  applicationPreferenceSnapshotSchema,
+  type ApplicationPreferenceMutationInput,
+  type ApplicationPreferenceSnapshot,
   dayPlanResponseSchema,
   notificationPreferencesSchema,
   notificationStatusResponseSchema,
@@ -324,6 +328,24 @@ export const updatePlanningPreferences = (
     method: "PUT",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(planningPreferencesSchema.parse(input)),
+  });
+
+/** Application preferences and shortcuts (ADR 0030); online-only. */
+export const getApplicationPreferences =
+  (): Promise<ApplicationPreferenceSnapshot> =>
+    request(
+      "/api/application/preferences",
+      applicationPreferenceSnapshotSchema,
+    );
+
+export const updateApplicationPreferences = (
+  input: ApplicationPreferenceMutationInput,
+  csrfToken: string,
+): Promise<ApplicationPreferenceSnapshot> =>
+  request("/api/application/preferences", applicationPreferenceSnapshotSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(applicationPreferenceMutationInputSchema.parse(input)),
   });
 
 export const getDayPlan = (
