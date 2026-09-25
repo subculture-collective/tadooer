@@ -18,7 +18,7 @@ const inventory = z
         sourceFeatures: z.array(z.string()),
         exportSections: z.array(z.string()),
         issue: z.number().int().positive(),
-        status: z.enum(["partial", "missing", "decision-gated"]),
+        status: z.enum(["partial", "missing", "decision-gated", "excluded"]),
         mapping: z.string().min(1),
         acceptance: z.string().min(1),
         offlineSync: z.string().min(1),

@@ -1,21 +1,28 @@
 {
   "version": 1,
   "source": {
-    "version": "18.16.0",
-    "commit": "a4d74ea3215be7d07b41ff38eebc3ebffca9ebc8",
+    "version": "19.1.0",
+    "commit": "42ded9f31a132bf92633b0c78ad4ebf1d87c0f71",
     "crossModelVersion": 4.5,
-    "installedVersion": "18.16.0",
-    "installedAsarSha256": "200cd4e96904061f37c6f0f31a227b37d05175295e28b65b27159eeebcaba1d6",
+    "installedVersion": "19.1.0",
+    "installedAsarSha256": "2133ce92480137f6637d8a23937770a1ec56dcc58dff769e42199f29bdbee0e4",
     "installedCommitVerified": false,
     "mcpCommit": "6dde7f75f1f79a064b7d59346259d55076a35eb4",
     "mcpProtocolVersion": "2.0",
     "mcpCatalogSha256": "679a55712ac5be4cf943647143beaaab49818f232c8934b793d5f409bb004b20",
     "files": {
-      "src/app/op-log/model/model-config.ts": "a09bd683bb9d0f4cffd58a3de6333df3cb5b752d566c0d6996686b6bb0823c84",
-      "src/app/features/tasks/task.model.ts": "c3da640b0f55eda8ead96dc187587548a69bdbb124a5dd6be6246865c39f35df",
+      "src/app/op-log/model/model-config.ts": "65377860b1dce65133eccd86820f5c2f1f899e4382ad4af3cbf0f51389aebc3a",
+      "src/app/features/tasks/task.model.ts": "71526efbcd1265e5b8d4ad0080a4a64e70a92aa1225a5ac084137cd8bcb61f5a",
       "src/app/features/task-repeat-cfg/task-repeat-cfg.model.ts": "6ede99afb3617d220351791d74c0b517f7c31a58602a34ed5f76f980670d0ef1",
-      "src/app/features/project/project.model.ts": "212113d4270c383d54db02f89858e121940054b6997197096938485c2e3dd2f4",
-      "packages/plugin-api/src/types.ts": "49564c887f0d416cbc6bdd467dc835218b40ccbba85d8b941c7ff02b5378da81"
+      "src/app/features/project/project.model.ts": "2291a4211f3469f4b3322618edf4925f36203b39b589be23412780d3ccd232ce",
+      "packages/plugin-api/src/types.ts": "2711be7a6c073658c26258ab1d62bcb5bbd2318b4a645ce4c490166d77a74d5f"
+    },
+    "previous": {
+      "version": "18.16.0",
+      "commit": "a4d74ea3215be7d07b41ff38eebc3ebffca9ebc8",
+      "installedVersion": "18.16.0",
+      "installedAsarSha256": "200cd4e96904061f37c6f0f31a227b37d05175295e28b65b27159eeebcaba1d6",
+      "note": "September 20 pin; the installed application moved to upstream 19.1.0 by September 24."
     }
   },
   "sourceFeatureDirectories": [
@@ -57,9 +64,9 @@
     "task-view-customizer",
     "tasks",
     "time-tracking",
+    "tracking-presence",
     "tracking-reminder",
     "ui-helper",
-    "user-profile",
     "work-context",
     "work-view",
     "worklog"
@@ -88,64 +95,97 @@
   "rows": [
     {
       "id": "core-tasks",
-      "sourceFeatures": [
-        "tasks"
-      ],
-      "exportSections": [
-        "task"
-      ],
+      "sourceFeatures": ["tasks"],
+      "exportSections": ["task"],
       "issue": 47,
       "status": "partial",
       "mapping": "Core titles/notes/timestamps/dates/estimates map transactionally; unsupported metadata blocks apply. Source IDs remain provenance, not destination IDs.",
       "acceptance": "Review/apply/replay imported tasks; original timestamps and notes match, changed source cannot overwrite destination edits.",
       "offlineSync": "Core task outbox exists; plannedStart remains calendar-authoritative.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [
+        "id",
+        "title",
+        "notes",
+        "isDone",
+        "doneOn",
+        "created",
+        "timeEstimate",
+        "deadlineDay",
+        "deadlineWithTime",
+        "modified"
+      ],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "hierarchy",
-      "sourceFeatures": [
-        "tasks"
-      ],
-      "exportSections": [
-        "task"
-      ],
+      "sourceFeatures": ["tasks"],
+      "exportSections": ["task"],
       "issue": 27,
       "status": "missing",
       "mapping": "Source children are full tasks, not checklist-only records.",
       "acceptance": "Preserve ordered parent/child identity and all child fields; test move/reorder/cycles and parent/leaf totals.",
       "offlineSync": "Define structural conflict and replay rules before enabling offline hierarchy writes.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": ["parentId", "subTaskIds", "subTasks", "_hideSubTasksMode"],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "projects",
-      "sourceFeatures": [
-        "project"
-      ],
-      "exportSections": [
-        "project",
-        "menuTree"
-      ],
+      "sourceFeatures": ["project"],
+      "exportSections": ["project", "menuTree"],
       "issue": 28,
       "status": "partial",
       "mapping": "Basic project identity/title exists; completion, backlog, notes, folders/order need parity.",
       "acceptance": "Preserve project lifecycle and task/backlog/note ordering with missing historical references.",
       "offlineSync": "Current organization snapshots exist; new fields need explicit versioning.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": ["projectId"],
+      "projectFields": [
+        "id",
+        "title",
+        "created",
+        "updated",
+        "icon",
+        "theme",
+        "taskIds",
+        "isHiddenFromMenu",
+        "isEnableBacklog",
+        "advancedCfg",
+        "backlogTaskIds",
+        "isArchived",
+        "isDone",
+        "doneOn"
+      ],
+      "tagFields": []
     },
     {
       "id": "tags",
-      "sourceFeatures": [
-        "tag"
-      ],
-      "exportSections": [
-        "tag"
-      ],
+      "sourceFeatures": ["tag"],
+      "exportSections": ["tag"],
       "issue": 28,
       "status": "partial",
       "mapping": "Basic tags/assignment exist; virtual Today and source context/config are not ordinary imported tags.",
       "acceptance": "Distinguish virtual views, archived tags and task membership; verify case/identity behavior.",
       "offlineSync": "Preserve conflict-safe task assignment and original source references.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": ["tagIds"],
+      "projectFields": [],
+      "tagFields": [
+        "id",
+        "title",
+        "created",
+        "updated",
+        "modified",
+        "color",
+        "icon",
+        "theme",
+        "taskIds",
+        "advancedCfg",
+        "isArchived"
+      ]
     },
     {
       "id": "planning",
@@ -156,120 +196,111 @@
         "before-finish-day",
         "finish-day-before-close"
       ],
-      "exportSections": [
-        "planner",
-        "task"
-      ],
+      "exportSections": ["planner", "task"],
       "issue": 29,
       "status": "partial",
       "mapping": "Today queue and timed blocks exist; date-only planning, source ordering, daily rituals, schedule hygiene and automatic planning need explicit parity.",
       "acceptance": "Exercise plan-today/order/reschedule/clear/finish-day and date-only workflows with imported data, including DST.",
       "offlineSync": "Do not queue provider writes as ordinary task updates; design local planning fields separately.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": ["dueWithTime", "dueDay", "hasPlannedTime", "plannedAt"],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "history",
-      "sourceFeatures": [
-        "archive",
-        "history"
-      ],
-      "exportSections": [
-        "archiveYoung",
-        "archiveOld"
-      ],
+      "sourceFeatures": ["archive", "history"],
+      "exportSections": ["archiveYoung", "archiveOld"],
       "issue": 38,
       "status": "missing",
       "mapping": "Both stores inventoried; archived task apply blocked. Preserve unknown historical project/tag/repeat identity and blank-title dispositions.",
       "acceptance": "Reconcile raw 4,721 archive records, every excluded record and original lifecycle timestamps.",
       "offlineSync": "Historical identity and restore must survive sync reset and replay.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "time",
-      "sourceFeatures": [
-        "time-tracking",
-        "worklog"
-      ],
-      "exportSections": [
-        "timeTracking",
-        "task",
-        "archiveYoung",
-        "archiveOld"
-      ],
+      "sourceFeatures": ["time-tracking", "worklog", "tracking-presence"],
+      "exportSections": ["timeTracking", "task", "archiveYoung", "archiveOld"],
       "issue": 41,
       "status": "partial",
       "mapping": "Active interval tracking exists; source daily history, correction and reporting remain unqualified.",
       "acceptance": "Reconcile leaf/parent totals and two old-archive mismatches, test manual corrections and imported reports.",
       "offlineSync": "Immutable facts/corrections must not create duplicate intervals across clients.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": ["timeSpent", "timeSpentOnDay"],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "recurrence",
-      "sourceFeatures": [
-        "task-repeat-cfg"
-      ],
-      "exportSections": [
-        "taskRepeatCfg",
-        "task"
-      ],
+      "sourceFeatures": ["task-repeat-cfg"],
+      "exportSections": ["taskRepeatCfg", "task"],
       "issue": 42,
       "status": "missing",
       "mapping": "Source has daily/weekly/monthly/yearly, completion-based generation, inherited child templates and deleted instances; habits do not substitute.",
       "acceptance": "Exercise wait-for-completion, repeat-from-completion, pause, missed work, monthly-last-day/week and child templates.",
       "offlineSync": "Server-owned occurrence generation with durable identities and replay.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": ["repeatCfgId"],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "notes",
-      "sourceFeatures": [
-        "note",
-        "markdown-checklist",
-        "plainspace"
-      ],
-      "exportSections": [
-        "note",
-        "task",
-        "project"
-      ],
+      "sourceFeatures": ["note", "markdown-checklist", "plainspace"],
+      "exportSections": ["note", "task", "project"],
       "issue": 28,
       "status": "partial",
       "mapping": "Task notes exist; standalone/project notes and markdown/checklist/space workflows require mapping.",
       "acceptance": "Preserve associations, order, formatting and links through import and editing.",
       "offlineSync": "Specify note revision/conflict rules; never silently overwrite independent edits.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": ["noteIds", "notes"],
+      "tagFields": ["notes"]
     },
     {
       "id": "linked-issues",
-      "sourceFeatures": [
-        "issue",
-        "issue-panel"
-      ],
-      "exportSections": [
-        "issueProvider",
-        "task"
-      ],
+      "sourceFeatures": ["issue", "issue-panel"],
+      "exportSections": ["issueProvider", "task"],
       "issue": 30,
       "status": "missing",
       "mapping": "Issue identity/provider fields and attachments currently block full import; provider credentials are excluded.",
       "acceptance": "Recover linked issues and supported attachments; preserve missing/external references and require fresh authorization.",
       "offlineSync": "External provider operations need durable outcomes; offline links are read-only until qualified.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [
+        "attachments",
+        "issueId",
+        "issueProviderId",
+        "issueType",
+        "issueWasUpdated",
+        "issueLastUpdated",
+        "issueAttachmentNr",
+        "issueTimeTracked",
+        "issuePoints",
+        "issueLastSyncedValues"
+      ],
+      "projectFields": ["issueIntegrationCfgs"],
+      "tagFields": []
     },
     {
       "id": "reminders",
-      "sourceFeatures": [
-        "reminder"
-      ],
-      "exportSections": [
-        "reminders",
-        "task"
-      ],
+      "sourceFeatures": ["reminder"],
+      "exportSections": ["reminders", "task"],
       "issue": 29,
       "status": "partial",
       "mapping": "ntfy scheduled reminders exist; source task/deadline reminder timing needs parity.",
       "acceptance": "Preserve six source task reminders plus deadline rules, timezone semantics, suppression and non-duplication.",
       "offlineSync": "Server delivery ledger remains authority; offline drafts cannot imply sent reminders.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": ["remindAt", "deadlineRemindAt", "reminderId"],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "boards",
@@ -279,35 +310,30 @@
         "task-view-customizer",
         "menu-tree"
       ],
-      "exportSections": [
-        "boards",
-        "section",
-        "menuTree"
-      ],
+      "exportSections": ["boards", "section", "menuTree"],
       "issue": 63,
       "status": "missing",
       "mapping": "Source board/section/task-view state has no qualified Tadooer mapping.",
       "acceptance": "Preserve board/section/order and view semantics; test moved/archived references.",
       "offlineSync": "Define structural sync and competing reorder rules.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "counters",
-      "sourceFeatures": [
-        "simple-counter",
-        "metric",
-        "history"
-      ],
-      "exportSections": [
-        "simpleCounter",
-        "metric"
-      ],
+      "sourceFeatures": ["simple-counter", "metric", "history"],
+      "exportSections": ["simpleCounter", "metric"],
       "issue": 64,
       "status": "missing",
       "mapping": "Source counters and metric history are not equivalent to habit streaks.",
       "acceptance": "Reconcile counts/units/history, then exercise increment/decrement/edit/delete with provenance.",
       "offlineSync": "Define idempotent increments and concurrent edit policy.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "focus",
@@ -317,36 +343,35 @@
         "take-a-break",
         "tracking-reminder"
       ],
-      "exportSections": [
-        "globalConfig",
-        "timeTracking"
-      ],
+      "exportSections": ["globalConfig", "timeTracking"],
       "issue": 65,
       "status": "partial",
       "mapping": "Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.",
       "acceptance": "Exercise focus modes, idle-time allocation, breaks and tracking reminders without duplicate worklog intervals.",
       "offlineSync": "Retain lease/controller semantics; offline focus remains an explicit unsupported boundary until designed.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "plugins",
       "sourceFeatures": [],
-      "exportSections": [
-        "pluginUserData",
-        "pluginMetadata"
-      ],
+      "exportSections": ["pluginUserData", "pluginMetadata"],
       "issue": 66,
       "status": "missing",
       "mapping": "Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.",
       "acceptance": "Map plugin capabilities and installed metadata to permissioned equivalents or an explicit extension contract.",
       "offlineSync": "Plugin state must follow the same ownership and synchronization rules as app state.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "preferences",
       "sourceFeatures": [
         "config",
-        "user-profile",
         "work-context",
         "work-view",
         "ui-helper",
@@ -356,61 +381,128 @@
         "bottom-panel",
         "right-panel"
       ],
-      "exportSections": [
-        "globalConfig"
-      ],
+      "exportSections": ["globalConfig"],
       "issue": 67,
       "status": "partial",
       "mapping": "Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.",
       "acceptance": "Qualify keyboard/navigation/contextual views, onboarding and accessible responsive states; report excluded settings.",
       "offlineSync": "Separate durable preferences from transient selection/panel/runtime state.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "calendar",
-      "sourceFeatures": [
-        "calendar-integration"
-      ],
-      "exportSections": [
-        "globalConfig",
-        "issueProvider"
-      ],
+      "sourceFeatures": ["calendar-integration"],
+      "exportSections": ["globalConfig", "issueProvider"],
       "issue": 50,
       "status": "partial",
       "mapping": "Google/Baikal federation exists; plugin calendars and opt-in canonical bridge need qualification.",
       "acceptance": "Complete mapped provider journeys, recurrence/conflicts/revocation and original source calendar linkage.",
       "offlineSync": "Server-owned provider sync; no closed-browser claim until scheduler qualification.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "platforms",
-      "sourceFeatures": [
-        "android",
-        "ios",
-        "mobile"
-      ],
-      "exportSections": [
-        "globalConfig"
-      ],
+      "sourceFeatures": ["android", "ios", "mobile"],
+      "exportSections": ["globalConfig"],
       "issue": 24,
       "status": "decision-gated",
       "mapping": "PWA and Linux packaging exist; platform-specific native delivery requires explicit platform design.",
       "acceptance": "Record exact supported workflows and physical-device gaps without claiming native mobile parity.",
       "offlineSync": "Platform credential/offline/background behavior remains separately gated.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     },
     {
       "id": "presentation",
-      "sourceFeatures": [
-        "dialog-please-rate"
-      ],
+      "sourceFeatures": ["dialog-please-rate"],
       "exportSections": [],
       "issue": 52,
       "status": "decision-gated",
       "mapping": "Store-rating prompts and engagement presentation are not migrated data; decide relevant product outcomes under post-parity discovery.",
       "acceptance": "Record an explicit disposition; do not count omitted source presentation as delivered workflow parity.",
       "offlineSync": "No new synced entity is implied.",
-      "assistantIssue": 32
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
+    },
+    {
+      "id": "capture",
+      "sourceFeatures": ["tasks"],
+      "exportSections": [],
+      "issue": 90,
+      "status": "partial",
+      "mapping": "Structured capture parses +project, #tag, @time and !deadline against existing names; source estimates, tag creation, URL handling and markdown/email paste have no equivalent.",
+      "acceptance": "Capture with estimate syntax, a new tag and a pasted markdown list produces the previewed tasks through UI, quick-add and assistant.",
+      "offlineSync": "Capture currently requires a connection; state the offline policy with the implementation.",
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
+    },
+    {
+      "id": "calendar-subscriptions",
+      "sourceFeatures": ["calendar-integration"],
+      "exportSections": [],
+      "issue": 91,
+      "status": "missing",
+      "mapping": "Source iCal URL subscriptions, event-to-task conversion, auto-import tombstones and hidden events have no Tadooer mapping.",
+      "acceptance": "Subscribe to an iCal URL, convert an event to a task twice without duplicates, and hide an event without deleting source data.",
+      "offlineSync": "Server-side refresh; subscriptions never write upstream.",
+      "assistantIssue": 60,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
+    },
+    {
+      "id": "offline-writes",
+      "sourceFeatures": ["tasks", "project", "tag"],
+      "exportSections": [],
+      "issue": 92,
+      "status": "partial",
+      "mapping": "Sync v2 queues task create/patch/status/delete and habit commands only; planned time, project/tag assignment, project/tag lifecycle and checklist writes are online-only.",
+      "acceptance": "Two-profile offline edit, reconnect and conflict for each listed entity without lost or duplicated writes.",
+      "offlineSync": "Add sync v2 operations with field-level conflicts and idempotent replay.",
+      "assistantIssue": 32,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
+    },
+    {
+      "id": "data-export",
+      "sourceFeatures": ["config"],
+      "exportSections": [],
+      "issue": 93,
+      "status": "missing",
+      "mapping": "Source offers full JSON export, restore and automatic local backups; Tadooer has only the operator SQLite backup CLI.",
+      "acceptance": "Export all user data, restore into an empty instance and match counts and representative records.",
+      "offlineSync": "Export reads the server authority; restore uses preview and identity checks.",
+      "assistantIssue": 60,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
+    },
+    {
+      "id": "sync-providers",
+      "sourceFeatures": ["config"],
+      "exportSections": [],
+      "issue": 94,
+      "status": "excluded",
+      "mapping": "Source syncs through Dropbox, OneDrive, WebDAV, local file, Nextcloud or SuperSync with optional end-to-end encryption. Owner decision September 24 (#94): neither third-party storage sync nor client-side end-to-end encryption is a parity requirement; Tadooer keeps self-hosted server sync.",
+      "acceptance": "None; excluded by owner decision.",
+      "offlineSync": "Self-hosted server sync with the offline outbox (ADR 0010).",
+      "assistantIssue": 94,
+      "taskFields": [],
+      "projectFields": [],
+      "tagFields": []
     }
   ],
   "mcpActions": [

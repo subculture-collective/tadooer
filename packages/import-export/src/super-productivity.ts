@@ -1,5 +1,10 @@
 import { superProductivityImportLimits as limits } from "@suite/contracts/import-limits";
 import { createHash } from "node:crypto";
+import {
+  populated,
+  superProductivitySections,
+  superProductivityTaskFields,
+} from "./super-productivity-schema.ts";
 
 type ObjectValue = Readonly<Record<string, unknown>>;
 const object = (value: unknown): ObjectValue | undefined =>
@@ -101,6 +106,49 @@ export const previewSuperProductivity = (
         );
     return records;
   };
+  for (const [name, value] of Object.entries(data)) {
+    if (!Object.hasOwn(superProductivitySections, name)) {
+      issue(
+        "unknown_section",
+        null,
+        `${name} is not a reviewed Super Productivity 19.1.0 export section`,
+      );
+      continue;
+    }
+    const disposition =
+      superProductivitySections[name as keyof typeof superProductivitySections];
+    if (disposition === "applied" || disposition === "parity") continue;
+    const store = object(value);
+    let blocking =
+      disposition === "blocked" &&
+      (Array.isArray(store?.ids) ? store.ids.length > 0 : populated(value));
+    if (name === "timeTracking")
+      blocking = Object.values(store ?? {}).some((contexts) =>
+        Object.values(object(contexts) ?? {}).some(populated),
+      );
+    if (name === "simpleCounter")
+      blocking = Object.values(object(store?.entities) ?? {}).some((counter) =>
+        Object.values(object(object(counter)?.countOnDay) ?? {}).some(
+          (count) => count !== 0,
+        ),
+      );
+    if (blocking)
+      issue(
+        "unsupported_section",
+        null,
+        `${name} contains data without Tadooer parity; keep the original export`,
+      );
+    else if (
+      (disposition === "configuration" || name === "simpleCounter") &&
+      (Array.isArray(store?.ids) ? store.ids.length > 0 : populated(value))
+    )
+      issue(
+        "configuration_not_imported",
+        null,
+        `${name} is configuration and is not applied; keep the original export`,
+      );
+  }
+  const unknownFields = new Map<string, number>();
   const projects = entities(data.project, "project");
   const tags = entities(data.tag, "tag");
   const repeats = entities(data.taskRepeatCfg, "taskRepeatCfg");
@@ -204,6 +252,9 @@ export const previewSuperProductivity = (
         );
         continue;
       }
+      for (const field of Object.keys(task))
+        if (!Object.hasOwn(superProductivityTaskFields, field))
+          unknownFields.set(field, (unknownFields.get(field) ?? 0) + 1);
       const projectId =
         typeof task.projectId === "string" ? task.projectId : null;
       const parentId = typeof task.parentId === "string" ? task.parentId : null;
@@ -310,6 +361,12 @@ export const previewSuperProductivity = (
           deadlineAt === null ? day(task.deadlineDay, id, "deadlineDay") : null,
       });
     }
+  for (const [field, count] of unknownFields)
+    issue(
+      "unknown_task_field",
+      null,
+      `${String(count)} task records contain unreviewed field ${field}`,
+    );
   const taskIds = new Set(tasks.map((task) => task.sourceId));
   const parentIds = new Set(tasks.map((task) => task.parentId));
   for (const task of tasks)
