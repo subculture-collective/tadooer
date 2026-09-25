@@ -17,6 +17,20 @@ import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js"
 import { SqliteNoteStore } from "./note-store.ts";
 export type { NoteMutationResult, NoteRecord } from "./note-store.ts";
 import {
+  SqliteTaskLinkStore,
+  taskLinksMigration,
+  type ImportedAttachment,
+  type ImportedIssueLink,
+} from "./task-link-store.ts";
+export type {
+  ImportedAttachment,
+  ImportedIssueLink,
+  TaskAttachmentRecord,
+  TaskIssueLinkRecord,
+  TaskLinkMutationResult,
+  TaskLinksRecord,
+} from "./task-link-store.ts";
+import {
   dateOnlyPlanningMigration,
   readTaskPlanning,
   writeTaskPlanning,
@@ -1356,6 +1370,7 @@ const migrations: readonly Migration[] = [
     `,
   },
   dateOnlyPlanningMigration,
+  taskLinksMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1371,10 +1386,12 @@ export class SuiteDatabase {
   readonly calendarProjections: SqliteCalendarProjectionStore;
   readonly planningPreferences: SqlitePlanningPreferencesStore;
   readonly notes: SqliteNoteStore;
+  readonly taskLinks: SqliteTaskLinkStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.notes = new SqliteNoteStore(database);
+    this.taskLinks = new SqliteTaskLinkStore(database);
     this.habits = new SqliteHabitStore(
       database,
       (ownerId, kind, id, revision, now) => {
@@ -2949,6 +2966,9 @@ export class SuiteDatabase {
       plannedDay?: string | null;
       startReminder?: StoredStartReminder;
       deadlineReminderMinutes?: number | null;
+      // Linked issue and attachments (ADR 0021); tasks only.
+      issueLink?: ImportedIssueLink | null;
+      attachments?: readonly ImportedAttachment[];
     }[],
     now: string,
   ): { created: number; existing: number } {
@@ -3084,6 +3104,18 @@ export class SuiteDatabase {
               "UPDATE tasks SET completed_at=? WHERE owner_id=? AND id=?",
             )
             .run(record.completedAt, ownerId, id);
+          if (
+            (record.issueLink ?? null) !== null ||
+            (record.attachments ?? []).length > 0
+          )
+            this.taskLinks.insertImported(
+              ownerId,
+              id,
+              record.issueLink ?? null,
+              record.attachments ?? [],
+              randomUUID,
+              now,
+            );
         }
         this.#database
           .prepare(

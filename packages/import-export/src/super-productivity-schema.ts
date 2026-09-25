@@ -36,6 +36,9 @@ export const superProductivitySections = {
   planner: "configuration",
   boards: "configuration",
   globalConfig: "configuration",
+  // Provider configuration holds credentials. The importer reads only each
+  // provider's id and key (and a Gitea host and repository to rebuild issue
+  // addresses); nothing from this section is stored.
   issueProvider: "configuration",
   pluginMetadata: "configuration",
 } as const satisfies Record<string, SectionDisposition>;
@@ -69,16 +72,20 @@ export const superProductivityTaskFields = {
   deadlineRemindAt: "applied",
   // Legacy link into the reminders section, which stays blocked.
   reminderId: "blocked",
-  attachments: "blocked",
-  issueId: "blocked",
-  issueProviderId: "blocked",
-  issueType: "blocked",
-  issueWasUpdated: "blocked",
-  issueLastUpdated: "blocked",
-  issueAttachmentNr: "blocked",
-  issueTimeTracked: "blocked",
-  issuePoints: "blocked",
-  issueLastSyncedValues: "blocked",
+  // Linked issue and attachments (ADR 0021). Attachment records are reviewed
+  // in super-productivity-links.ts; local files and commands stay inert.
+  attachments: "applied",
+  issueId: "applied",
+  issueProviderId: "applied",
+  issueType: "applied",
+  issueLastUpdated: "applied",
+  // Last-synced provider state: kept as opaque link metadata and provenance,
+  // never refreshed without a new provider authorization.
+  issueWasUpdated: "retained",
+  issueAttachmentNr: "retained",
+  issueTimeTracked: "retained",
+  issuePoints: "retained",
+  issueLastSyncedValues: "retained",
   // Pre-v14 schedule; Super Productivity migrates it to dueWithTime on import.
   plannedAt: "blocked",
   // Leaked TaskWithSubTasks view copy; the children are exported as tasks.

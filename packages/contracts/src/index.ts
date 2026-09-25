@@ -1,6 +1,7 @@
 export { superProductivityImportLimits } from "./import-limits.ts";
 export * from "./organization.ts";
 export * from "./task-planning.ts";
+export * from "./task-links.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -15,6 +16,11 @@ import {
   projectPatchFields,
   tagPatchFields,
 } from "./organization.ts";
+import {
+  automationTaskLinkMutationInputSchema,
+  taskLinksResourceInputSchema,
+  taskLinksResponseSchema,
+} from "./task-links.ts";
 import {
   plannedDayAndStartExclusive,
   plannedDayAndStartMessage,
@@ -1481,6 +1487,8 @@ export const automationTokenScopeSchema = z.enum([
   "habits:write",
   "notes:read",
   "notes:write",
+  "task_links:read",
+  "task_links:write",
 ]);
 
 export const automationTokenSchema = z
@@ -1542,6 +1550,7 @@ export const automationOperationSchema = z.enum([
   "tags.mutate",
   "tags.reorder",
   "notes.mutate",
+  "task_links.mutate",
   "tasks.assign_project",
   "tasks.set_tags",
   "tasks.create",
@@ -1736,6 +1745,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationNoteMutationInputSchema,
     }),
     z.object({
+      operation: z.literal("task_links.mutate"),
+      input: automationTaskLinkMutationInputSchema,
+    }),
+    z.object({
       operation: z.literal("tasks.assign_project"),
       input: automationAssignProjectInputSchema,
     }),
@@ -1864,6 +1877,11 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationNoteMutationInputSchema,
     });
+  if (operation === "task_links.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskLinkMutationInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -1958,6 +1976,8 @@ export const automationAffectedEntitySchema = z
       "project",
       "tag",
       "note",
+      "task_attachment",
+      "task_issue_link",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -1978,6 +1998,8 @@ const existingAutomationBaseRevisionSchema = z
       "project",
       "tag",
       "note",
+      "task_attachment",
+      "task_issue_link",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -2043,6 +2065,7 @@ export const automationExecutionResultSchema = z.union([
   z.object({ projects: z.array(projectSchema) }).strict(),
   z.object({ tags: z.array(tagSchema) }).strict(),
   noteMutationResponseSchema,
+  taskLinksResponseSchema,
   habitMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
@@ -2243,6 +2266,17 @@ export const automationCatalog = [
     outputSchema: noteListResponseSchema,
   },
   {
+    id: "task_links.get",
+    kind: "resource",
+    scopes: ["task_links:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/task-links",
+    mcpName: "suite.task_links.get",
+    mcpUri: "suite://v1/task-links{?taskId}",
+    inputSchema: taskLinksResourceInputSchema,
+    outputSchema: taskLinksResponseSchema,
+  },
+  {
     id: "active-session.get",
     kind: "resource",
     scopes: ["focus:read"],
@@ -2302,18 +2336,20 @@ export const automationCatalog = [
                 ? "tags:write"
                 : id === "notes.mutate"
                   ? "notes:write"
-                  : id === "habits.mutate"
-                    ? "habits:write"
-                    : id.startsWith("tasks.") || id === "subtasks.mutate"
-                      ? "tasks:write"
-                      : id === "schedule.create_time_block"
-                        ? "schedule:write"
-                        : id.startsWith("templates.") ||
-                            id.startsWith("template_sets.")
-                          ? "templates:write"
-                          : id === "placeholders.resolve"
-                            ? "pools:write"
-                            : "focus:write",
+                  : id === "task_links.mutate"
+                    ? "task_links:write"
+                    : id === "habits.mutate"
+                      ? "habits:write"
+                      : id.startsWith("tasks.") || id === "subtasks.mutate"
+                        ? "tasks:write"
+                        : id === "schedule.create_time_block"
+                          ? "schedule:write"
+                          : id.startsWith("templates.") ||
+                              id.startsWith("template_sets.")
+                            ? "templates:write"
+                            : id === "placeholders.resolve"
+                              ? "pools:write"
+                              : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -2337,6 +2373,7 @@ export const automationCatalog = [
       "pools:write",
       "habits:write",
       "notes:write",
+      "task_links:write",
     ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",

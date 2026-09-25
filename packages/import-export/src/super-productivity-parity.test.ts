@@ -7,8 +7,14 @@ import {
   superProductivityTagFields,
   superProductivityTaskFields,
 } from "./super-productivity-schema.ts";
+import { superProductivityAttachmentFields } from "./super-productivity-links.ts";
 
-type FieldKey = "taskFields" | "projectFields" | "tagFields" | "noteFields";
+type FieldKey =
+  | "taskFields"
+  | "projectFields"
+  | "tagFields"
+  | "noteFields"
+  | "attachmentFields";
 const manifest = JSON.parse(
   readFileSync(
     new URL(
@@ -34,6 +40,7 @@ it("assigns every reviewed entity field to exactly one workflow row", () => {
     ["projectFields", superProductivityProjectFields],
     ["tagFields", superProductivityTagFields],
     ["noteFields", superProductivityNoteFields],
+    ["attachmentFields", superProductivityAttachmentFields],
   ] as const) {
     const mapped = manifest.rows.flatMap((row) => row[key] ?? []);
     expect(new Set(mapped).size, key).toBe(mapped.length);

@@ -239,6 +239,22 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "task-links",
+      "action": "Task attachments and imported issue links: read, add/edit/remove link and note attachments, remove an issue link",
+      "webApi": [
+        "getTaskLinks",
+        "createTaskAttachment",
+        "patchTaskAttachment",
+        "deleteTaskAttachment",
+        "deleteTaskIssueLink"
+      ],
+      "catalog": ["task_links.get", "task_links.mutate"],
+      "status": "covered",
+      "issue": 30,
+      "authority": "Dedicated task_links read/write scopes; owner-checked task, attachment and issue-link revisions with atomic audit/replay. Only http(s) links without credentials are stored as openable. Previews name hosts, not full addresses. No operation contacts an issue provider; refresh or write-back needs a fresh provider authorization that does not exist yet. Online-only.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "checklists",
       "action": "Checklist child create/edit/reorder/delete",
       "webApi": [

@@ -18,6 +18,7 @@ import {
   automationConfirmRequestSchema,
   automationFocusCommandInputSchema,
   plannerWindowSchema,
+  taskLinksResourceInputSchema,
   templateSearchRequestSchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
@@ -39,6 +40,12 @@ import {
   organizationSummary,
   previewOrganizationParity,
 } from "./automation-organization-parity.ts";
+import {
+  confirmTaskLinks,
+  isTaskLinkCommand,
+  previewTaskLinks,
+} from "./automation-task-links.ts";
+import { taskLinksResponse } from "./task-links.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -413,7 +420,21 @@ export const handleAutomation: RouteHandler = async (
       body = { tags: database.listTags(token.ownerId).map(tagResponse) };
     else if (resource === "notes.list")
       body = { notes: database.notes.list(token.ownerId).map(noteResponse) };
-    else if (resource === "templates.list") {
+    else if (resource === "task_links.get") {
+      const input = taskLinksResourceInputSchema.safeParse({
+        taskId: url.searchParams.get("taskId"),
+      });
+      if (!input.success) {
+        sendError(response, 400, "INVALID_TASK_LINKS", "A task id is required");
+        return true;
+      }
+      const links = database.taskLinks.get(token.ownerId, input.data.taskId);
+      if (links === undefined) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      body = taskLinksResponse(links);
+    } else if (resource === "templates.list") {
       const query = templateSearchRequestSchema.safeParse({
         query: url.searchParams.get("query") ?? "",
         includeArchived: url.searchParams.get("includeArchived") === "true",
@@ -605,6 +626,8 @@ export const handleAutomation: RouteHandler = async (
         | "tag"
         | "project"
         | "note"
+        | "task_attachment"
+        | "task_issue_link"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -623,6 +646,8 @@ export const handleAutomation: RouteHandler = async (
         | "tag"
         | "project"
         | "note"
+        | "task_attachment"
+        | "task_issue_link"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -811,6 +836,15 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
       );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isTaskLinkCommand(command)) {
+      const planned = previewTaskLinks(database, token.ownerId, command);
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1425,6 +1459,8 @@ export const handleAutomation: RouteHandler = async (
           .find(({ id }) => id === entityId) ??
         database.listTags(token.ownerId).find(({ id }) => id === entityId) ??
         database.notes.get(token.ownerId, entityId) ??
+        database.taskLinks.getAttachment(token.ownerId, entityId) ??
+        database.taskLinks.getIssueLink(token.ownerId, entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1596,6 +1632,18 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
       );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isTaskLinkCommand(command)) {
+      const confirmation = confirmTaskLinks(database, token.ownerId, command);
       if (!confirmation.ok) {
         sendError(
           response,

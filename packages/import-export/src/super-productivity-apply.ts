@@ -11,6 +11,13 @@ import {
   superProductivityTaskFields,
   type FieldDisposition,
 } from "./super-productivity-schema.ts";
+import {
+  mapAttachments,
+  mapLinkedIssue,
+  superProductivityLinkFields,
+  type ImportedAttachment,
+  type ImportedIssueLink,
+} from "./super-productivity-links.ts";
 
 type Source = Record<string, unknown>;
 const object = (value: unknown): Source =>
@@ -53,7 +60,16 @@ export interface TaskImportRecord {
     | { kind: "none" }
     | { kind: "before_start"; minutes: number };
   deadlineReminderMinutes: number | null;
+  // Linked issue and attachments (ADR 0021); tasks only.
+  issueLink?: ImportedIssueLink | null;
+  attachments?: ImportedAttachment[];
 }
+
+/** Report codes that inform the owner without blocking apply. */
+const nonBlockingCodes: ReadonlySet<string> = new Set([
+  "configuration_not_imported",
+  "issue_provider_missing",
+]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
 const hexColor = (value: unknown): string | undefined => {
@@ -184,6 +200,7 @@ export const prepareSuperProductivityImport = (raw: string) => {
         `${blocked.join(", ")} need${blocked.length === 1 ? "s" : ""} parity support before import`,
       );
   };
+  const issueProviders = object(object(data.issueProvider).entities);
   const noteState = object(data.note);
   const noteEntities = object(noteState.entities);
   const liveTasks = object(object(data.task).entities);
@@ -293,6 +310,30 @@ export const prepareSuperProductivityImport = (raw: string) => {
           sourceId,
           "Timestamp is outside the supported four-digit year range",
         );
+      // Linked issue and attachments (ADR 0021). Diagnostics stay content-safe:
+      // they never repeat issue IDs, addresses or provider configuration.
+      const issueLink =
+        kind === "task"
+          ? mapLinkedIssue(
+              source,
+              issueProviders,
+              (detail) => {
+                problem(sourceId, detail);
+              },
+              (detail) =>
+                issues.push({
+                  code: "issue_provider_missing",
+                  sourceId,
+                  detail,
+                }),
+            )
+          : null;
+      const attachments =
+        kind === "task"
+          ? mapAttachments(source, (detail) => {
+              problem(sourceId, detail);
+            })
+          : [];
       const estimate = task?.estimateMilliseconds ?? 0;
       if (estimate % 60000 !== 0 || estimate > 720 * 60000)
         problem(
@@ -332,15 +373,19 @@ export const prepareSuperProductivityImport = (raw: string) => {
         sourceId,
         // Fields applied since #29 are kept only when they carry a value that
         // was applied, so provenance hashes of earlier imports stay stable. A
-        // dueDay superseded by dueWithTime is not applied.
+        // dueDay superseded by dueWithTime is not applied. Linked-issue and
+        // attachment fields (#30) follow the same rule: empty defaults such as
+        // attachments: [] stay out so earlier hashes do not change.
         ...preserve(
           fields,
           source,
           (key) =>
             kind !== "task" ||
-            !reminderAndDayFields.has(key) ||
-            (populated(source[key]) &&
-              (key !== "dueDay" || task?.scheduledDay != null)),
+            (superProductivityLinkFields.has(key)
+              ? populated(source[key])
+              : !reminderAndDayFields.has(key) ||
+                (populated(source[key]) &&
+                  (key !== "dueDay" || task?.scheduledDay != null))),
         ),
         title,
         notes,
@@ -357,6 +402,10 @@ export const prepareSuperProductivityImport = (raw: string) => {
         completedAt,
         createdAt,
       };
+      if (kind === "task" && (issueLink !== null || attachments.length > 0)) {
+        record.issueLink = issueLink;
+        record.attachments = attachments;
+      }
       if (kind !== "task") {
         const icon = source.icon;
         if (
@@ -514,9 +563,7 @@ export const prepareSuperProductivityImport = (raw: string) => {
       "Archived task history is not supported by this initial apply path",
     );
   if (ordered.length === 0) problem("export", "No supported records to import");
-  const notices = issues.filter(
-    ({ code }) => code === "configuration_not_imported",
-  );
+  const notices = issues.filter(({ code }) => nonBlockingCodes.has(code));
   return {
     report: {
       ...inventory,

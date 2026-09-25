@@ -20,6 +20,7 @@ import { Input } from "../components/ui/input.tsx";
 import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
 import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
+import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
 
 export interface TasksPageProps {
   readonly tasks: readonly Task[];
@@ -393,6 +394,13 @@ export const TasksPage = ({
                   <Button disabled={busy}>Add item</Button>
                 </form>
               </div>
+              {organization !== undefined && (
+                <TaskLinksPanel
+                  taskId={task.id}
+                  csrfToken={organization.csrfToken}
+                  online={organization.online}
+                />
+              )}
               <div className="task-actions">
                 <Button
                   type="button"
