@@ -101,7 +101,7 @@ const complete = (db: SuiteDatabase, task: TaskRecord, at: string) => {
 
 describe("recurring series persistence", () => {
   it("creates today's instance once and replays across restarts", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series, generatedTaskIds } = createSeries(db, on("2026-09-24"));
       expect(generatedTaskIds).toHaveLength(1);
@@ -136,7 +136,7 @@ describe("recurring series persistence", () => {
   });
 
   it("rolls back a generation that fails midway and retries cleanly", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series } = createSeries(db, on("2026-09-24"), {
         childTemplates: [{ title: "Fill can", notes: "", estimateMinutes: 5 }],
@@ -163,7 +163,7 @@ describe("recurring series persistence", () => {
   });
 
   it("never duplicates an occurrence across two database handles", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const first = open(directory);
       const second = open(directory, false);
       const { series } = createSeries(first, on("2026-09-24"));
@@ -183,7 +183,7 @@ describe("recurring series persistence", () => {
   });
 
   it("creates at most the newest missed occurrence after downtime", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const daily = createSeries(db, on("2026-09-01"));
       const mondays = createSeries(db, on("2026-09-01"), {
@@ -214,7 +214,7 @@ describe("recurring series persistence", () => {
   });
 
   it("plans timed instances at the same local time across DST", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series } = createSeries(db, on("2026-03-07", "06:00"), {
         startDate: "2026-03-07",
@@ -257,7 +257,7 @@ describe("recurring series persistence", () => {
   });
 
   it("waits for completion before creating the next instance", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series } = createSeries(db, on("2026-09-24"), {
         waitForCompletion: true,
@@ -278,7 +278,7 @@ describe("recurring series persistence", () => {
   });
 
   it("anchors a completion series on the latest completion date", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series } = createSeries(db, on("2026-09-01"), {
         rule: { cycle: "daily", interval: 3, weekdays: [], monthly: null },
@@ -323,7 +323,7 @@ describe("recurring series persistence", () => {
   });
 
   it("keeps skipped and deleted occurrence exceptions", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series } = createSeries(db, on("2026-09-24"));
       const act = (
@@ -376,7 +376,7 @@ describe("recurring series persistence", () => {
   });
 
   it("does not backfill a pause and ends a series for good", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series } = createSeries(db, on("2026-09-21"), {
         startDate: "2026-09-21",
@@ -414,7 +414,7 @@ describe("recurring series persistence", () => {
   });
 
   it("propagates template edits only to open instances on the old value", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const { series } = createSeries(db, on("2026-09-22"), {
         startDate: "2026-09-22",
@@ -472,7 +472,7 @@ describe("recurring series persistence", () => {
   });
 
   it("creates child templates as child tasks and links a source task", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       db.createTaskIdempotently("owner", "source", "source", {
         id: "00000000-0000-4000-8000-000000000001",
@@ -534,7 +534,7 @@ describe("recurring series persistence", () => {
   });
 
   it("imports series and instances without regenerating history", async () => {
-    await withTemporaryDirectory(async (directory) => {
+    await withTemporaryDirectory((directory) => {
       const db = open(directory);
       const task = (sourceId: string) => ({
         kind: "task" as const,

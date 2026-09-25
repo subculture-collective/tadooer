@@ -354,8 +354,8 @@ export const upcomingOccurrences = (
   count: number,
 ): string[] => {
   const dates: string[] = [];
-  let cursor: string | null = date;
-  while (cursor !== null && dates.length < count) {
+  let cursor = date;
+  while (dates.length < count) {
     const next = nextOccurrence(rule, window, cursor);
     if (next === null) break;
     dates.push(next);

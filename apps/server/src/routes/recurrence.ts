@@ -68,12 +68,11 @@ export const storedSeriesFields = (
   input: FieldInput,
 ): Partial<RecurringSeriesFields> => {
   const { rule, ...rest } = input;
-  return Object.fromEntries(
-    Object.entries({
-      ...rest,
-      ...(rule === undefined ? {} : { rule: storedRule(rule) }),
-    }).filter(([, value]) => value !== undefined),
-  ) as Partial<RecurringSeriesFields>;
+  const fields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(rest))
+    if (value !== undefined) fields[key] = value;
+  if (rule !== undefined) fields.rule = storedRule(rule);
+  return fields;
 };
 
 export const ownerToday = (

@@ -979,7 +979,7 @@ export class SqliteRecurrenceStore {
         createdAt: now,
         updatedAt: now,
         plannedStart: timed
-          ? zonedStartInstant(date, series.startTime ?? "", timeZone)
+          ? zonedStartInstant(date, series.startTime, timeZone)
           : null,
         plannedDay: timed ? null : date,
         startReminder: timed ? series.startReminder : { kind: "default" },

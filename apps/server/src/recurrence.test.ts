@@ -341,7 +341,10 @@ describe("recurring series through the assistant", () => {
             },
             ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           });
-          return { status: response.status, body: await response.json() };
+          return {
+            status: response.status,
+            body: (await response.json()) as unknown,
+          };
         };
         const preview = (operation: string, input: unknown) =>
           automation("/api/automation/v1/previews", { operation, input });

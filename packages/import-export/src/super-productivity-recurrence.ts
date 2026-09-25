@@ -199,9 +199,9 @@ export const mapRepeatConfigs = (
   const systemTags = new Set<string>(superProductivitySystemTagIds);
   for (const [sourceId, value] of Object.entries(repeats)) {
     const cfg = object(value);
-    let valid = true;
+    const failures: string[] = [];
     const fail = (detail: string) => {
-      valid = false;
+      failures.push(detail);
       context.problem(sourceId, detail);
     };
     for (const field of Object.keys(cfg))
@@ -394,7 +394,8 @@ export const mapRepeatConfigs = (
       if (cursorDate === null)
         fail("lastTaskCreation must be an epoch-millisecond timestamp");
     }
-    if (!valid || cycle === undefined || !isDate(cfg.startDate)) continue;
+    if (failures.length > 0 || cycle === undefined || !isDate(cfg.startDate))
+      continue;
     // Keep reviewed fields in provenance; nothing else is stored.
     const preserved = Object.fromEntries(
       fieldsWith(superProductivityRepeatCfgFields, "applied", "retained")
