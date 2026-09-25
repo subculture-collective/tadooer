@@ -45,7 +45,7 @@ const referenceLabel = (
   const why = {
     missing_from_export: "not in the source export",
     system_tag: "a Super Productivity priority or board marker",
-    recurrence_unsupported: "recurrence is not supported yet",
+    recurrence_unsupported: "imported before recurring series were supported",
     lifecycle_mismatch: "the parent was in the other of active and archived",
   }[reference.reason];
   return `${what} ${reference.sourceId}: ${why}`;

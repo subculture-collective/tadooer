@@ -55,6 +55,12 @@ import {
 } from "./automation-task-archive.ts";
 import { taskHistoryBody } from "./task-archive.ts";
 import {
+  confirmRecurrence,
+  isRecurrenceCommand,
+  previewRecurrence,
+} from "./automation-recurrence.ts";
+import { ownerToday, recurringSeriesResponse } from "./recurrence.ts";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -442,6 +448,13 @@ export const handleAutomation: RouteHandler = async (
         );
         return true;
       }
+    } else if (resource === "recurrence.list") {
+      const { today } = ownerToday(database, token.ownerId, new Date());
+      body = {
+        series: database.recurrence
+          .list(token.ownerId)
+          .map((series) => recurringSeriesResponse(database, series, today)),
+      };
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -661,6 +674,7 @@ export const handleAutomation: RouteHandler = async (
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
+        | "recurring_series"
         | "habit";
       entityId: string;
     }[] = [];
@@ -681,6 +695,7 @@ export const handleAutomation: RouteHandler = async (
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
+        | "recurring_series"
         | "habit";
       entityId: string;
       revision: number;
@@ -866,6 +881,16 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
       );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isRecurrenceCommand(command)) {
+      // ADR 0023: freezes the series revision (and a deleted instance's).
+      const planned = previewRecurrence(database, token.ownerId, command);
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1622,6 +1647,7 @@ export const handleAutomation: RouteHandler = async (
           .listChoicePools(token.ownerId, true)
           .flatMap((pool) => database.listChoicePoolItems(pool.id, true))
           .find(({ id }) => id === entityId) ??
+        database.recurrence.get(token.ownerId, entityId) ??
         database.getActiveSession(token.ownerId);
       if (current?.id !== entityId || current.revision !== revision) {
         database.appendAutomationAudit({
@@ -1786,6 +1812,23 @@ export const handleAutomation: RouteHandler = async (
         database,
         token.ownerId,
         command,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isRecurrenceCommand(command)) {
+      const confirmation = confirmRecurrence(
+        database,
+        token.ownerId,
+        command,
+        preview.id,
       );
       if (!confirmation.ok) {
         sendError(

@@ -32,6 +32,7 @@ import { handleTaskLinks } from "./routes/task-links.ts";
 import { handleSubtasks } from "./routes/subtasks.ts";
 import { handleTaskHierarchy } from "./routes/task-hierarchy.ts";
 import { handleTaskArchive } from "./routes/task-archive.ts";
+import { handleRecurrence } from "./routes/recurrence.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
@@ -88,6 +89,17 @@ export const startSuiteServer = async (
     const ownerId = database.getActiveOwnerId();
     if (ownerId === undefined) return;
     const now = sessionClock.now().toISOString();
+    // ADR 0023: materialize due recurring occurrences before reminders are
+    // reconciled, so a new instance's reminder is scheduled in the same tick.
+    try {
+      database.recurrence.generateDue({
+        ownerId,
+        timeZone: database.getPlanningPreferences(ownerId).timeZone,
+        now,
+      });
+    } catch {
+      console.error("recurrence.generate_failed");
+    }
     const preferences = database.getNotificationPreferences(ownerId);
     const tasks = database.listTasks(ownerId);
     database.reconcileNotificationDeliveries({
@@ -283,6 +295,7 @@ export const startSuiteServer = async (
     handleSubtasks,
     handleTaskHierarchy,
     handleTaskArchive,
+    handleRecurrence,
     handleChoicePools,
     handleTemplates,
     handleStatic,

@@ -20,7 +20,9 @@ export const superProductivitySections = {
   task: "applied",
   project: "applied",
   tag: "applied",
-  taskRepeatCfg: "parity",
+  // Repeat configurations apply as recurring series since #42 (ADR 0023);
+  // their fields are classified in super-productivity-recurrence.ts.
+  taskRepeatCfg: "applied",
   // Archived tasks apply as read-only history since #38 (ADR 0022). Their
   // timeTracking part still blocks until work history parity (#41).
   archiveYoung: "applied",
@@ -73,7 +75,8 @@ export const superProductivityTaskFields = {
   timeEstimate: "applied",
   parentId: "applied",
   subTaskIds: "applied",
-  repeatCfgId: "parity",
+  // Links an instance to its series with its occurrence date (ADR 0023).
+  repeatCfgId: "applied",
   timeSpent: "parity",
   timeSpentOnDay: "parity",
   modified: "ignored",

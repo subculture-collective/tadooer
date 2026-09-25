@@ -60,7 +60,7 @@ describe("Super Productivity migration preview", () => {
     expect(JSON.stringify(report)).not.toContain("must-not-appear");
     expect(report.issues.map((issue) => issue.code)).toEqual(
       expect.arrayContaining([
-        "recurrence_parity_required",
+        "recurrence_unmappable",
         "time_history_parity_required",
       ]),
     );
