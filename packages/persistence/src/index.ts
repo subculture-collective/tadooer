@@ -60,6 +60,27 @@ export {
   type TimeReportTaskRecord,
 } from "./time-entry-store.ts";
 import {
+  SqliteCounterStore,
+  countersMigration,
+  type ImportedCounter,
+  type ImportedEvaluation,
+} from "./counter-store.ts";
+export {
+  SqliteCounterStore,
+  type CounterDayValueRecord,
+  type CounterDefinitionInput,
+  type CounterImportOutcome,
+  type CounterPatch,
+  type CounterRecord,
+  type CounterViolation,
+  type CounterWriteResult,
+  type DailyEvaluationRecord,
+  type EvaluationPatch,
+  type EvaluationWriteResult,
+  type ImportedCounter,
+  type ImportedEvaluation,
+} from "./counter-store.ts";
+import {
   SqliteTaskArchiveStore,
   taskArchiveMigration,
 } from "./task-archive-store.ts";
@@ -1479,6 +1500,7 @@ const migrations: readonly Migration[] = [
   taskArchiveMigration,
   recurrenceMigration,
   timeHistoryMigration,
+  countersMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1499,9 +1521,11 @@ export class SuiteDatabase {
   readonly taskArchive: SqliteTaskArchiveStore;
   readonly recurrence: SqliteRecurrenceStore;
   readonly timeEntries: SqliteTimeEntryStore;
+  readonly counters: SqliteCounterStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.counters = new SqliteCounterStore(database);
     this.recurrence = new SqliteRecurrenceStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
         this.getTask(ownerId, taskId, includeInactive),
@@ -3171,11 +3195,15 @@ export class SuiteDatabase {
         ImportedWorkContextDay,
         "projectId" | "tagId"
       >[];
+      /** Counters with day values and daily evaluations (ADR 0025). */
+      readonly counters?: readonly ImportedCounter[];
+      readonly evaluations?: readonly ImportedEvaluation[];
     } = {},
   ): {
     created: number;
     existing: number;
     recurringSeries?: { created: number; existing: number };
+    counters?: ReturnType<SqliteCounterStore["importInTransaction"]>;
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3438,11 +3466,26 @@ export class SuiteDatabase {
               randomUUID,
               now,
             );
+      // Only an export with counters or metric days reports their counts.
+      const counters =
+        (options.counters ?? []).length === 0 &&
+        (options.evaluations ?? []).length === 0
+          ? undefined
+          : this.counters.importInTransaction(
+              ownerId,
+              {
+                counters: options.counters ?? [],
+                evaluations: options.evaluations ?? [],
+              },
+              randomUUID,
+              now,
+            );
       this.#database.exec("COMMIT;");
       return {
         created,
         existing,
         ...(recurringSeries === undefined ? {} : { recurringSeries }),
+        ...(counters === undefined ? {} : { counters }),
       };
     } catch (error) {
       this.#database.exec("ROLLBACK;");
