@@ -16,8 +16,8 @@ export type TaskHierarchyViolation =
 
 export interface HierarchyParentCandidate {
   readonly id: string;
-  readonly parentId?: string | null;
-  readonly deletedAt?: string | null;
+  readonly parentId?: string | null | undefined;
+  readonly deletedAt?: string | null | undefined;
 }
 
 /** Returns the first rule a proposed parent assignment breaks, or null. */
@@ -75,11 +75,11 @@ export const planChildPosition = (
 
 export interface HierarchyTaskLike {
   readonly id: string;
-  readonly parentId?: string | null;
-  readonly childPosition?: number | null;
+  readonly parentId?: string | null | undefined;
+  readonly childPosition?: number | null | undefined;
   readonly status: "open" | "completed";
-  readonly estimateMinutes?: number | null;
-  readonly deletedAt?: string | null;
+  readonly estimateMinutes?: number | null | undefined;
+  readonly deletedAt?: string | null | undefined;
 }
 
 export const compareChildren = (

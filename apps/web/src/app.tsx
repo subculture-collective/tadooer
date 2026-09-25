@@ -111,6 +111,7 @@ import type {
 } from "./template-library.tsx";
 import { TodayPage } from "./pages/TodayPage.tsx";
 import { TasksPage } from "./pages/TasksPage.tsx";
+import { createTaskHierarchyActions } from "./components/tasks/task-hierarchy-actions.ts";
 import { ReusePage } from "./pages/ReusePage.tsx";
 import { ConnectionsPage } from "./pages/ConnectionsPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
@@ -1073,6 +1074,23 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
     setFormError(messageFor(error));
   };
+
+  const taskHierarchyActions = createTaskHierarchyActions(
+    localStore,
+    async (queue) => {
+      if (state.kind !== "authenticated" && state.kind !== "offline") return;
+      setBusy(true);
+      setFormError(null);
+      try {
+        await queue();
+        await syncAfterLocalMutation();
+      } catch (error: unknown) {
+        handleTaskError(error);
+      } finally {
+        setBusy(false);
+      }
+    },
+  );
 
   const submitTaskEdit = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
@@ -2398,6 +2416,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onChangeTaskStatus={changeTaskStatus}
           onRemoveTask={removeTask}
           onRecoverTask={recoverTask}
+          {...taskHierarchyActions}
         />
       )}
       {route === "habits" && (
