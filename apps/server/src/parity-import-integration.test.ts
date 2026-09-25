@@ -86,3 +86,64 @@ it("imports a planned child task inside a project backlog in one transaction", a
     db.close();
   });
 });
+
+// Linked data (#30) on archived history (#38): the link is kept on a read-only
+// archived task and survives restart and replay.
+it("keeps attachments on an imported archived task", async () => {
+  const { report, records } = prepareSuperProductivityImport(
+    JSON.stringify({
+      task: store({}),
+      archiveYoung: {
+        task: store({
+          done: {
+            id: "done",
+            title: "Done",
+            isDone: true,
+            doneOn: 1758000060000,
+            created: 1758000000000,
+            attachments: [
+              {
+                id: "a",
+                type: "LINK",
+                path: "https://example.com/spec",
+                title: "Spec",
+              },
+            ],
+          },
+        }),
+        timeTracking: { project: {}, tag: {} },
+      },
+      project: store({}),
+      tag: store({}),
+    }),
+  );
+  expect(report.issues.filter((issue) => issue.blocking)).toEqual([]);
+  await withTemporaryDirectory((directory) => {
+    const path = join(directory, "db.sqlite");
+    let db = SuiteDatabase.open(path);
+    db.createOwner({
+      id: "owner",
+      username: "owner",
+      displayName: "Owner",
+      passwordHash: "hash",
+      createdAt: now,
+    });
+    db.importTaskRecords("owner", records, now);
+    const check = () => {
+      const archived = db.taskArchive.history({ ownerId: "owner" }).entries[0];
+      expect(archived).toBeDefined();
+      const links = db.taskLinks.get("owner", archived?.task.id ?? "");
+      expect(links?.attachments.map(({ kind }) => kind)).toEqual(["link"]);
+      expect(db.listTasks("owner")).toEqual([]);
+    };
+    check();
+    db.close();
+    db = SuiteDatabase.open(path);
+    check();
+    expect(db.importTaskRecords("owner", records, now)).toMatchObject({
+      created: 0,
+    });
+    check();
+    db.close();
+  });
+});
