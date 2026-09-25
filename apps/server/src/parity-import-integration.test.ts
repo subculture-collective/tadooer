@@ -147,3 +147,100 @@ it("keeps attachments on an imported archived task", async () => {
     db.close();
   });
 });
+
+// Recurrence (#42) and work history (#41) in one import: a completed instance
+// with tracked time links to its series, keeps its time once and is not
+// regenerated on replay.
+it("links a tracked recurring instance to its series without duplicating time", async () => {
+  const day = "2026-09-20";
+  const { report, records, recurrence, workContexts } =
+    prepareSuperProductivityImport(
+      JSON.stringify({
+        task: store({
+          [`rpt_r_${day}`]: {
+            id: `rpt_r_${day}`,
+            title: "Water plants",
+            repeatCfgId: "r",
+            isDone: true,
+            created: Date.parse(`${day}T15:00:00.000Z`),
+            doneOn: Date.parse(`${day}T16:00:00.000Z`),
+            timeSpent: 1_800_000,
+            timeSpentOnDay: { [day]: 1_800_000 },
+          },
+        }),
+        taskRepeatCfg: store({
+          r: {
+            id: "r",
+            projectId: null,
+            title: "Water plants",
+            tagIds: [],
+            repeatCycle: "DAILY",
+            repeatEvery: 1,
+            startDate: "2026-01-01",
+            lastTaskCreationDay: day,
+            isPaused: false,
+            quickSetting: "DAILY",
+            monday: true,
+            tuesday: true,
+            wednesday: true,
+            thursday: true,
+            friday: true,
+            saturday: true,
+            sunday: true,
+            notes: "",
+            shouldInheritSubtasks: false,
+            disableAutoUpdateSubtasks: false,
+            skipOverdue: false,
+          },
+        }),
+        project: store({}),
+        tag: store({}),
+      }),
+      { timeZone: "America/Chicago" },
+    );
+  expect(report.issues.filter((issue) => issue.blocking)).toEqual([]);
+
+  await withTemporaryDirectory((directory) => {
+    const path = join(directory, "db.sqlite");
+    let db = SuiteDatabase.open(path);
+    db.createOwner({
+      id: "owner",
+      username: "owner",
+      displayName: "Owner",
+      passwordHash: "hash",
+      createdAt: now,
+    });
+    const apply = () =>
+      db.importTaskRecords("owner", records, now, recurrence, {
+        workContexts,
+      });
+    apply();
+    const check = () => {
+      const series = db.recurrence.list("owner");
+      expect(series).toHaveLength(1);
+      const instances = db
+        .listTasks("owner")
+        .filter((task) => task.title === "Water plants");
+      expect(instances).toHaveLength(1);
+      expect(instances[0]).toMatchObject({
+        recurrence: { seriesId: series[0]?.id, occurrenceDate: day },
+      });
+      expect(
+        db.timeEntries.report({
+          ownerId: "owner",
+          from: day,
+          to: day,
+          timeZone: "America/Chicago",
+          now,
+        }).totalMs,
+      ).toBe(1_800_000);
+    };
+    check();
+    db.close();
+    db = SuiteDatabase.open(path);
+    check();
+    apply();
+    check();
+    db.close();
+  });
+});

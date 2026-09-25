@@ -166,6 +166,14 @@ export const taskResponse = (task: TaskRecord): Task => ({
   childPosition: task.childPosition ?? null,
   // ADR 0022: only archived history carries archivedAt.
   ...(task.archivedAt == null ? {} : { archivedAt: task.archivedAt }),
+  // ADR 0023: recurring instances name their series and occurrence date.
+  recurrence:
+    task.recurrence == null
+      ? null
+      : {
+          seriesId: task.recurrence.seriesId,
+          occurrenceDate: task.recurrence.occurrenceDate,
+        },
 });
 
 export const calendarEventResponse = (

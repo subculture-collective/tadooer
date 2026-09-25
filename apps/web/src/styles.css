@@ -2054,4 +2054,38 @@
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
+
+  /* Worklog (ADR 0024) */
+  .worklog-controls,
+  .worklog-add,
+  .worklog-edit {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: end;
+  }
+  .worklog-days,
+  .worklog-entries {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .worklog-entry {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .worklog-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .worklog-table th,
+  .worklog-table td {
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+  }
+  .worklog-table td {
+    font-variant-numeric: tabular-nums;
+  }
 }

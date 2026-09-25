@@ -45,3 +45,6 @@ export * from "./calendar-freshness.ts";
 
 export * from "./calendar-bridge.ts";
 export * from "./task-archive.ts";
+
+export * from "./recurrence.ts";
+export * from "./time-history.ts";

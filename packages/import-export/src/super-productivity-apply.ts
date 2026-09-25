@@ -6,9 +6,11 @@ import {
   type TaskArchiveReviewReason,
 } from "@suite/contracts";
 import {
-  previewSuperProductivity,
+  inventorySuperProductivity,
+  type SuperProductivityImportOptions,
   type SuperProductivityTaskStore,
 } from "./super-productivity.ts";
+import type { SourceTimeEntry } from "./super-productivity-time.ts";
 import {
   fieldsWith,
   populated,
@@ -79,6 +81,8 @@ export interface TaskImportRecord {
   archiveStore?: SuperProductivityTaskStore;
   review?: TaskArchiveReviewReason[];
   historicalReferences?: HistoricalReference[];
+  /** Reconciled daily work history (ADR 0024); tasks only. */
+  timeEntries?: SourceTimeEntry[];
 }
 
 /**
@@ -95,6 +99,16 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "historical_reference",
     "historical_parent_detached",
     "history_review",
+    // ADR 0023: reported recurrence dispositions that change nothing applied.
+    "recurrence_notice",
+    "recurrence_duplicate_occurrence",
+    // ADR 0024 work history reconciliation: each explains what is imported.
+    "time_total_mismatch",
+    "time_parent_residual",
+    "time_parent_shortfall",
+    "time_reconciliation",
+    "work_context_merged",
+    "work_context_historical",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -160,6 +174,19 @@ const reminderAndDayFields = new Set([
   "deadlineRemindAt",
 ]);
 
+/**
+ * Time fields enter provenance only when they carry tracked time, so the
+ * hashes of tasks imported before #41 (always zero time) stay stable.
+ */
+const trackedTime = (key: string, value: unknown): boolean =>
+  key === "timeSpent"
+    ? typeof value === "number" && value > 0
+    : key === "timeSpentOnDay"
+      ? Object.values(object(value)).some(
+          (day) => typeof day === "number" && day > 0,
+        )
+      : true;
+
 /** Convert an absolute reminder to an offset only when it is exact; never round. */
 const exactOffset = (occurrence: string, remindAt: unknown) => {
   if (typeof remindAt !== "number" || !Number.isSafeInteger(remindAt))
@@ -171,8 +198,20 @@ const exactOffset = (occurrence: string, remindAt: unknown) => {
 };
 
 /** Reject unsupported workflows as a whole; never offer a silent partial import. */
-export const prepareSuperProductivityImport = (raw: string) => {
-  const inventory = previewSuperProductivity(raw);
+export const prepareSuperProductivityImport = (
+  raw: string,
+  options: SuperProductivityImportOptions = {},
+) => {
+  const sourceInventory = inventorySuperProductivity(raw, options);
+  const { preview: inventory, recurrence } = sourceInventory;
+  // Only configurations that exist in the export link instances (ADR 0023);
+  // a missing one stays a historical reference and out of provenance, which
+  // keeps the source hash of history imported before #42 unchanged.
+  const linked = new Set(
+    recurrence.links.map(({ taskSourceId }) => taskSourceId),
+  );
+  const repeatKept = (sourceId: string) => (key: string) =>
+    key !== "repeatCfgId" || linked.has(sourceId);
   const issues = inventory.issues.filter(({ code }) => code !== "preview_only");
   const notice = (sourceId: string | null, detail: string) =>
     issues.push({ code: "configuration_not_imported", sourceId, detail });
@@ -484,17 +523,26 @@ export const prepareSuperProductivityImport = (raw: string) => {
         ...(archived
           ? // History keeps every reviewed field it had, including legacy
             // schedule values that are not applied to an archived task.
-            preserve(fields, source, () => true, ["plannedAt"])
+            preserve(
+              fields,
+              source,
+              (key) =>
+                repeatKept(sourceId)(key) && trackedTime(key, source[key]),
+              ["plannedAt"],
+            )
           : preserve(
               fields,
               source,
               (key) =>
                 kind !== "task" ||
-                (superProductivityLinkFields.has(key)
-                  ? populated(source[key])
-                  : !reminderAndDayFields.has(key) ||
-                    (populated(source[key]) &&
-                      (key !== "dueDay" || task?.scheduledDay != null))),
+                (key === "repeatCfgId"
+                  ? repeatKept(sourceId)(key)
+                  : trackedTime(key, source[key]) &&
+                    (superProductivityLinkFields.has(key)
+                      ? populated(source[key])
+                      : !reminderAndDayFields.has(key) ||
+                        (populated(source[key]) &&
+                          (key !== "dueDay" || task?.scheduledDay != null)))),
             )),
         title,
         notes,
@@ -530,6 +578,9 @@ export const prepareSuperProductivityImport = (raw: string) => {
         record.issueLink = issueLink;
         record.attachments = attachments;
       }
+      const timeEntries = sourceInventory.timeEntries.get(sourceId);
+      if (kind === "task" && timeEntries !== undefined)
+        record.timeEntries = [...timeEntries];
       if (task !== undefined) {
         record.archived = archived;
         record.archiveStore = task.store;
@@ -689,7 +740,8 @@ export const prepareSuperProductivityImport = (raw: string) => {
     ...records.filter(({ kind }) => kind === "task"),
     ...byOrder(noteRecords, noteOrder),
   ];
-  if (ordered.length === 0) problem("export", "No supported records to import");
+  if (ordered.length === 0 && recurrence.series.length === 0)
+    problem("export", "No supported records to import");
   const reported = issues.map((issue) => ({
     ...issue,
     blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
@@ -705,5 +757,7 @@ export const prepareSuperProductivityImport = (raw: string) => {
       issues: reported,
     },
     records: ordered,
+    recurrence,
+    workContexts: sourceInventory.workContexts,
   };
 };

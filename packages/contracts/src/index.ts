@@ -3,6 +3,8 @@ export * from "./organization.ts";
 export * from "./task-planning.ts";
 export * from "./task-links.ts";
 export * from "./task-archive.ts";
+export * from "./recurrence.ts";
+export * from "./time-history.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -33,6 +35,21 @@ import {
   taskHistoryProvenanceSchema,
   taskHistoryQuerySchema,
 } from "./task-archive.ts";
+import {
+  automationRecurrenceCreateInputSchema,
+  automationRecurrenceOccurrenceInputSchema,
+  automationRecurrenceStateInputSchema,
+  automationRecurrenceUpdateInputSchema,
+  recurringSeriesListResponseSchema,
+  recurringSeriesMutationResponseSchema,
+  taskRecurrenceSchema,
+} from "./recurrence.ts";
+import {
+  automationTimeEntryMutationInputSchema,
+  timeEntryMutationResponseSchema,
+  timeReportQuerySchema,
+  timeReportResponseSchema,
+} from "./time-history.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -319,6 +336,8 @@ export const taskSchema = z.object({
   childPosition: z.number().int().nullable().optional(),
   /** ADR 0022: set only on archived history; active tasks omit it. */
   archivedAt: z.iso.datetime().nullable().optional(),
+  /** ADR 0023: the series and occurrence date of a recurring instance. */
+  recurrence: taskRecurrenceSchema.nullable().optional(),
 });
 
 export const createTaskRequestSchema = z.object({
@@ -1640,6 +1659,11 @@ export const automationOperationSchema = z.enum([
   "tasks.restore",
   "tasks.archive",
   "tasks.unarchive",
+  "recurrence.create",
+  "recurrence.update",
+  "recurrence.set_state",
+  "recurrence.occurrence",
+  "time_entries.mutate",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1847,6 +1871,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationChecklistInputSchema,
     }),
     z.object({
+      operation: z.literal("time_entries.mutate"),
+      input: automationTimeEntryMutationInputSchema,
+    }),
+    z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
     }),
@@ -1905,6 +1933,22 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     z.object({
       operation: z.literal("tasks.unarchive"),
       input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("recurrence.create"),
+      input: automationRecurrenceCreateInputSchema,
+    }),
+    z.object({
+      operation: z.literal("recurrence.update"),
+      input: automationRecurrenceUpdateInputSchema,
+    }),
+    z.object({
+      operation: z.literal("recurrence.set_state"),
+      input: automationRecurrenceStateInputSchema,
+    }),
+    z.object({
+      operation: z.literal("recurrence.occurrence"),
+      input: automationRecurrenceOccurrenceInputSchema,
     }),
     z.object({
       operation: z.literal("tasks.update"),
@@ -2020,6 +2064,11 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationTaskLinkMutationInputSchema,
     });
+  if (operation === "time_entries.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTimeEntryMutationInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2054,6 +2103,26 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: automationTaskUpdateInputSchema,
+    });
+  if (operation === "recurrence.create")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationRecurrenceCreateInputSchema,
+    });
+  if (operation === "recurrence.update")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationRecurrenceUpdateInputSchema,
+    });
+  if (operation === "recurrence.set_state")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationRecurrenceStateInputSchema,
+    });
+  if (operation === "recurrence.occurrence")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationRecurrenceOccurrenceInputSchema,
     });
   if (operation === "tasks.set_completed")
     return z.object({
@@ -2126,9 +2195,11 @@ export const automationAffectedEntitySchema = z
       "note",
       "task_attachment",
       "task_issue_link",
+      "time_entry",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
+      "recurring_series",
     ]),
     entityId: entityIdSchema,
   })
@@ -2148,9 +2219,11 @@ const existingAutomationBaseRevisionSchema = z
       "note",
       "task_attachment",
       "task_issue_link",
+      "time_entry",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
+      "recurring_series",
     ]),
     entityId: entityIdSchema,
     revision: revisionSchema,
@@ -2210,6 +2283,8 @@ export const automationExecutionResultSchema = z.union([
   checklistMutationResponseSchema,
   taskHierarchyMutationResponseSchema,
   taskArchiveMutationResponseSchema,
+  recurringSeriesMutationResponseSchema,
+  timeEntryMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2383,6 +2458,28 @@ export const automationCatalog = [
     outputSchema: taskHistoryResponseSchema,
   },
   {
+    id: "recurrence.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/recurrence",
+    mcpName: "suite.recurrence.list",
+    mcpUri: "suite://v1/recurrence",
+    inputSchema: z.object({}).strict(),
+    outputSchema: recurringSeriesListResponseSchema,
+  },
+  {
+    id: "time.report",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/time-report",
+    mcpName: "suite.time.report",
+    mcpUri: "suite://v1/time-report{?from,to}",
+    inputSchema: timeReportQuerySchema,
+    outputSchema: timeReportResponseSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2501,7 +2598,10 @@ export const automationCatalog = [
                     ? "task_links:write"
                     : id === "habits.mutate"
                       ? "habits:write"
-                      : id.startsWith("tasks.") || id === "subtasks.mutate"
+                      : id.startsWith("tasks.") ||
+                          id.startsWith("recurrence.") ||
+                          id === "subtasks.mutate" ||
+                          id === "time_entries.mutate"
                         ? "tasks:write"
                         : id === "schedule.create_time_block"
                           ? "schedule:write"
@@ -2839,6 +2939,20 @@ export const superProductivityPreviewSchema = z.object({
     tags: z.number().int().nonnegative(),
     repeatConfigurations: z.number().int().nonnegative(),
     trackedMilliseconds: z.number().nonnegative(),
+    /** Work history reconciliation (ADR 0024), in milliseconds and counts. */
+    time: z
+      .object({
+        sourceLeafMs: z.number().int().nonnegative(),
+        sourceLeafDailyMs: z.number().int().nonnegative(),
+        taskDayEntries: z.number().int().nonnegative(),
+        taskDayMs: z.number().int().nonnegative(),
+        parentResidualEntries: z.number().int().nonnegative(),
+        parentResidualMs: z.number().int().nonnegative(),
+        undatedMs: z.number().int().nonnegative(),
+        datedExcessMs: z.number().int().nonnegative(),
+        workContextDays: z.number().int().nonnegative(),
+      })
+      .optional(),
   }),
   tasks: z.array(
     z.object({
@@ -2859,6 +2973,8 @@ export const superProductivityPreviewSchema = z.object({
       store: z.enum(["task", "archiveYoung", "archiveOld"]).optional(),
       review: z.array(taskArchiveReviewReasonSchema).optional(),
       historicalReferences: z.array(historicalReferenceSchema).optional(),
+      /** ADR 0023: occurrence date when the task links to a repeat configuration. */
+      occurrenceDate: z.string().nullable().optional(),
     }),
   ),
   issues: z.array(
@@ -2879,5 +2995,13 @@ export const taskImportApplyResponseSchema = z
   .object({
     created: z.number().int().nonnegative(),
     existing: z.number().int().nonnegative(),
+    /** ADR 0023: repeat configurations applied as recurring series. */
+    recurringSeries: z
+      .object({
+        created: z.number().int().nonnegative(),
+        existing: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();

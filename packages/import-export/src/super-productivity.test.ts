@@ -49,6 +49,18 @@ describe("Super Productivity migration preview", () => {
       tags: 0,
       repeatConfigurations: 1,
       trackedMilliseconds: 90000,
+      // Only dated daily values import; 30 s of leaf timeSpent has no day.
+      time: {
+        sourceLeafMs: 90000,
+        sourceLeafDailyMs: 60000,
+        taskDayEntries: 1,
+        taskDayMs: 60000,
+        parentResidualEntries: 0,
+        parentResidualMs: 0,
+        undatedMs: 30000,
+        datedExcessMs: 0,
+        workContextDays: 0,
+      },
     });
     expect(
       report.tasks.find((task) => task.sourceId === "child"),
@@ -59,10 +71,11 @@ describe("Super Productivity migration preview", () => {
     });
     expect(JSON.stringify(report)).not.toContain("must-not-appear");
     expect(report.issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining([
-        "recurrence_parity_required",
-        "time_history_parity_required",
-      ]),
+      expect.arrayContaining(["recurrence_unmappable", "time_reconciliation"]),
+    );
+    // Work history applies since #41 (ADR 0024).
+    expect(report.issues.map((issue) => issue.code)).not.toContain(
+      "time_history_parity_required",
     );
     // Children map to full child tasks (ADR 0018); hierarchy no longer blocks.
     expect(report.issues.map((issue) => issue.code)).not.toContain(

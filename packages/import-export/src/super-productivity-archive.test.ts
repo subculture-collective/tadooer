@@ -355,7 +355,7 @@ describe("archived Super Productivity history", () => {
     ).toHaveLength(2);
   });
 
-  it("still blocks archived time history and unreviewed archive fields", () => {
+  it("imports archived work history and still blocks unreviewed archive fields", () => {
     const tracked = prepare({
       task: state({}),
       archiveOld: {
@@ -363,9 +363,20 @@ describe("archived Super Productivity history", () => {
         timeTracking: { project: { p: { "2026-01-01": { s: 1, e: 2 } } } },
       },
     });
-    expect(tracked.report.canApply).toBe(false);
+    // ADR 0024: the record is kept with its source project ID.
+    expect(tracked.report.canApply).toBe(true);
+    expect(tracked.workContexts).toEqual([
+      expect.objectContaining({
+        contextKind: "project",
+        sourceContextId: "p",
+        sourceStore: "archiveOld",
+      }),
+    ]);
     expect(tracked.report.issues).toContainEqual(
-      expect.objectContaining({ code: "unsupported_section", blocking: true }),
+      expect.objectContaining({
+        code: "work_context_historical",
+        blocking: false,
+      }),
     );
     const unknown = prepare({
       task: state({}),
