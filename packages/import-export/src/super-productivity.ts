@@ -13,6 +13,12 @@ import {
   superProductivitySystemTagIds,
   superProductivityTaskFields,
 } from "./super-productivity-schema.ts";
+import {
+  mapRepeatConfigs,
+  occurrenceDateOf,
+  type SuperProductivityOccurrenceLink,
+  type SuperProductivitySeriesRecord,
+} from "./super-productivity-recurrence.ts";
 
 const systemTagIds = new Set<string>(superProductivitySystemTagIds);
 
@@ -56,6 +62,8 @@ export interface SuperProductivityPreview {
     readonly scheduledDay: string | null;
     readonly deadlineAt: string | null;
     readonly deadlineDay: string | null;
+    /** ADR 0023: occurrence date when the task links to a repeat configuration. */
+    readonly occurrenceDate: string | null;
   }[];
   readonly issues: readonly {
     readonly code: string;
@@ -90,10 +98,31 @@ const divergentFields = (left: ObjectValue, right: ObjectValue): string[] => {
     .toSorted();
 };
 
+export interface SuperProductivityImportOptions {
+  /** Owner planning zone; reads source creation times as calendar dates. */
+  readonly timeZone?: string;
+}
+
+/** Repeat configurations mapped to series, and the instances linked to them. */
+export interface SuperProductivityRecurrence {
+  readonly series: readonly SuperProductivitySeriesRecord[];
+  readonly links: readonly SuperProductivityOccurrenceLink[];
+}
+
 /** Read-only inventory: never claims unsupported data has been migrated. */
 export const previewSuperProductivity = (
   raw: string,
-): SuperProductivityPreview => {
+  options: SuperProductivityImportOptions = {},
+): SuperProductivityPreview => inventorySuperProductivity(raw, options).preview;
+
+export const inventorySuperProductivity = (
+  raw: string,
+  options: SuperProductivityImportOptions = {},
+): {
+  readonly preview: SuperProductivityPreview;
+  readonly recurrence: SuperProductivityRecurrence;
+} => {
+  const timeZone = options.timeZone ?? "UTC";
   if (Buffer.byteLength(raw, "utf8") > limits.bytes)
     throw new Error(`Export exceeds the ${limits.label} import limit`);
   const parsed: unknown = JSON.parse(raw);
@@ -159,7 +188,7 @@ export const previewSuperProductivity = (
     }
     const disposition =
       superProductivitySections[name as keyof typeof superProductivitySections];
-    if (disposition === "applied" || disposition === "parity") continue;
+    if (disposition === "applied") continue;
     const store = object(value);
     let blocking =
       disposition === "blocked" &&
@@ -194,6 +223,21 @@ export const previewSuperProductivity = (
   const projects = entities(data.project, "project");
   const tags = entities(data.tag, "tag");
   const repeats = entities(data.taskRepeatCfg, "taskRepeatCfg");
+  // ADR 0023: repeat configurations map to recurring series. Unmappable
+  // options block with a specific finding per configuration.
+  const series = mapRepeatConfigs(repeats, {
+    projects,
+    tags,
+    timeZone,
+    problem: (sourceId, detail) => {
+      issue("recurrence_unmappable", sourceId, detail);
+    },
+    notice: (sourceId, detail) => {
+      issue("recurrence_notice", sourceId, detail);
+    },
+  });
+  const links: SuperProductivityOccurrenceLink[] = [];
+  const occurrenceKeys = new Set<string>();
   const archiveTasks = (name: "archiveYoung" | "archiveOld") => {
     if (data[name] === undefined) return {};
     const archive = object(data[name]);
@@ -392,14 +436,49 @@ export const previewSuperProductivity = (
             "Referenced repeat configuration is absent",
           );
       }
-      if (source.archived && repeatConfigId !== null)
+      if (
+        source.archived &&
+        repeatConfigId !== null &&
+        !Object.hasOwn(repeats, repeatConfigId)
+      )
         historicalReferences.push({
           kind: "repeat_config",
           sourceId: repeatConfigId,
-          reason: Object.hasOwn(repeats, repeatConfigId)
-            ? "recurrence_unsupported"
-            : "missing_from_export",
+          reason: "missing_from_export",
         });
+      // Live and archived instances of an exported configuration link to its
+      // series with their occurrence date and are never regenerated.
+      let occurrenceDate: string | null = null;
+      if (repeatConfigId !== null && Object.hasOwn(repeats, repeatConfigId)) {
+        occurrenceDate = occurrenceDateOf(task, repeatConfigId, timeZone);
+        if (parentId !== null)
+          issue(
+            "recurrence_unmappable",
+            id,
+            "A child task is linked to a repeat configuration; only top-level tasks can be recurring instances",
+          );
+        else if (occurrenceDate === null)
+          issue(
+            "recurrence_unmappable",
+            id,
+            "The instance's repeat day cannot be read from its ID or creation time",
+          );
+        else if (series.has(repeatConfigId)) {
+          const key = `${repeatConfigId}:${occurrenceDate}`;
+          if (occurrenceKeys.has(key))
+            issue(
+              "recurrence_duplicate_occurrence",
+              id,
+              `Another instance already has the ${occurrenceDate} occurrence; this one is linked as history and the date is not recreated`,
+            );
+          occurrenceKeys.add(key);
+          links.push({
+            taskSourceId: id,
+            seriesSourceId: repeatConfigId,
+            occurrenceDate,
+          });
+        }
+      }
       for (const field of ["parentId", "projectId", "repeatCfgId"] as const)
         if (
           task[field] !== undefined &&
@@ -509,6 +588,7 @@ export const previewSuperProductivity = (
         deadlineAt,
         deadlineDay:
           deadlineAt === null ? day(task.deadlineDay, id, "deadlineDay") : null,
+        occurrenceDate,
       });
     }
   for (const [field, count] of unknownFields)
@@ -648,12 +728,6 @@ export const previewSuperProductivity = (
       null,
       `${count.toLocaleString("en-US")} archived task${count === 1 ? "" : "s"} ${historicalSummary[kind]?.[count === 1 ? 1 : 0] ?? "reference"} ${historicalObject[kind] ?? kind}; source IDs are kept as read-only historical references`,
     );
-  if (Object.keys(repeats).length > 0)
-    issue(
-      "recurrence_parity_required",
-      null,
-      "Task recurrence must be implemented before repeat configurations can be applied",
-    );
   if (tasks.some((task) => task.trackedMilliseconds > 0))
     issue(
       "time_history_parity_required",
@@ -665,7 +739,7 @@ export const previewSuperProductivity = (
     null,
     "Inventory only: no data was written. Keep the original export for the later transactional import.",
   );
-  return {
+  const preview: SuperProductivityPreview = {
     source: "super_productivity",
     inputHash: createHash("sha256")
       .update(JSON.stringify(parsed))
@@ -686,5 +760,12 @@ export const previewSuperProductivity = (
     },
     tasks,
     issues,
+  };
+  return {
+    preview,
+    recurrence: {
+      series: [...series.values()],
+      links,
+    },
   };
 };

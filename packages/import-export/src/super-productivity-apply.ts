@@ -6,7 +6,8 @@ import {
   type TaskArchiveReviewReason,
 } from "@suite/contracts";
 import {
-  previewSuperProductivity,
+  inventorySuperProductivity,
+  type SuperProductivityImportOptions,
   type SuperProductivityTaskStore,
 } from "./super-productivity.ts";
 import {
@@ -95,6 +96,9 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "historical_reference",
     "historical_parent_detached",
     "history_review",
+    // ADR 0023: reported recurrence dispositions that change nothing applied.
+    "recurrence_notice",
+    "recurrence_duplicate_occurrence",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -171,8 +175,22 @@ const exactOffset = (occurrence: string, remindAt: unknown) => {
 };
 
 /** Reject unsupported workflows as a whole; never offer a silent partial import. */
-export const prepareSuperProductivityImport = (raw: string) => {
-  const inventory = previewSuperProductivity(raw);
+export const prepareSuperProductivityImport = (
+  raw: string,
+  options: SuperProductivityImportOptions = {},
+) => {
+  const { preview: inventory, recurrence } = inventorySuperProductivity(
+    raw,
+    options,
+  );
+  // Only configurations that exist in the export link instances (ADR 0023);
+  // a missing one stays a historical reference and out of provenance, which
+  // keeps the source hash of history imported before #42 unchanged.
+  const linked = new Set(
+    recurrence.links.map(({ taskSourceId }) => taskSourceId),
+  );
+  const repeatKept = (sourceId: string) => (key: string) =>
+    key !== "repeatCfgId" || linked.has(sourceId);
   const issues = inventory.issues.filter(({ code }) => code !== "preview_only");
   const notice = (sourceId: string | null, detail: string) =>
     issues.push({ code: "configuration_not_imported", sourceId, detail });
@@ -484,17 +502,19 @@ export const prepareSuperProductivityImport = (raw: string) => {
         ...(archived
           ? // History keeps every reviewed field it had, including legacy
             // schedule values that are not applied to an archived task.
-            preserve(fields, source, () => true, ["plannedAt"])
+            preserve(fields, source, repeatKept(sourceId), ["plannedAt"])
           : preserve(
               fields,
               source,
               (key) =>
                 kind !== "task" ||
-                (superProductivityLinkFields.has(key)
-                  ? populated(source[key])
-                  : !reminderAndDayFields.has(key) ||
-                    (populated(source[key]) &&
-                      (key !== "dueDay" || task?.scheduledDay != null))),
+                (key === "repeatCfgId"
+                  ? repeatKept(sourceId)(key)
+                  : superProductivityLinkFields.has(key)
+                    ? populated(source[key])
+                    : !reminderAndDayFields.has(key) ||
+                      (populated(source[key]) &&
+                        (key !== "dueDay" || task?.scheduledDay != null))),
             )),
         title,
         notes,
@@ -689,7 +709,8 @@ export const prepareSuperProductivityImport = (raw: string) => {
     ...records.filter(({ kind }) => kind === "task"),
     ...byOrder(noteRecords, noteOrder),
   ];
-  if (ordered.length === 0) problem("export", "No supported records to import");
+  if (ordered.length === 0 && recurrence.series.length === 0)
+    problem("export", "No supported records to import");
   const reported = issues.map((issue) => ({
     ...issue,
     blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
@@ -705,5 +726,6 @@ export const prepareSuperProductivityImport = (raw: string) => {
       issues: reported,
     },
     records: ordered,
+    recurrence,
   };
 };

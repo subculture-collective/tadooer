@@ -30,7 +30,8 @@ export const historicalReferenceReasons = [
   "missing_from_export",
   // A Super Productivity priority/board marker, never an ordinary tag.
   "system_tag",
-  // Tadooer has no recurrence yet (#42); the configuration ID is kept.
+  // Legacy: before #42 an existing configuration was kept this way. Imports
+  // now link such instances to a recurring series (ADR 0023).
   "recurrence_unsupported",
   // The parent is in the other lifecycle (live versus archived), so the task
   // is imported at top level rather than under a parent it cannot share.

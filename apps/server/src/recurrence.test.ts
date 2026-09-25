@@ -457,3 +457,111 @@ describe("recurring series through the assistant", () => {
     });
   });
 });
+
+describe("Super Productivity recurrence import", () => {
+  it("imports repeat configurations and instances without duplicating history", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      await mkdir(join(directory, "web"));
+      let now = new Date("2026-09-21T17:00:00.000Z");
+      const server = await startSuiteServer(configuration(directory), {
+        disableNotificationTimer: true,
+        sessionClock: { now: () => now },
+      });
+      try {
+        const call = await signIn(server);
+        const state = (entities: Record<string, unknown>) => ({
+          ids: Object.keys(entities),
+          entities,
+        });
+        const daily = {
+          id: "daily",
+          title: "Journal",
+          repeatCycle: "DAILY",
+          repeatEvery: 1,
+          startDate: "2026-01-01",
+          lastTaskCreationDay: "2026-09-21",
+          isPaused: false,
+          tagIds: [],
+          deletedInstanceDates: ["2026-09-22"],
+          shouldInheritSubtasks: true,
+          subTaskTemplates: [{ title: "Gratitude", timeEstimate: 300000 }],
+        };
+        const exportData = {
+          task: state({
+            "rpt_daily_2026-09-21": {
+              id: "rpt_daily_2026-09-21",
+              title: "Journal",
+              repeatCfgId: "daily",
+              created: Date.parse("2026-09-21T12:00:00.000Z"),
+              dueDay: "2026-09-21",
+            },
+          }),
+          archiveYoung: {
+            task: state({
+              "rpt_daily_2026-09-20": {
+                id: "rpt_daily_2026-09-20",
+                title: "Journal",
+                repeatCfgId: "daily",
+                isDone: true,
+                doneOn: Date.parse("2026-09-20T20:00:00.000Z"),
+                created: Date.parse("2026-09-20T12:00:00.000Z"),
+              },
+            }),
+          },
+          taskRepeatCfg: state({ daily }),
+        };
+        const body = { data: exportData };
+        const preview = (await (
+          await call("/api/imports/super-productivity/preview", "POST", body)
+        ).json()) as { canApply: boolean; inputHash: string };
+        expect(preview.canApply).toBe(true);
+        const apply = async () =>
+          (await (
+            await call("/api/imports/super-productivity/apply", "POST", body, {
+              "X-Import-Hash": preview.inputHash,
+            })
+          ).json()) as unknown;
+        expect(await apply()).toEqual({
+          created: 2,
+          existing: 0,
+          recurringSeries: { created: 1, existing: 0 },
+        });
+        // The tick on the imported day creates nothing new; the deleted
+        // date stays deleted; the next day gets one instance.
+        await server.runNotifications();
+        expect(await tasks(call)).toHaveLength(1);
+        now = new Date("2026-09-22T17:00:00.000Z");
+        await server.runNotifications();
+        expect(await tasks(call)).toHaveLength(1);
+        now = new Date("2026-09-23T17:00:00.000Z");
+        await server.runNotifications();
+        const live = await tasks(call);
+        expect(
+          live
+            .filter((task) => task.parentId == null)
+            .map((task) => task.recurrence?.occurrenceDate)
+            .toSorted(),
+        ).toEqual(["2026-09-21", "2026-09-23"]);
+        expect(live.filter((task) => task.title === "Gratitude")).toHaveLength(
+          1,
+        );
+        expect(await apply()).toEqual({
+          created: 0,
+          existing: 2,
+          recurringSeries: { created: 0, existing: 1 },
+        });
+        const [imported] = recurringSeriesListResponseSchema.parse(
+          await (await call("/api/recurring-series", "GET")).json(),
+        ).series;
+        expect(imported).toMatchObject({
+          source: "super_productivity",
+          instanceCount: 3,
+          cursorDate: "2026-09-23",
+          exceptions: [{ date: "2026-09-22", state: "deleted" }],
+        });
+      } finally {
+        await server.close();
+      }
+    });
+  });
+});

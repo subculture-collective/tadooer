@@ -3352,8 +3352,9 @@ export class SuiteDatabase {
         if (record.archived === true)
           this.taskArchive.markImportedArchived(ownerId, id, now);
       }
+      // Only an export with repeat configurations reports series counts.
       const recurringSeries =
-        recurrence === undefined
+        recurrence === undefined || recurrence.series.length === 0
           ? undefined
           : this.recurrence.importInTransaction(
               ownerId,
