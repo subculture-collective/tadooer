@@ -5,6 +5,13 @@ import { readNotificationStatus } from "../notification-status.ts";
 import { StructuredCaptureError, validateTaskParent } from "@suite/domain";
 import { hierarchyViolationError } from "./task-hierarchy.ts";
 import { createCapturedTask, resolveTaskCapture } from "../task-capture.ts";
+import {
+  captureAffected,
+  captureSummary,
+  confirmCaptureBatch,
+  isCaptureBatchCommand,
+  previewCaptureBatch,
+} from "../capture-automation.ts";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
@@ -734,6 +741,8 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
+    // ADR 0031: capture resolves at preview; new tags become affected objects.
+    let captureBatch: ReturnType<typeof previewCaptureBatch> | undefined;
     if (command.operation === "tasks.create") {
       try {
         command = {
@@ -743,8 +752,23 @@ export const handleAutomation: RouteHandler = async (
             token.ownerId,
             command.input,
             new Date().toISOString(),
+            { allowNewTags: true },
           ),
         };
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
+    } else if (isCaptureBatchCommand(command)) {
+      try {
+        captureBatch = previewCaptureBatch(
+          database,
+          token.ownerId,
+          command,
+          new Date().toISOString(),
+        );
+        command = { ...command, input: captureBatch.input };
       } catch (error) {
         if (!(error instanceof StructuredCaptureError)) throw error;
         sendError(response, 400, "INVALID_TASK", error.message);
@@ -1000,6 +1024,12 @@ export const handleAutomation: RouteHandler = async (
       affected.push(...planned.affected);
       baseRevisions.push(...planned.baseRevisions);
       taskSummary = planned.summary;
+    } else if (command.operation === "tasks.create") {
+      affected.push(...captureAffected(command.input));
+      taskSummary = captureSummary(command.input);
+    } else if (captureBatch !== undefined) {
+      affected.push(...captureBatch.affected);
+      taskSummary = captureBatch.summary;
     } else if (isDayOrderCommand(command)) {
       // ADR 0027: no entity revision to freeze; confirmation re-checks the
       // day order revision and exact membership.
@@ -2327,6 +2357,34 @@ export const handleAutomation: RouteHandler = async (
         task: taskResponse(created.task),
         replayed: created.kind === "replayed",
       };
+    } else if (isCaptureBatchCommand(command)) {
+      let batch;
+      try {
+        batch = confirmCaptureBatch(
+          database,
+          token.ownerId,
+          internalKey,
+          createHash("sha256")
+            .update(JSON.stringify(command.input))
+            .digest("hex"),
+          command,
+          new Date().toISOString(),
+        );
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
+      if (batch.kind === "conflict") {
+        sendError(
+          response,
+          409,
+          "IDEMPOTENCY_CONFLICT",
+          "Operation key conflict",
+        );
+        return true;
+      }
+      result = batch.result;
     } else if (command.operation === "schedule.create_time_block") {
       const input = command.input;
       const taskRevision = preview.baseRevisions[input.taskId];
