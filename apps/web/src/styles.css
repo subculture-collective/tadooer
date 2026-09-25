@@ -2088,4 +2088,53 @@
   .worklog-table td {
     font-variant-numeric: tabular-nums;
   }
+
+  /* Counters and daily evaluation (ADR 0025) */
+  .counter-list,
+  .counter-evaluation,
+  .counter-create {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .counter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .counter-actions,
+  .counter-set {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: end;
+  }
+  .counter-choice {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    margin-inline-end: 0.75rem;
+  }
+  .counter-week {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .counter-week th,
+  .counter-week td {
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+  }
+  .counter-week td {
+    position: relative;
+  }
+  .counter-bar {
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-start: 0;
+    block-size: 3px;
+    background: var(--color-primary, currentColor);
+    opacity: 0.6;
+  }
 }
