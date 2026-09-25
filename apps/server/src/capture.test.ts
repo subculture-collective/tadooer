@@ -286,12 +286,13 @@ it("lists tags the assistant would create as affected objects and creates them o
       const preview = automationPreviewResponseSchema.parse(
         previewResponse.body,
       ).preview;
-      expect(preview.affected).toEqual([
-        { entityKind: "tag", entityId: expect.any(String) },
+      expect(preview.affected.map((entry) => entry.entityKind)).toEqual([
+        "tag",
       ]);
       expect(preview.summary).toContain('creates tag "Team"');
       expect(preview.summary).toContain("attaches 1 link");
       expect(preview.summary).toContain("weekly recurring series");
+      const newTagId = preview.affected[0]?.entityId ?? "";
       const confirmed = automationConfirmationResponseSchema.parse(
         (
           await automation(
@@ -303,21 +304,15 @@ it("lists tags the assistant would create as affected objects and creates them o
         ).body,
       );
       expect(confirmed.result).toMatchObject({
-        task: {
-          title: "Standup https://example.com/room",
-          tagIds: [preview.affected[0]?.entityId],
-          recurrence: { occurrenceDate: expect.any(String) },
-        },
+        task: { title: "Standup https://example.com/room", tagIds: [newTagId] },
       });
+      const confirmedTask =
+        "task" in confirmed.result ? confirmed.result.task : undefined;
+      expect(typeof confirmedTask?.recurrence?.occurrenceDate).toBe("string");
       const tags = (await (await call("/api/tags", "GET")).json()) as {
         tags: { id: string; displayName: string }[];
       };
-      expect(tags.tags).toEqual([
-        expect.objectContaining({
-          id: preview.affected[0]?.entityId,
-          displayName: "Team",
-        }),
-      ]);
+      expect(tags.tags).toMatchObject([{ id: newTagId, displayName: "Team" }]);
 
       // A batch previews every item; one name yields one tag.
       const batchPreview = automationPreviewResponseSchema.parse(

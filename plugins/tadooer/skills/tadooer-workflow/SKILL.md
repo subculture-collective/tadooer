@@ -23,7 +23,7 @@ If a confirmation times out, retain its idempotency key and inspect current stat
 
 ## Supported workflows and boundaries
 
-- Create a task with `suite.tasks.create` using the discovered operation wrapper.
+- Create a task with `suite.tasks.create` using the discovered operation wrapper. With `structured: true` the title may carry capture syntax (`+project`, `#tag`, `30m`, `@tomorrow`, `@every monday 09:00`, `!friday`, links); the preview lists every tag it would create as an affected `tag` object and confirmation creates them with the task. Create several tasks from a Markdown list with `suite.tasks.create_many` (at most 100 tasks; nested items become child tasks).
 - Edit task fields with `suite.tasks.update`; complete or reopen with `suite.tasks.set_completed`. Read the current revision first.
 - Delete only after explicit approval of the concrete `suite.tasks.delete` preview. Inspect `suite.tasks.deleted` for recovery and use `suite.tasks.restore` with its current revision. A replay of an old deletion does not authorize another deletion after restoration.
 - Create, rename, archive, or restore projects/tags with `suite.projects.mutate` and `suite.tags.mutate`. Use stable UUIDs for creates and current revisions for edits. Archiving retains existing task assignments.

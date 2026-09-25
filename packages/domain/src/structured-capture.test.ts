@@ -255,7 +255,13 @@ describe("URL handling (ADR 0021 safety)", () => {
   it("removes addresses from the title in extract mode and names a bare address", () => {
     expect(
       parseStructuredCapture(input, context, { urlBehavior: "extract" }),
-    ).toMatchObject({ title: "Read and", links: expect.any(Array) });
+    ).toMatchObject({
+      title: "Read and",
+      links: [
+        { url: "https://example.com/a/b?x=1" },
+        { url: "https://www.example.org/c" },
+      ],
+    });
     expect(
       parseStructuredCapture("https://example.com/docs/guide", context, {
         urlBehavior: "extract",

@@ -360,12 +360,12 @@ export const createCapturedTaskBatch = (
   try {
     return database.capture.atomically(() => {
       const tasks: TaskRecord[] = [];
-      let replayed = false;
+      const replays: boolean[] = [];
       const consent = input.createTags === true;
       const one = (
         itemKey: string,
         item: CreateTaskRequest,
-      ): CapturedTaskResult => {
+      ): Exclude<CapturedTaskResult, { kind: "conflict" }> => {
         const result = createCapturedTask(
           database,
           ownerId,
@@ -376,12 +376,11 @@ export const createCapturedTaskBatch = (
           options,
         );
         if (result.kind === "conflict") throw new BatchConflict();
-        replayed ||= result.kind === "replayed";
+        replays.push(result.kind === "replayed");
         return result;
       };
       input.items.forEach(({ children, ...item }, index) => {
         const parent = one(`${key}:${String(index)}`, item);
-        if (parent.kind === "conflict") return;
         tasks.push(parent.task);
         children.forEach((child, childIndex) => {
           const created = database.taskHierarchy.createChild({
@@ -396,11 +395,11 @@ export const createCapturedTaskBatch = (
             throw new StructuredCaptureError(
               `Child task could not be created (${created.code})`,
             );
-          if (created.kind === "created" || created.kind === "replayed")
-            tasks.push(created.task);
+          if (created.kind === "conflict") throw new BatchConflict();
+          tasks.push(created.task);
         });
       });
-      return { kind: replayed ? "replayed" : "created", tasks };
+      return { kind: replays.some(Boolean) ? "replayed" : "created", tasks };
     });
   } catch (error) {
     if (error instanceof BatchConflict) return { kind: "conflict", tasks: [] };

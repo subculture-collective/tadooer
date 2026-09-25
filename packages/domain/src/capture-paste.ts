@@ -40,7 +40,10 @@ const headingLine = /^\s*#{1,6}\s/;
 const headerLine = /^([A-Za-z][A-Za-z0-9-]*):\s?(.*)$/;
 
 const normalize = (text: string): string[] =>
-  text.replace(/^﻿/, "").replace(/\r\n?/g, "\n").split("\n");
+  text
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n");
 
 const indentOf = (whitespace: string): number => {
   const tabs = (whitespace.match(/\t/g) ?? []).length;

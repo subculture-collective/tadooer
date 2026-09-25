@@ -164,7 +164,12 @@ export const TodayPage = (props: TodayPageProps) => {
             ? "Syncing local tasks."
             : "Task sync is available."}
       </p>
-      <TaskCaptureForm busy={busy} onSubmit={onSubmitTask} />
+      <TaskCaptureForm
+        busy={busy}
+        onSubmit={onSubmitTask}
+        csrfToken={syncStatus === "offline" ? undefined : csrfToken}
+        onTasksCreated={onTasksPlanned}
+      />
       <FocusPanel
         tasks={tasks}
         activeSession={activeSession}

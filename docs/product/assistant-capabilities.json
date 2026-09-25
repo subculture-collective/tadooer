@@ -97,8 +97,28 @@
       "catalog": ["tasks.create"],
       "status": "covered",
       "issue": 39,
-      "authority": "Preview resolves source input, including planned day and reminder settings, and rejects a planned day with an exact start; caller idempotency key binds one creation.",
+      "authority": "Preview resolves source input, including planned day, reminder settings, estimate words, links per the owner URL setting and an @every series; it rejects a planned day with an exact start and lists every tag it would create as an affected object, so confirmation is the consent (ADR 0031); caller idempotency key binds one creation.",
       "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "tasks-create-many",
+      "action": "Create several tasks from a pasted Markdown list or email",
+      "webApi": ["previewTaskCapture", "createTaskBatch"],
+      "catalog": ["tasks.create_many"],
+      "status": "covered",
+      "issue": 90,
+      "authority": "Preview resolves every item and child at once (at most 100 tasks), lists the tags the batch would create as affected objects and names each task in the summary; confirmation creates all of them in one transaction or none. The browser previews pasted text without side effects and requires a ticked consent box before new tags are created.",
+      "source": "apps/server/src/capture-automation.ts"
+    },
+    {
+      "id": "capture-preferences",
+      "action": "Capture URL behavior setting (keep, extract, keep and attach)",
+      "webApi": ["getCapturePreferences", "updateCapturePreferences"],
+      "catalog": [],
+      "status": "owner-only",
+      "issue": 90,
+      "authority": "The owner sets how http(s) addresses in captured titles are handled; saves carry a revision and conflict with 412. The assistant reads the effect through preview summaries and has no catalog path to change it.",
+      "source": "apps/server/src/routes/capture.ts"
     },
     {
       "id": "tasks-edit",
