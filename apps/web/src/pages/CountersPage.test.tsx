@@ -292,5 +292,20 @@ describe("Counters view", () => {
     // The form edits the owner's today inside the shown week.
     expect(html).toContain("Focus in Tadooer this day: 0:50 in 2 intervals");
     expect(html).toContain("Add counter");
+    // Another week shows no stale controls for today.
+    const earlier = renderToStaticMarkup(
+      <CountersPage
+        csrfToken="csrf"
+        online
+        initialState={{
+          ...initialCounters("2026-09-14"),
+          history,
+          evaluations,
+        }}
+        api={fakeApi()}
+      />,
+    );
+    expect(earlier).toContain("Back to this week");
+    expect(earlier).not.toContain('aria-label="Increase Water"');
   });
 });

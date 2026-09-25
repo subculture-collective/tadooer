@@ -539,7 +539,20 @@ export const CountersPage = ({
       )}
       <section aria-labelledby="counters-today">
         <h2 id="counters-today">Today</h2>
-        {history !== null && (
+        {history !== null && !days.includes(history.today) && (
+          <p className="hint">
+            Today&apos;s controls use the current week.{" "}
+            <Button
+              type="button"
+              variant="outline"
+              disabled={disabled}
+              onClick={() => load(history.today)}
+            >
+              Back to this week
+            </Button>
+          </p>
+        )}
+        {history !== null && days.includes(history.today) && (
           <CounterToday
             history={history}
             online={online}
