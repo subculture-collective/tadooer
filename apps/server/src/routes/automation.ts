@@ -32,6 +32,13 @@ import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import type { SuiteDatabase } from "@suite/persistence";
 import {
+  confirmOrganizationParity,
+  isOrganizationParityCommand,
+  organizationFieldsFor,
+  organizationSummary,
+  previewOrganizationParity,
+} from "./automation-organization-parity.ts";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -42,6 +49,7 @@ import {
   taskResponse,
   projectResponse,
   tagResponse,
+  noteResponse,
   calendarEventResponse,
   templateResponse,
   templateBlueprintResponse,
@@ -402,6 +410,8 @@ export const handleAutomation: RouteHandler = async (
       };
     else if (resource === "tags.list")
       body = { tags: database.listTags(token.ownerId).map(tagResponse) };
+    else if (resource === "notes.list")
+      body = { notes: database.notes.list(token.ownerId).map(noteResponse) };
     else if (resource === "templates.list") {
       const query = templateSearchRequestSchema.safeParse({
         query: url.searchParams.get("query") ?? "",
@@ -593,6 +603,7 @@ export const handleAutomation: RouteHandler = async (
         | "template_set"
         | "tag"
         | "project"
+        | "note"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -610,6 +621,7 @@ export const handleAutomation: RouteHandler = async (
         | "template_set"
         | "tag"
         | "project"
+        | "note"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -791,12 +803,20 @@ export const handleAutomation: RouteHandler = async (
           entityId: input.id,
           revision: current.revision,
         });
-      taskSummary =
-        input.action === "create"
-          ? `Create ${kind} "${input.title}"`
-          : input.action === "rename"
-            ? `Rename ${kind} "${current?.title ?? ""}" to "${input.title}"`
-            : `${input.action === "archive" ? "Archive" : "Restore"} ${kind} "${current?.title ?? ""}"; task assignments are retained`;
+      taskSummary = organizationSummary(kind, input, current?.title ?? "");
+    } else if (isOrganizationParityCommand(command)) {
+      const planned = previewOrganizationParity(
+        database,
+        token.ownerId,
+        command,
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
     } else if (
       command.operation === "tasks.assign_project" ||
       command.operation === "tasks.set_tags"
@@ -1385,6 +1405,7 @@ export const handleAutomation: RouteHandler = async (
           .listProjects(token.ownerId)
           .find(({ id }) => id === entityId) ??
         database.listTags(token.ownerId).find(({ id }) => id === entityId) ??
+        database.notes.get(token.ownerId, entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1541,9 +1562,7 @@ export const handleAutomation: RouteHandler = async (
           token.ownerId,
           input.id,
           input.action === "create" ? null : input.expectedRevision,
-          input.action === "create" || input.action === "rename"
-            ? { title: input.title }
-            : { archived: input.action === "archive" },
+          organizationFieldsFor(input),
           new Date().toISOString(),
         );
         if (record === undefined)
@@ -1552,6 +1571,22 @@ export const handleAutomation: RouteHandler = async (
           ? { tag: tagResponse(record) }
           : { project: projectResponse(record) };
       };
+    } else if (isOrganizationParityCommand(command)) {
+      const confirmation = confirmOrganizationParity(
+        database,
+        token.ownerId,
+        command,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
     } else if (
       command.operation === "tasks.assign_project" ||
       command.operation === "tasks.set_tags"

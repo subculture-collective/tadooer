@@ -44,7 +44,8 @@ explicit authority boundary rather than silently counting as covered.
 | Browser registration, cache snapshots and outbox transport | internal | — | [#19](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/19) |
 | Focus/break lifecycle and takeover | covered | `active-session.get`, `focus.start`, `focus.pause`, `focus.resume`, `focus.start_break`, `focus.end_break`, `focus.complete`, `focus.takeover` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Project and tag inventory | covered | `projects.list`, `tags.list` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
-| Project/tag lifecycle and task assignment | covered | `projects.mutate`, `tags.mutate`, `tasks.assign_project`, `tasks.set_tags` | [#55](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/55) |
+| Project/tag lifecycle, appearance, order, backlog and task assignment | covered | `projects.mutate`, `projects.reorder`, `projects.set_backlog`, `tags.mutate`, `tags.reorder`, `tasks.assign_project`, `tasks.set_tags` | [#55](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/55) |
+| Project, tag and standalone notes: create, edit, pin, reorder and delete | covered | `notes.list`, `notes.mutate` | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | Checklist creation, editing, ordering and deletion | covered | `subtasks.list`, `subtasks.mutate` | [#56](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/56) |
 | Template and set libraries | covered | `templates.list`, `template-sets.list` | [#39](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/39) |
 | Template authoring, archive, from-task and set creation | gap | — | [#57](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/57) |
@@ -93,6 +94,8 @@ in `calendar-migration.tsx`, outside the API helper module.
 5. Update this inventory and linked implementation issue; deployment remains #37.
 
 Project/tag lifecycle now uses dedicated write scopes. Task assignment retains `tasks:write` and validates owner, active destination, task revision and frozen destination revisions. New scopes must be explicitly provisioned; existing tokens are not broadened. These four operations use the existing preview/confirm protocol, with entity, sync, consumed preview, receipt and audit committed together. Live client qualification remains #39.
+
+Organization parity (#28, ADR 0019) extends `projects.mutate` with `complete`, `reopen` and `configure` (colour, icon, hide-from-menu, backlog), and `tags.mutate` with `configure` (colour, icon). `projects.reorder` and `tags.reorder` freeze every record's revision, so any edit before confirmation makes the preview stale. `projects.set_backlog` binds the project revision and checks the task's project again at confirmation. Notes use new `notes:read` and `notes:write` scopes; `notes.mutate` covers create, update, complete-membership reorder and permanent delete. Notes are online-only records outside the sync feed.
 
 Checklist reads use `tasks:read`; mutations use `tasks:write`. Previews bind the parent task revision and item revisions. Reorder validates complete membership again at confirmation, including newly added items; deleted items emit sync tombstones. Atomic receipts prevent confirmed deletions from being executed twice. This is the existing checklist model, not full hierarchy (#27).
 

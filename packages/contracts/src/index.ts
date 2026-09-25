@@ -1,5 +1,19 @@
 export { superProductivityImportLimits } from "./import-limits.ts";
+export * from "./organization.ts";
 import { z } from "zod";
+import {
+  automationNoteMutationInputSchema,
+  automationOrganizationOrderInputSchema,
+  automationProjectBacklogInputSchema,
+  automationProjectMutationInputSchema as projectMutationInput,
+  automationTagMutationInputSchema as tagMutationInput,
+  noteListResponseSchema,
+  noteMutationResponseSchema,
+  organizationColorSchema,
+  organizationIconSchema,
+  projectPatchFields,
+  tagPatchFields,
+} from "./organization.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -575,6 +589,7 @@ const organizationFields = { archived: z.boolean().optional() };
 export const projectPatchRequestSchema = projectCreateRequestSchema
   .partial()
   .extend(organizationFields)
+  .extend(projectPatchFields)
   .strict()
   .refine((input) => Object.keys(input).length > 0, {
     message: "An organization edit is required",
@@ -582,6 +597,7 @@ export const projectPatchRequestSchema = projectCreateRequestSchema
 export const tagPatchRequestSchema = tagCreateRequestSchema
   .partial()
   .extend(organizationFields)
+  .extend(tagPatchFields)
   .strict()
   .refine((input) => Object.keys(input).length > 0, {
     message: "An organization edit is required",
@@ -595,6 +611,16 @@ export const projectSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   archivedAt: z.iso.datetime().nullable(),
+  // Defaults keep snapshots cached before migration 0022 readable.
+  color: organizationColorSchema.nullable().default(null),
+  icon: organizationIconSchema.nullable().default(null),
+  position: z.number().int().nonnegative().default(0),
+  hiddenFromMenu: z.boolean().default(false),
+  /** Completion also archives; reopen or restore clears both (SP 19.1.0). */
+  completedAt: z.iso.datetime().nullable().default(null),
+  backlogEnabled: z.boolean().default(false),
+  /** Ordered active tasks of this project that sit in its backlog. */
+  backlogTaskIds: z.array(entityIdSchema).default([]),
 });
 
 export const tagSchema = z.object({
@@ -606,6 +632,9 @@ export const tagSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   archivedAt: z.iso.datetime().nullable(),
+  color: organizationColorSchema.nullable().default(null),
+  icon: organizationIconSchema.nullable().default(null),
+  position: z.number().int().nonnegative().default(0),
 });
 
 export const subtaskSchema = z.object({
@@ -1438,6 +1467,8 @@ export const automationTokenScopeSchema = z.enum([
   "pools:write",
   "habits:read",
   "habits:write",
+  "notes:read",
+  "notes:write",
 ]);
 
 export const automationTokenSchema = z
@@ -1494,7 +1525,11 @@ export const automationOperationSchema = z.enum([
   "notifications.update_preferences",
   "subtasks.mutate",
   "projects.mutate",
+  "projects.reorder",
+  "projects.set_backlog",
   "tags.mutate",
+  "tags.reorder",
+  "notes.mutate",
   "tasks.assign_project",
   "tasks.set_tags",
   "tasks.create",
@@ -1569,31 +1604,10 @@ export const automationTaskCompletionInputSchema = z
   })
   .strict();
 
-const organizationMutationInput = (title: z.ZodString) =>
-  z.discriminatedUnion("action", [
-    z
-      .object({ action: z.literal("create"), id: entityIdSchema, title })
-      .strict(),
-    z
-      .object({
-        action: z.literal("rename"),
-        id: entityIdSchema,
-        expectedRevision: revisionSchema,
-        title,
-      })
-      .strict(),
-    z
-      .object({
-        action: z.enum(["archive", "restore"]),
-        id: entityIdSchema,
-        expectedRevision: revisionSchema,
-      })
-      .strict(),
-  ]);
-export const automationProjectMutationInputSchema = organizationMutationInput(
+export const automationProjectMutationInputSchema = projectMutationInput(
   projectCreateRequestSchema.shape.title,
 );
-export const automationTagMutationInputSchema = organizationMutationInput(
+export const automationTagMutationInputSchema = tagMutationInput(
   tagCreateRequestSchema.shape.title,
 );
 export const automationAssignProjectInputSchema = z
@@ -1692,6 +1706,22 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     z.object({
       operation: z.literal("tags.mutate"),
       input: automationTagMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("projects.reorder"),
+      input: automationOrganizationOrderInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tags.reorder"),
+      input: automationOrganizationOrderInputSchema,
+    }),
+    z.object({
+      operation: z.literal("projects.set_backlog"),
+      input: automationProjectBacklogInputSchema,
+    }),
+    z.object({
+      operation: z.literal("notes.mutate"),
+      input: automationNoteMutationInputSchema,
     }),
     z.object({
       operation: z.literal("tasks.assign_project"),
@@ -1807,6 +1837,21 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationTagMutationInputSchema,
     });
+  if (operation === "projects.reorder" || operation === "tags.reorder")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationOrganizationOrderInputSchema,
+    });
+  if (operation === "projects.set_backlog")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationProjectBacklogInputSchema,
+    });
+  if (operation === "notes.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationNoteMutationInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -1900,6 +1945,7 @@ export const automationAffectedEntitySchema = z
       "template_set",
       "project",
       "tag",
+      "note",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -1919,6 +1965,7 @@ const existingAutomationBaseRevisionSchema = z
       "template_set",
       "project",
       "tag",
+      "note",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -1981,6 +2028,9 @@ export const automationExecutionResultSchema = z.union([
   checklistMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
+  z.object({ projects: z.array(projectSchema) }).strict(),
+  z.object({ tags: z.array(tagSchema) }).strict(),
+  noteMutationResponseSchema,
   habitMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
@@ -2170,6 +2220,17 @@ export const automationCatalog = [
     outputSchema: automationTagResourceSchema,
   },
   {
+    id: "notes.list",
+    kind: "resource",
+    scopes: ["notes:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/notes",
+    mcpName: "suite.notes.list",
+    mcpUri: "suite://v1/notes",
+    inputSchema: z.object({}).strict(),
+    outputSchema: noteListResponseSchema,
+  },
+  {
     id: "active-session.get",
     kind: "resource",
     scopes: ["focus:read"],
@@ -2223,22 +2284,24 @@ export const automationCatalog = [
           ? "planning:write"
           : id === "notifications.update_preferences"
             ? "notifications:write"
-            : id === "projects.mutate"
+            : id.startsWith("projects.")
               ? "projects:write"
-              : id === "tags.mutate"
+              : id.startsWith("tags.")
                 ? "tags:write"
-                : id === "habits.mutate"
-                  ? "habits:write"
-                  : id.startsWith("tasks.") || id === "subtasks.mutate"
-                    ? "tasks:write"
-                    : id === "schedule.create_time_block"
-                      ? "schedule:write"
-                      : id.startsWith("templates.") ||
-                          id.startsWith("template_sets.")
-                        ? "templates:write"
-                        : id === "placeholders.resolve"
-                          ? "pools:write"
-                          : "focus:write",
+                : id === "notes.mutate"
+                  ? "notes:write"
+                  : id === "habits.mutate"
+                    ? "habits:write"
+                    : id.startsWith("tasks.") || id === "subtasks.mutate"
+                      ? "tasks:write"
+                      : id === "schedule.create_time_block"
+                        ? "schedule:write"
+                        : id.startsWith("templates.") ||
+                            id.startsWith("template_sets.")
+                          ? "templates:write"
+                          : id === "placeholders.resolve"
+                            ? "pools:write"
+                            : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -2261,6 +2324,7 @@ export const automationCatalog = [
       "templates:write",
       "pools:write",
       "habits:write",
+      "notes:write",
     ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",

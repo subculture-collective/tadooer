@@ -1951,4 +1951,52 @@
   .spacer {
     flex: 1;
   }
+
+  /* ── 21. Organization manager ──────────────────────────────────── */
+
+  .organization-manager section + section {
+    margin-top: 1.25rem;
+  }
+  .organization-list {
+    display: grid;
+    gap: 0.75rem;
+    list-style: none;
+    padding: 0;
+  }
+  .organization-list > li {
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.5rem;
+  }
+  .organization-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .organization-swatch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .organization-swatch__color {
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+  }
+  .organization-backlog ul {
+    padding-left: 1rem;
+  }
+  .note-markdown {
+    display: grid;
+    gap: 0.35rem;
+    overflow-wrap: anywhere;
+  }
+  .note-markdown pre {
+    overflow-x: auto;
+  }
+  .note-checklist {
+    list-style: none;
+    padding-left: 0;
+  }
 }
