@@ -24,7 +24,9 @@ const permissionLabel = (scope: AutomationTokenScope): string => {
       ? "focus sessions"
       : area === "pools"
         ? "choice pools"
-        : area;
+        : area === "plugin_data"
+          ? "imported plugin data (names and sizes only)"
+          : area;
   return `${action === "read" ? "Read" : "Manage"} ${subject ?? ""}`;
 };
 

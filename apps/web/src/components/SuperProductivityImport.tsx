@@ -71,7 +71,11 @@ export const SuperProductivityImport = ({
     try {
       const result = await applyTaskImport(raw, report.inputHash, csrfToken);
       setOutcome(
-        `Import saved: ${String(result.created)} records created; ${String(result.existing)} previously imported records left unchanged.`,
+        `Import saved: ${String(result.created)} records created; ${String(result.existing)} previously imported records left unchanged.${
+          result.pluginData === undefined
+            ? ""
+            : ` Plugin records: ${String(result.pluginData.created)} kept, ${String(result.pluginData.existing)} already imported.`
+        }`,
       );
       setApproved(false);
       await onApplied();
