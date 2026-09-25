@@ -29,6 +29,8 @@
 | **Bridge Conflict** | Incompatible changes since the last accepted state, retained on both sides until explicitly resolved. |
 | **Calendar Tombstone** | Evidence that a previously mapped event was deleted, retained to prevent replay from resurrecting it. |
 | **Time Block** | Suite-created VEVENT linking a task to a calendar interval. At most one active block per task. |
+| **Planned Day** | Optional calendar date (YYYY-MM-DD) for a task, read in the owner's IANA planning time zone. Never carries a time of day. Mutually exclusive with a planned start: setting one clears the other, and a Time Block's start supersedes it. Shown in Today on its date and in the Planner's all-day lane; online-only edit (ADR 0020). |
+| **Reminder** | Server-owned intent to notify about a task, delivered through the durable notification ledger (ADR 0016). A task's start reminder is `default` (owner's 15-minute lead and at-start preferences), `none`, or one offset of 0/5/10/15/30/60 minutes before the planned start. A deadline reminder uses the same offsets before a timed deadline. Date-only plans and deadlines have no reminder time (ADR 0020). |
 | **Active Session** | Server-authoritative focus/break session. At most one nonterminal per owner. 90-second lease, 30-second heartbeat, 24-hour hard expiry. |
 | **Controller / Follower** | One registered client controls the active session; others are read-only with explicit takeover. |
 | **Client** | Durable browser installation with owner-scoped UUID and one-time 256-bit credential (stored in IndexedDB, server stores SHA-256 digest). |
@@ -114,3 +116,4 @@
 | 0014 | Import once, preserve source evidence, publish read-only | ICS import preserves raw VEVENT and reconciliation analysis; capability URLs for read-only iCal publication (256-bit secret, GET/HEAD only, revocable); no Phase 7 mirror. |
 | 0015 | Package the stable web authority; do not fork it | Linux Electron desktop as constrained shell around deployed Suite origin; immutable release manifests promoted through candidate/stable channels; no Android/iOS/PostgreSQL without measured need. |
 | 0016 | Durable notification authority | Suite owns reminder intent and delivery history; ntfy is write-only private-network adapter; atomic claim before publish; calendar-suppression logic; detailed notifications limited to task title, time, and deep link. |
+| 0020 | Date-only planning and per-task reminders | Planned day separate from planned start and deadlines, evaluated in the owner zone; per-task start and deadline reminder offsets resolved into the existing ledger identity; online-only edits outside sync v2; exact Super Productivity import or block; persisted Today order deferred. |

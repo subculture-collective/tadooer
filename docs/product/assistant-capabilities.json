@@ -97,17 +97,17 @@
       "catalog": ["tasks.create"],
       "status": "covered",
       "issue": 39,
-      "authority": "Preview resolves source input; caller idempotency key binds one creation.",
+      "authority": "Preview resolves source input, including planned day and reminder settings, and rejects a planned day with an exact start; caller idempotency key binds one creation.",
       "source": "apps/web/src/api.ts"
     },
     {
       "id": "tasks-edit",
-      "action": "Title, notes, dates and estimate edits",
+      "action": "Title, notes, dates, planned day, reminder and estimate edits",
       "webApi": ["patchTask"],
       "catalog": ["tasks.update"],
       "status": "covered",
       "issue": 39,
-      "authority": "Exact expected task revision; atomic mutation/audit/receipt. Calendar-linked scheduling restrictions still apply.",
+      "authority": "Exact expected task revision; atomic mutation/audit/receipt. Calendar-linked scheduling restrictions still apply: preview rejects a planned day while a calendar block exists and a deadline reminder without a timed deadline (ADR 0020).",
       "source": "apps/web/src/api.ts"
     },
     {
