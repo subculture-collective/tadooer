@@ -414,20 +414,112 @@ it("previews and confirms assistant hierarchy changes with revision guards", asy
         { "If-Match": `"${String(child?.revision)}"` },
       );
       expect((await confirm(promote.id)).status).toBe(412);
+      // Moving a parent under its own child would add a level and a cycle.
       const invalid = await preview({
         action: "move",
         taskId: parent.id,
-        expectedRevision: parent.revision + 1,
+        expectedRevision: parent.revision,
         parentId: child?.id,
       });
-      expect(invalid.status).toBe(412);
+      expect(invalid).toMatchObject({
+        status: 409,
+        body: { code: "TASK_HIERARCHY_DEPTH" },
+      });
       const reorderStale = await preview({
         action: "reorder",
         parentId: parent.id,
-        expectedParentRevision: 1,
+        expectedParentRevision: parent.revision,
         items: [],
       });
-      expect(reorderStale.status).toBe(412);
+      expect(reorderStale).toMatchObject({
+        status: 412,
+        body: { code: "TASK_CHILDREN_CHANGED" },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+it("applies a Super Productivity export with children as full child tasks", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    await mkdir(join(directory, "web"));
+    const server = await startSuiteServer(configuration(directory));
+    try {
+      const call = await signIn(server);
+      const state = (entities: Record<string, unknown>) => ({
+        ids: Object.keys(entities),
+        entities,
+      });
+      const exported = {
+        task: state({
+          parent: {
+            id: "parent",
+            title: "Write report",
+            subTaskIds: ["outline", "draft"],
+            timeEstimate: 2700000,
+          },
+          draft: {
+            id: "draft",
+            title: "Draft",
+            parentId: "parent",
+            notes: "Section two first",
+            timeEstimate: 1800000,
+          },
+          outline: {
+            id: "outline",
+            title: "Outline",
+            parentId: "parent",
+            isDone: true,
+            doneOn: 1700000060000,
+            timeEstimate: 900000,
+          },
+        }),
+      };
+      const preview = (await (
+        await call("/api/imports/super-productivity/preview", "POST", exported)
+      ).json()) as { canApply: boolean; inputHash: string };
+      expect(preview.canApply).toBe(true);
+      const applied = await call(
+        "/api/imports/super-productivity/apply",
+        "POST",
+        exported,
+        { "X-Import-Hash": preview.inputHash },
+      );
+      expect(applied.status).toBe(200);
+      const tasks = (
+        (await (await call("/api/tasks", "GET")).json()) as {
+          tasks: unknown[];
+        }
+      ).tasks.map((task) => taskSchema.parse(task));
+      const parent = tasks.find(({ title }) => title === "Write report");
+      expect(parent).toMatchObject({ parentId: null, estimateMinutes: null });
+      const children = taskChildrenResponseSchema.parse(
+        await (
+          await call(`/api/tasks/${parent?.id ?? ""}/children`, "GET")
+        ).json(),
+      ).children;
+      expect(
+        children.map(({ title, status, notes, estimateMinutes }) => ({
+          title,
+          status,
+          notes,
+          estimateMinutes,
+        })),
+      ).toEqual([
+        {
+          title: "Outline",
+          status: "completed",
+          notes: "",
+          estimateMinutes: 15,
+        },
+        {
+          title: "Draft",
+          status: "open",
+          notes: "Section two first",
+          estimateMinutes: 30,
+        },
+      ]);
     } finally {
       await server.close();
     }

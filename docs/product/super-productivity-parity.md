@@ -44,7 +44,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | Workflow               | Current status | Source-data and behavior mapping                                                                                                                        | Issue                                                                     |
 | ---------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | core-tasks             | partial        | Core titles/notes/timestamps/dates/estimates map transactionally; unsupported metadata blocks apply. Source IDs remain provenance, not destination IDs. | [#47](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/47) |
-| hierarchy              | missing        | Source children are full tasks, not checklist-only records.                                                                                             | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
+| hierarchy              | partial        | Children import as full two-level child tasks in source order; deeper chains block apply. Parent time totals wait for #41.                              | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
 | projects               | partial        | Basic project identity/title exists; completion, backlog, notes, folders/order need parity.                                                             | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | tags                   | partial        | Basic tags/assignment exist; virtual Today and source context/config are not ordinary imported tags.                                                    | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | planning               | partial        | Today queue and timed blocks exist; date-only planning, source ordering, daily rituals, schedule hygiene and automatic planning need explicit parity.   | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
@@ -76,8 +76,9 @@ workflow row in the JSON manifest. The preview and apply paths use the tables, s
 no section is dropped without a report:
 
 - **applied**: mapped into Tadooer records.
-- **parity**: inventoried; apply is blocked with a parity finding (hierarchy,
-  recurrence, time history, day-only plans, archives).
+- **parity**: inventoried; apply is blocked with a parity finding (recurrence,
+  time history, day-only plans, archives). Hierarchy fields are applied since
+  #27; a chain deeper than two levels blocks with `hierarchy_depth_unsupported`.
 - **retained**: not applied, but kept in the import provenance JSON (icons,
   colours, themes, ordering, backlog flag).
 - **blocked**: a populated value blocks apply (`unsupported_section` or
