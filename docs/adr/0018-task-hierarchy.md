@@ -98,7 +98,8 @@ task. Template subtask blueprints still create checklist items.
   The server replays it idempotently by operation ID. A stale base version, a
   deleted or missing parent, or a target that would add a level is a
   `SYNC_RESOURCE_CONFLICT` that changes nothing, so replay cannot orphan or
-  cycle the graph. Offline child creation is `task.create` followed by
+  cycle the graph. The server re-sends the unchanged task in the change stream
+  so the client drops its optimistic placement. Offline child creation is `task.create` followed by
   `task.move`; if the move conflicts, the task stays visible at top level.
   Soft delete and restore cascades happen on the server and arrive as ordinary
   task changes.

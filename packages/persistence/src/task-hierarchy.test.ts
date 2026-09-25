@@ -328,6 +328,13 @@ it("replays offline moves idempotently and turns stale or invalid moves into con
         parentId: ids.otherParent,
       }),
     ).toMatchObject({ kind: "conflict", fields: ["parent"] });
+    // The conflict re-sends the unchanged canonical task to the client.
+    const resent = db.getSyncState("owner");
+    expect(resent.cursor).toBe(cursor + 1);
+    expect(db.listSyncChanges("owner", resent.epoch, cursor)).toMatchObject([
+      { entityId: ids.childA, revision: 2 },
+    ]);
+    expect(db.getTask("owner", ids.childA)?.revision).toBe(2);
     // A queued move into a task that became a child would form a third level.
     const current = db.getTaskFieldVersions("owner", ids.otherParent).parent;
     expect(

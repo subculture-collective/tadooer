@@ -317,6 +317,16 @@ export class SqliteTaskHierarchyStore {
           conflict ? JSON.stringify(["parent"]) : null,
           input.now,
         );
+      // The client applied the move optimistically. Re-send the canonical
+      // task so a rejected placement does not linger in its cache.
+      if (conflict && task !== undefined)
+        this.deps.appendChange(
+          input.ownerId,
+          task.id,
+          task.deletedAt === null ? "upsert" : "deleted",
+          task.revision,
+          input.now,
+        );
       this.db.exec("COMMIT;");
       return {
         kind: conflict ? "conflict" : "applied",
