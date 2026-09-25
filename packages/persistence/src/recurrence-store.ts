@@ -399,6 +399,15 @@ export class SqliteRecurrenceStore {
       : { seriesId: row.series_id, occurrenceDate: row.occurrence_date };
   }
 
+  /** Validates fields without writing; used by assistant previews. */
+  check(
+    ownerId: string,
+    fields: RecurringSeriesFields,
+    current?: RecurringSeriesRecord,
+  ): RecurrenceViolation | null {
+    return this.#validate(ownerId, fields, current);
+  }
+
   create(input: {
     readonly ownerId: string;
     readonly id: string;
