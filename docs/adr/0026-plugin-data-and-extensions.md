@@ -133,8 +133,8 @@ do not gain the scope.
 
 ## Future option: a permissioned extension contract
 
-This is a proposal, not a decision. Tadooer could later accept extensions
-under a contract such as:
+This is a proposal, not a decision; the owner decision is tracked in #102.
+Tadooer could later accept extensions under a contract such as:
 
 - A manifest naming the extension, its version and each capability it needs:
   catalog operations and scopes, event subscriptions, a storage quota and any
