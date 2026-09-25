@@ -32,12 +32,14 @@ export const superProductivitySections = {
   menuTree: "applied",
   section: "blocked",
   reminders: "blocked",
-  metric: "blocked",
+  // Metric days apply as daily evaluations since #64 (ADR 0025); their
+  // fields are classified in super-productivity-counters.ts.
+  metric: "applied",
   // Work start/end and breaks per project, tag and day (ADR 0024).
   timeTracking: "applied",
   pluginUserData: "blocked",
-  // Counter definitions are configuration; recorded values block (see preview).
-  simpleCounter: "blocked",
+  // Counters and their day values apply since #64 (ADR 0025).
+  simpleCounter: "applied",
   planner: "configuration",
   boards: "configuration",
   globalConfig: "configuration",

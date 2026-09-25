@@ -109,6 +109,10 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "time_reconciliation",
     "work_context_merged",
     "work_context_historical",
+    // ADR 0025 counters and evaluations: explained, nothing silently dropped.
+    "counter_notice",
+    "counter_reconciliation",
+    "metric_field_retained",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -740,7 +744,12 @@ export const prepareSuperProductivityImport = (
     ...records.filter(({ kind }) => kind === "task"),
     ...byOrder(noteRecords, noteOrder),
   ];
-  if (ordered.length === 0 && recurrence.series.length === 0)
+  if (
+    ordered.length === 0 &&
+    recurrence.series.length === 0 &&
+    sourceInventory.counters.length === 0 &&
+    sourceInventory.evaluations.length === 0
+  )
     problem("export", "No supported records to import");
   const reported = issues.map((issue) => ({
     ...issue,
@@ -759,5 +768,7 @@ export const prepareSuperProductivityImport = (
     records: ordered,
     recurrence,
     workContexts: sourceInventory.workContexts,
+    counters: sourceInventory.counters,
+    evaluations: sourceInventory.evaluations,
   };
 };

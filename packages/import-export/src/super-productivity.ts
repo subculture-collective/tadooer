@@ -29,6 +29,15 @@ import {
   type SourceWorkContextDay,
   type TimeReconciliation,
 } from "./super-productivity-time.ts";
+import {
+  counterReconciliation,
+  counterReconciliationSummary,
+  readMetrics,
+  readSimpleCounters,
+  type CounterReconciliation,
+  type SourceCounter,
+  type SourceEvaluation,
+} from "./super-productivity-counters.ts";
 
 const systemTagIds = new Set<string>(superProductivitySystemTagIds);
 
@@ -53,6 +62,8 @@ export interface SuperProductivityPreview {
     readonly trackedMilliseconds: number;
     /** Work history reconciliation (ADR 0024). */
     readonly time: TimeReconciliation;
+    /** Counters and daily evaluations (ADR 0025). */
+    readonly counters: CounterReconciliation;
   };
   readonly tasks: readonly {
     readonly sourceId: string;
@@ -140,6 +151,8 @@ export const inventorySuperProductivity = (
   readonly recurrence: SuperProductivityRecurrence;
   readonly timeEntries: ReadonlyMap<string, readonly SourceTimeEntry[]>;
   readonly workContexts: readonly SourceWorkContextDay[];
+  readonly counters: readonly SourceCounter[];
+  readonly evaluations: readonly SourceEvaluation[];
 } => {
   const timeZone = options.timeZone ?? "UTC";
   if (Buffer.byteLength(raw, "utf8") > limits.bytes)
@@ -209,15 +222,9 @@ export const inventorySuperProductivity = (
       superProductivitySections[name as keyof typeof superProductivitySections];
     if (disposition === "applied") continue;
     const store = object(value);
-    let blocking =
+    const blocking =
       disposition === "blocked" &&
       (Array.isArray(store?.ids) ? store.ids.length > 0 : populated(value));
-    if (name === "simpleCounter")
-      blocking = Object.values(object(store?.entities) ?? {}).some((counter) =>
-        Object.values(object(object(counter)?.countOnDay) ?? {}).some(
-          (count) => count !== 0,
-        ),
-      );
     if (blocking)
       issue(
         "unsupported_section",
@@ -225,7 +232,7 @@ export const inventorySuperProductivity = (
         `${name} contains data without Tadooer parity; keep the original export`,
       );
     else if (
-      (disposition === "configuration" || name === "simpleCounter") &&
+      disposition === "configuration" &&
       (Array.isArray(store?.ids) ? store.ids.length > 0 : populated(value))
     )
       issue(
@@ -771,6 +778,32 @@ export const inventorySuperProductivity = (
     time.sourceLeafMs > 0
   )
     issue("time_reconciliation", null, reconciliationSummary(time));
+  // Counters and metric days (ADR 0025): definitions, day values and
+  // evaluations with their provenance; streaks are derived, not imported.
+  const counterIds = (value: unknown): string[] => {
+    const ids = object(value)?.ids;
+    return Array.isArray(ids)
+      ? [...new Set(ids.filter((id): id is string => typeof id === "string"))]
+      : [];
+  };
+  const counters = readSimpleCounters(
+    entities(data.simpleCounter, "simpleCounter"),
+    counterIds(data.simpleCounter),
+    timeZone,
+    issue,
+  );
+  const evaluations = readMetrics(
+    entities(data.metric, "metric"),
+    counterIds(data.metric),
+    issue,
+  );
+  const counterTotals = counterReconciliation(counters, evaluations);
+  if (counterTotals.definitions + counterTotals.evaluations > 0)
+    issue(
+      "counter_reconciliation",
+      null,
+      counterReconciliationSummary(counterTotals, counters),
+    );
   issue(
     "preview_only",
     null,
@@ -795,6 +828,7 @@ export const inventorySuperProductivity = (
         .filter((task) => !parentIds.has(task.sourceId))
         .reduce((sum, task) => sum + task.trackedMilliseconds, 0),
       time,
+      counters: counterTotals,
     },
     tasks,
     issues,
@@ -807,5 +841,7 @@ export const inventorySuperProductivity = (
     },
     timeEntries: reconciled.entries,
     workContexts,
+    counters,
+    evaluations,
   };
 };

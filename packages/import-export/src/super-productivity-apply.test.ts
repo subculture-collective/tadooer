@@ -260,25 +260,27 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
   const codes = (report: ReturnType<typeof prepare>) =>
     report.issues.map(({ code }) => code);
 
-  // Configuration is reported without blocking; default counters are setup.
+  // Configuration is reported without blocking. Counters and metric days
+  // apply since #64 (ADR 0025).
   const configured = prepare({
     boards: { boardCfgs: [{ id: "kanban" }] },
     menuTree: { projectTree: [], tagTree: [] },
-    simpleCounter: state({ c: { id: "c", countOnDay: {} } }),
+    simpleCounter: state({
+      c: { id: "c", title: "C", type: "ClickCounter", countOnDay: {} },
+    }),
+    metric: state({ "2026-09-24": { id: "2026-09-24" } }),
     note: { ...state({}), todayOrder: [] },
     timeTracking: { project: {}, tag: {} },
   });
   expect(configured.canApply).toBe(true);
   expect(codes(configured)).toEqual([
     "configuration_not_imported",
-    "configuration_not_imported",
+    "counter_reconciliation",
   ]);
 
   for (const extra of [
-    { metric: state({ "2026-09-24": { id: "2026-09-24" } }) },
     { reminders: [{ id: "r" }] },
     { pluginUserData: [{ id: "plugin", data: "{}" }] },
-    { simpleCounter: state({ c: { id: "c", countOnDay: { d: 2 } } }) },
   ]) {
     const report = prepare(extra);
     expect(report.canApply).toBe(false);
