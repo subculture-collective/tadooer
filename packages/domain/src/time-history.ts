@@ -1,3 +1,4 @@
+import { addCalendarDays } from "./recurrence.ts";
 import {
   isCalendarDate,
   plannedDayWindow,
@@ -67,8 +68,8 @@ const utcDay = (date: string): number => {
 };
 
 /** Calendar-date arithmetic; independent of any time zone. */
-export const addCalendarDays = (date: string, days: number): string =>
-  new Date(utcDay(date) + days * 86_400_000).toISOString().slice(0, 10);
+// One calendar-day helper is shared with recurrence (ADR 0023).
+export { addCalendarDays };
 
 /** Inclusive number of calendar days from `from` to `to`. */
 export const calendarDaySpan = (from: string, to: string): number =>
