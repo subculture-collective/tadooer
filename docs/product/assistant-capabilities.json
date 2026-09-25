@@ -328,6 +328,33 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "counters",
+      "action": "Read counter values with derived streaks; set, raise or lower a day's value; start and stop a stopwatch; create, edit and delete counters",
+      "webApi": [
+        "getCounterHistory",
+        "createCounter",
+        "updateCounter",
+        "deleteCounter",
+        "recordCounterDay",
+        "controlCounterStopwatch"
+      ],
+      "catalog": ["counters.history", "counters.mutate", "counters.record"],
+      "status": "covered",
+      "issue": 64,
+      "authority": "metrics:read for owner-zone counter history (at most 366 days); metrics:write for writes. Day writes name the day revision read (0 when empty) and are rechecked at confirmation; definition edits, deletes and stopwatch start/stop freeze the counter revision. Deleting removes the counter's recorded days. Online-only in the browser (ADR 0025).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "evaluations",
+      "action": "Read daily evaluations with Tadooer focus per day; create or edit a day's evaluation",
+      "webApi": ["getEvaluations", "saveEvaluation"],
+      "catalog": ["evaluations.list", "evaluations.write"],
+      "status": "covered",
+      "issue": 64,
+      "authority": "metrics:read for evaluations and derived focus over at most 366 days; metrics:write for writes, which name the evaluation revision read (0 for a new day). Imported focus session durations are read-only history (ADR 0025).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "templates-read",
       "action": "Template and set libraries",
       "webApi": ["getTemplateLibrary", "getTemplateSets"],
@@ -470,12 +497,12 @@
     },
     {
       "id": "future-parity",
-      "action": "Remaining parity actions: boards and views, counters and metrics, focus preferences, plugins and application settings",
+      "action": "Remaining parity actions: boards and views, focus preferences, plugins and application settings",
       "webApi": [],
       "catalog": [],
       "status": "future",
       "issue": 32,
-      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #63, #64, #65, #66, #67. Hierarchy (#27), archived history (#38), work history (#41) and recurrence (#42) have their own rows.",
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #63, #65, #66, #67. Hierarchy (#27), archived history (#38), work history (#41), recurrence (#42) and counters and evaluations (#64) have their own rows.",
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {

@@ -5,6 +5,7 @@ export const workspaceRoutes = [
   "tasks",
   "history",
   "worklog",
+  "counters",
   "reuse",
   "habits",
   "connections",
