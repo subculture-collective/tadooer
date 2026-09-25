@@ -168,7 +168,7 @@ it("detects cycles, inconsistent child lists, missing tags, and malformed time h
       "hierarchy_mismatch",
       "missing_child",
       "missing_tag",
-      "duplicate_reference",
+      "duplicate_child_reference",
       "invalid_time_history",
       "invalid_reference",
       "invalid_reference_list",

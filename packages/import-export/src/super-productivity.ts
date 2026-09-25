@@ -511,7 +511,15 @@ export const inventorySuperProductivity = (
         }
         const unique = new Set<string>(refs as string[]);
         if (unique.size !== refs.length)
-          issue("duplicate_reference", id, `${field} repeats an ID`);
+          issue(
+            field === "subTaskIds"
+              ? "duplicate_child_reference"
+              : "duplicate_reference",
+            id,
+            field === "subTaskIds"
+              ? "subTaskIds repeats a child ID; its first position is used"
+              : `${field} repeats an ID`,
+          );
         if (field === "subTaskIds") children.set(id, unique);
         else {
           let missingTag = false;

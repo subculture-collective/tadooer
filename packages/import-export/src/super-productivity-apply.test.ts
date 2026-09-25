@@ -408,3 +408,45 @@ it("blocks hierarchies deeper than two levels instead of flattening them", () =>
     "hierarchy_depth_unsupported",
   );
 });
+
+it("keeps stale issue sync metadata without blocking, but not an unresolved identity", () => {
+  const prepareTask = (task: Record<string, unknown>) =>
+    prepareSuperProductivityImport(
+      JSON.stringify({
+        task: state({ t: { id: "t", title: "Task", ...task } }),
+      }),
+    );
+  const stale = prepareTask({
+    issueLastSyncedValues: { title: "Old" },
+    issueWasUpdated: false,
+    issueAttachmentNr: 2,
+  });
+  expect(stale.report.canApply).toBe(true);
+  expect(stale.report.issues.map(({ code }) => code)).toContain(
+    "issue_metadata_orphaned",
+  );
+  expect(JSON.parse(stale.records[0]?.sourceJson ?? "{}")).toMatchObject({
+    issueLastSyncedValues: { title: "Old" },
+  });
+  for (const identity of [{ issueProviderId: "p" }, { issueType: "GITEA" }])
+    expect(prepareTask(identity).report.canApply).toBe(false);
+});
+
+it("uses the first position of a repeated child ID without blocking", () => {
+  const { report, records } = prepareSuperProductivityImport(
+    JSON.stringify({
+      task: state({
+        parent: { id: "parent", title: "Parent", subTaskIds: ["c", "c"] },
+        c: { id: "c", title: "Child", parentId: "parent" },
+      }),
+    }),
+  );
+  expect(report.canApply).toBe(true);
+  expect(report.issues.map(({ code }) => code)).toContain(
+    "duplicate_child_reference",
+  );
+  expect(records.find(({ sourceId }) => sourceId === "c")).toMatchObject({
+    parentSourceId: "parent",
+    childIndex: 0,
+  });
+});

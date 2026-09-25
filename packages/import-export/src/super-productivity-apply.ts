@@ -94,6 +94,10 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "configuration_not_imported",
     // ADR 0021: a link to a provider absent from the export is kept.
     "issue_provider_missing",
+    // Stale sync metadata without an issue identity (kept in provenance).
+    "issue_metadata_orphaned",
+    // A repeated child ID in subTaskIds; the first position is used.
+    "duplicate_child_reference",
     // ADR 0022 history dispositions: each is deterministic and visible.
     "duplicate_copy_collapsed",
     "historical_reference",
@@ -454,6 +458,12 @@ export const prepareSuperProductivityImport = (
               (detail) =>
                 issues.push({
                   code: "issue_provider_missing",
+                  sourceId,
+                  detail,
+                }),
+              (detail) =>
+                issues.push({
+                  code: "issue_metadata_orphaned",
                   sourceId,
                   detail,
                 }),

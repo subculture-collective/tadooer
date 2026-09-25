@@ -118,6 +118,7 @@ project/tag/note fields block apply until they are reviewed.
 
 Every finding carries `blocking`. Reported dispositions that do not block are
 `configuration_not_imported`, `issue_provider_missing`,
+`issue_metadata_orphaned`, `duplicate_child_reference`,
 `duplicate_copy_collapsed`, `historical_reference`,
 `historical_parent_detached`, `history_review`, the recurrence findings
 `recurrence_notice` and `recurrence_duplicate_occurrence`, and the work history
