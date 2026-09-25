@@ -1,5 +1,38 @@
 export { superProductivityImportLimits } from "./import-limits.ts";
+export * from "./organization.ts";
+export * from "./task-planning.ts";
+export * from "./task-links.ts";
+export * from "./task-archive.ts";
 import { z } from "zod";
+import {
+  automationNoteMutationInputSchema,
+  automationOrganizationOrderInputSchema,
+  automationProjectBacklogInputSchema,
+  automationProjectMutationInputSchema as projectMutationInput,
+  automationTagMutationInputSchema as tagMutationInput,
+  noteListResponseSchema,
+  noteMutationResponseSchema,
+  organizationColorSchema,
+  organizationIconSchema,
+  projectPatchFields,
+  tagPatchFields,
+} from "./organization.ts";
+import {
+  automationTaskLinkMutationInputSchema,
+  taskLinksResourceInputSchema,
+  taskLinksResponseSchema,
+} from "./task-links.ts";
+import {
+  plannedDayAndStartExclusive,
+  plannedDayAndStartMessage,
+  taskPlanningFieldsSchema,
+} from "./task-planning.ts";
+import {
+  historicalReferenceSchema,
+  taskArchiveReviewReasonSchema,
+  taskHistoryProvenanceSchema,
+  taskHistoryQuerySchema,
+} from "./task-archive.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -269,6 +302,7 @@ export const taskSchema = z.object({
   completedAt: z.iso.datetime().nullable().optional(),
   deletedAt: z.iso.datetime().nullable().optional(),
   plannedStart: z.iso.datetime().nullable().optional(),
+  ...taskPlanningFieldsSchema.shape,
   deadline: taskDeadlineSchema.nullable().optional(),
   estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
@@ -279,6 +313,12 @@ export const taskSchema = z.object({
       message: "Task tags must be unique",
     })
     .optional(),
+  /** ADR 0018: top-level parent; absent or null for a top-level task. */
+  parentId: entityIdSchema.nullable().optional(),
+  /** Sparse order key among the parent's children; null for top-level tasks. */
+  childPosition: z.number().int().nullable().optional(),
+  /** ADR 0022: set only on archived history; active tasks omit it. */
+  archivedAt: z.iso.datetime().nullable().optional(),
 });
 
 export const createTaskRequestSchema = z.object({
@@ -287,6 +327,7 @@ export const createTaskRequestSchema = z.object({
   title: z.string().trim().min(1).max(240),
   notes: z.string().max(20_000).default(""),
   plannedStart: z.iso.datetime().nullable().optional(),
+  ...taskPlanningFieldsSchema.shape,
   deadline: taskDeadlineSchema.nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
   tagIds: z.array(entityIdSchema).max(25).optional(),
@@ -306,12 +347,70 @@ export const taskPatchRequestSchema = z
     title: z.string().trim().min(1).max(240).optional(),
     notes: z.string().max(20_000).optional(),
     plannedStart: z.iso.datetime().nullable().optional(),
+    ...taskPlanningFieldsSchema.shape,
     deadline: taskDeadlineSchema.nullable().optional(),
     estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   })
   .refine((input) => Object.keys(input).length > 0, {
     message: "At least one mutable task field is required",
+  })
+  .refine(plannedDayAndStartExclusive, {
+    message: plannedDayAndStartMessage,
   });
+
+// ADR 0018 task hierarchy: two levels, full child tasks, revisioned moves.
+export const taskHierarchyIndexSchema = z.number().int().min(0).max(10_000);
+export const taskMoveRequestSchema = z
+  .object({
+    parentId: entityIdSchema.nullable(),
+    index: taskHierarchyIndexSchema.nullable().optional(),
+  })
+  .strict();
+export const taskChildCreateRequestSchema = createTaskRequestSchema.extend({
+  index: taskHierarchyIndexSchema.nullable().optional(),
+});
+const taskChildOrderItemsSchema = z
+  .array(z.object({ id: entityIdSchema, revision: revisionSchema }).strict())
+  .max(500)
+  .refine((items) => new Set(items.map(({ id }) => id)).size === items.length, {
+    message: "Child task ids must be unique",
+  });
+export const taskChildOrderRequestSchema = z
+  .object({ items: taskChildOrderItemsSchema })
+  .strict();
+export const taskChildrenResponseSchema = z
+  .object({ parent: taskSchema, children: z.array(taskSchema) })
+  .strict();
+
+// ADR 0022 archived history. A history entry is a top-level archived task with
+// the children archived with it; each carries read-only import provenance.
+export const archivedTaskSchema = z
+  .object({
+    task: taskSchema,
+    provenance: taskHistoryProvenanceSchema.nullable(),
+  })
+  .strict();
+export const taskHistoryEntrySchema = archivedTaskSchema
+  .extend({ children: z.array(archivedTaskSchema) })
+  .strict();
+export const taskHistoryResponseSchema = z
+  .object({
+    entries: z.array(taskHistoryEntrySchema),
+    total: z.number().int().nonnegative(),
+    nextCursor: z.string().nullable(),
+  })
+  .strict();
+export const taskArchiveMutationResponseSchema = z
+  .object({
+    archive: z
+      .object({
+        action: z.enum(["archived", "restored"]),
+        task: taskSchema,
+        children: z.array(taskSchema),
+      })
+      .strict(),
+  })
+  .strict();
 
 export const conditionalRequestHeadersSchema = z.object({
   ifMatch: quotedRevisionEtagSchema,
@@ -498,7 +597,7 @@ export const notificationStatusResponseSchema = z
     lastDelivery: z
       .object({
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "test"]),
+        kind: z.enum(["lead", "at_start", "deadline", "test"]),
         occurredAt: z.iso.datetime(),
         errorCode: apiErrorCodeSchema.nullable(),
       })
@@ -516,7 +615,7 @@ export const notificationDeliveryResponseSchema = z
       .object({
         id: entityIdSchema,
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "test"]),
+        kind: z.enum(["lead", "at_start", "deadline", "test"]),
         attemptCount: z.number().int().nonnegative(),
         updatedAt: z.iso.datetime(),
         deliveredAt: z.iso.datetime().nullable(),
@@ -575,6 +674,7 @@ const organizationFields = { archived: z.boolean().optional() };
 export const projectPatchRequestSchema = projectCreateRequestSchema
   .partial()
   .extend(organizationFields)
+  .extend(projectPatchFields)
   .strict()
   .refine((input) => Object.keys(input).length > 0, {
     message: "An organization edit is required",
@@ -582,6 +682,7 @@ export const projectPatchRequestSchema = projectCreateRequestSchema
 export const tagPatchRequestSchema = tagCreateRequestSchema
   .partial()
   .extend(organizationFields)
+  .extend(tagPatchFields)
   .strict()
   .refine((input) => Object.keys(input).length > 0, {
     message: "An organization edit is required",
@@ -595,6 +696,16 @@ export const projectSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   archivedAt: z.iso.datetime().nullable(),
+  // Defaults keep snapshots cached before migration 0022 readable.
+  color: organizationColorSchema.nullable().default(null),
+  icon: organizationIconSchema.nullable().default(null),
+  position: z.number().int().nonnegative().default(0),
+  hiddenFromMenu: z.boolean().default(false),
+  /** Completion also archives; reopen or restore clears both (SP 19.1.0). */
+  completedAt: z.iso.datetime().nullable().default(null),
+  backlogEnabled: z.boolean().default(false),
+  /** Ordered active tasks of this project that sit in its backlog. */
+  backlogTaskIds: z.array(entityIdSchema).default([]),
 });
 
 export const tagSchema = z.object({
@@ -606,6 +717,9 @@ export const tagSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   archivedAt: z.iso.datetime().nullable(),
+  color: organizationColorSchema.nullable().default(null),
+  icon: organizationIconSchema.nullable().default(null),
+  position: z.number().int().nonnegative().default(0),
 });
 
 export const subtaskSchema = z.object({
@@ -1052,6 +1166,8 @@ export const taskFieldVersionsSchema = z.object({
   projectId: revisionSchema,
   tagIds: revisionSchema,
   deadline: revisionSchema,
+  /** Parent/order version; the base for an offline `task.move`. */
+  parent: revisionSchema.optional(),
 });
 
 export const syncTaskSnapshotSchema = z.object({
@@ -1136,6 +1252,15 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
     kind: z.enum(["task.delete", "task.restore"]),
     taskId: entityIdSchema,
     baseRevision: revisionSchema,
+  }),
+  // ADR 0018: structural move. A stale parent version or an invalid target is
+  // a resource conflict and changes nothing, so replay cannot orphan or cycle.
+  syncOperationBaseSchema.extend({
+    kind: z.literal("task.move"),
+    taskId: entityIdSchema,
+    parentId: entityIdSchema.nullable(),
+    index: taskHierarchyIndexSchema.nullable(),
+    baseParentVersion: revisionSchema,
   }),
 ]);
 
@@ -1385,6 +1510,7 @@ export const syncDiagnosticOperationSchema = z
       "task.reopen",
       "task.delete",
       "task.restore",
+      "task.move",
     ]),
     state: z.enum([
       "queued",
@@ -1438,6 +1564,10 @@ export const automationTokenScopeSchema = z.enum([
   "pools:write",
   "habits:read",
   "habits:write",
+  "notes:read",
+  "notes:write",
+  "task_links:read",
+  "task_links:write",
 ]);
 
 export const automationTokenSchema = z
@@ -1494,14 +1624,22 @@ export const automationOperationSchema = z.enum([
   "notifications.update_preferences",
   "subtasks.mutate",
   "projects.mutate",
+  "projects.reorder",
+  "projects.set_backlog",
   "tags.mutate",
+  "tags.reorder",
+  "notes.mutate",
+  "task_links.mutate",
   "tasks.assign_project",
   "tasks.set_tags",
+  "tasks.hierarchy",
   "tasks.create",
   "tasks.update",
   "tasks.set_completed",
   "tasks.delete",
   "tasks.restore",
+  "tasks.archive",
+  "tasks.unarchive",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1569,31 +1707,10 @@ export const automationTaskCompletionInputSchema = z
   })
   .strict();
 
-const organizationMutationInput = (title: z.ZodString) =>
-  z.discriminatedUnion("action", [
-    z
-      .object({ action: z.literal("create"), id: entityIdSchema, title })
-      .strict(),
-    z
-      .object({
-        action: z.literal("rename"),
-        id: entityIdSchema,
-        expectedRevision: revisionSchema,
-        title,
-      })
-      .strict(),
-    z
-      .object({
-        action: z.enum(["archive", "restore"]),
-        id: entityIdSchema,
-        expectedRevision: revisionSchema,
-      })
-      .strict(),
-  ]);
-export const automationProjectMutationInputSchema = organizationMutationInput(
+export const automationProjectMutationInputSchema = projectMutationInput(
   projectCreateRequestSchema.shape.title,
 );
-export const automationTagMutationInputSchema = organizationMutationInput(
+export const automationTagMutationInputSchema = tagMutationInput(
   tagCreateRequestSchema.shape.title,
 );
 export const automationAssignProjectInputSchema = z
@@ -1613,6 +1730,50 @@ export const automationSetTagsInputSchema = z
       .refine((ids) => new Set(ids).size === ids.length, {
         message: "Tag ids must be unique",
       }),
+  })
+  .strict();
+
+export const automationTaskHierarchyInputSchema = z.discriminatedUnion(
+  "action",
+  [
+    z
+      .object({
+        action: z.literal("create_child"),
+        parentId: entityIdSchema,
+        expectedParentRevision: revisionSchema,
+        index: taskHierarchyIndexSchema.nullable().optional(),
+        task: createTaskRequestSchema.omit({ structured: true }).strict(),
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal("move"),
+        taskId: entityIdSchema,
+        expectedRevision: revisionSchema,
+        parentId: entityIdSchema.nullable(),
+        index: taskHierarchyIndexSchema.nullable().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal("reorder"),
+        parentId: entityIdSchema,
+        expectedParentRevision: revisionSchema,
+        items: taskChildOrderItemsSchema,
+      })
+      .strict(),
+  ],
+);
+export const taskHierarchyMutationResponseSchema = z
+  .object({
+    hierarchy: z
+      .object({
+        task: taskSchema.nullable(),
+        parent: taskSchema.nullable(),
+        children: z.array(taskSchema),
+      })
+      .strict(),
+    replayed: z.boolean(),
   })
   .strict();
 
@@ -1694,12 +1855,36 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationTagMutationInputSchema,
     }),
     z.object({
+      operation: z.literal("projects.reorder"),
+      input: automationOrganizationOrderInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tags.reorder"),
+      input: automationOrganizationOrderInputSchema,
+    }),
+    z.object({
+      operation: z.literal("projects.set_backlog"),
+      input: automationProjectBacklogInputSchema,
+    }),
+    z.object({
+      operation: z.literal("notes.mutate"),
+      input: automationNoteMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("task_links.mutate"),
+      input: automationTaskLinkMutationInputSchema,
+    }),
+    z.object({
       operation: z.literal("tasks.assign_project"),
       input: automationAssignProjectInputSchema,
     }),
     z.object({
       operation: z.literal("tasks.set_tags"),
       input: automationSetTagsInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.hierarchy"),
+      input: automationTaskHierarchyInputSchema,
     }),
     z.object({
       operation: z.literal("habits.mutate"),
@@ -1711,6 +1896,14 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     }),
     z.object({
       operation: z.literal("tasks.restore"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.archive"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.unarchive"),
       input: automationTaskLifecycleInputSchema,
     }),
     z.object({
@@ -1807,6 +2000,26 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationTagMutationInputSchema,
     });
+  if (operation === "projects.reorder" || operation === "tags.reorder")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationOrganizationOrderInputSchema,
+    });
+  if (operation === "projects.set_backlog")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationProjectBacklogInputSchema,
+    });
+  if (operation === "notes.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationNoteMutationInputSchema,
+    });
+  if (operation === "task_links.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskLinkMutationInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -1817,12 +2030,22 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationSetTagsInputSchema,
     });
+  if (operation === "tasks.hierarchy")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskHierarchyInputSchema,
+    });
   if (operation === "habits.mutate")
     return z.object({
       operation: z.literal(operation),
       input: habitCommandSchema,
     });
-  if (operation === "tasks.delete" || operation === "tasks.restore")
+  if (
+    operation === "tasks.delete" ||
+    operation === "tasks.restore" ||
+    operation === "tasks.archive" ||
+    operation === "tasks.unarchive"
+  )
     return z.object({
       operation: z.literal(operation),
       input: automationTaskLifecycleInputSchema,
@@ -1900,6 +2123,9 @@ export const automationAffectedEntitySchema = z
       "template_set",
       "project",
       "tag",
+      "note",
+      "task_attachment",
+      "task_issue_link",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -1919,6 +2145,9 @@ const existingAutomationBaseRevisionSchema = z
       "template_set",
       "project",
       "tag",
+      "note",
+      "task_attachment",
+      "task_issue_link",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -1979,8 +2208,14 @@ export const automationExecutionResultSchema = z.union([
     .object({ notificationPreferences: notificationPreferenceSnapshotSchema })
     .strict(),
   checklistMutationResponseSchema,
+  taskHierarchyMutationResponseSchema,
+  taskArchiveMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
+  z.object({ projects: z.array(projectSchema) }).strict(),
+  z.object({ tags: z.array(tagSchema) }).strict(),
+  noteMutationResponseSchema,
+  taskLinksResponseSchema,
   habitMutationResponseSchema,
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
@@ -2137,6 +2372,17 @@ export const automationCatalog = [
     outputSchema: automationTaskResourceSchema,
   },
   {
+    id: "tasks.history",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tasks/history",
+    mcpName: "suite.tasks.history",
+    mcpUri: "suite://v1/tasks/history{?query,cursor,limit}",
+    inputSchema: taskHistoryQuerySchema,
+    outputSchema: taskHistoryResponseSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2168,6 +2414,28 @@ export const automationCatalog = [
     mcpUri: "suite://v1/tags",
     inputSchema: z.object({}).strict(),
     outputSchema: automationTagResourceSchema,
+  },
+  {
+    id: "notes.list",
+    kind: "resource",
+    scopes: ["notes:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/notes",
+    mcpName: "suite.notes.list",
+    mcpUri: "suite://v1/notes",
+    inputSchema: z.object({}).strict(),
+    outputSchema: noteListResponseSchema,
+  },
+  {
+    id: "task_links.get",
+    kind: "resource",
+    scopes: ["task_links:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/task-links",
+    mcpName: "suite.task_links.get",
+    mcpUri: "suite://v1/task-links{?taskId}",
+    inputSchema: taskLinksResourceInputSchema,
+    outputSchema: taskLinksResponseSchema,
   },
   {
     id: "active-session.get",
@@ -2223,22 +2491,26 @@ export const automationCatalog = [
           ? "planning:write"
           : id === "notifications.update_preferences"
             ? "notifications:write"
-            : id === "projects.mutate"
+            : id.startsWith("projects.")
               ? "projects:write"
-              : id === "tags.mutate"
+              : id.startsWith("tags.")
                 ? "tags:write"
-                : id === "habits.mutate"
-                  ? "habits:write"
-                  : id.startsWith("tasks.") || id === "subtasks.mutate"
-                    ? "tasks:write"
-                    : id === "schedule.create_time_block"
-                      ? "schedule:write"
-                      : id.startsWith("templates.") ||
-                          id.startsWith("template_sets.")
-                        ? "templates:write"
-                        : id === "placeholders.resolve"
-                          ? "pools:write"
-                          : "focus:write",
+                : id === "notes.mutate"
+                  ? "notes:write"
+                  : id === "task_links.mutate"
+                    ? "task_links:write"
+                    : id === "habits.mutate"
+                      ? "habits:write"
+                      : id.startsWith("tasks.") || id === "subtasks.mutate"
+                        ? "tasks:write"
+                        : id === "schedule.create_time_block"
+                          ? "schedule:write"
+                          : id.startsWith("templates.") ||
+                              id.startsWith("template_sets.")
+                            ? "templates:write"
+                            : id === "placeholders.resolve"
+                              ? "pools:write"
+                              : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -2261,6 +2533,8 @@ export const automationCatalog = [
       "templates:write",
       "pools:write",
       "habits:write",
+      "notes:write",
+      "task_links:write",
     ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",
@@ -2396,6 +2670,20 @@ export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
 export type HabitListResponse = z.infer<typeof habitListResponseSchema>;
 export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
+export type TaskMoveRequest = z.infer<typeof taskMoveRequestSchema>;
+export type TaskChildCreateRequest = z.infer<
+  typeof taskChildCreateRequestSchema
+>;
+export type TaskChildrenResponse = z.infer<typeof taskChildrenResponseSchema>;
+export type ArchivedTask = z.infer<typeof archivedTaskSchema>;
+export type TaskHistoryEntry = z.infer<typeof taskHistoryEntrySchema>;
+export type TaskHistoryResponse = z.infer<typeof taskHistoryResponseSchema>;
+export type TaskArchiveMutationResponse = z.infer<
+  typeof taskArchiveMutationResponseSchema
+>;
+export type TaskHierarchyMutationResponse = z.infer<
+  typeof taskHierarchyMutationResponseSchema
+>;
 export type ConditionalRequestHeaders = z.infer<
   typeof conditionalRequestHeadersSchema
 >;
@@ -2567,6 +2855,10 @@ export const superProductivityPreviewSchema = z.object({
       scheduledDay: z.string().nullable(),
       deadlineAt: z.iso.datetime().nullable(),
       deadlineDay: z.string().nullable(),
+      // ADR 0022: source store, review reasons and unresolved references.
+      store: z.enum(["task", "archiveYoung", "archiveOld"]).optional(),
+      review: z.array(taskArchiveReviewReasonSchema).optional(),
+      historicalReferences: z.array(historicalReferenceSchema).optional(),
     }),
   ),
   issues: z.array(
@@ -2574,6 +2866,8 @@ export const superProductivityPreviewSchema = z.object({
       code: z.string(),
       sourceId: z.string().nullable(),
       detail: z.string(),
+      /** False for a reported disposition that does not prevent apply. */
+      blocking: z.boolean().optional(),
     }),
   ),
 });

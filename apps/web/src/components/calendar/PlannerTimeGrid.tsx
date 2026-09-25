@@ -279,7 +279,7 @@ export function PlannerTimeGrid({
         <EmptyState
           icon={<CalendarDaysIcon />}
           title="Nothing is planned in this range"
-          description="Projected calendar events and Suite tasks with a planned time will appear here."
+          description="Projected calendar events and Suite tasks with a planned time or day will appear here."
         />
       )}
       <div className="planner-time-grid__legend" aria-label="Calendar legend">
@@ -293,6 +293,11 @@ export function PlannerTimeGrid({
       >
         {days.map((day, index) => {
           const allDay = allDayFor(events, day);
+          // Date-only tasks have no time; they sit in the all-day lane of
+          // their owner-zone day and never create a timed overlap (ADR 0020).
+          const dayTasks = tasks.filter(
+            (task) => task.plannedStart == null && task.plannedDay === day.key,
+          );
           const positioned = positionTimedEntries(entries, day);
           const currentTimeTop =
             now >= day.start && now < day.end
@@ -318,7 +323,20 @@ export function PlannerTimeGrid({
                   All day
                 </span>
                 <div>
-                  {allDay.length === 0 ? (
+                  {dayTasks.map((task) => (
+                    <button
+                      type="button"
+                      tabIndex={0}
+                      className="planner-time-grid__all-day-event planner-time-grid__all-day-task"
+                      key={`task:${task.id}`}
+                      aria-label={`${task.title}, planned for ${day.longLabel}, no time set. Suite task`}
+                      onClick={() => onSelectEntry?.({ kind: "task", task })}
+                    >
+                      <strong>{task.title}</strong>
+                      <span>Suite task · no time</span>
+                    </button>
+                  ))}
+                  {allDay.length === 0 && dayTasks.length === 0 ? (
                     <span className="planner-time-grid__all-day-empty">—</span>
                   ) : (
                     allDay.map((event) => (

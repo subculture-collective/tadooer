@@ -1328,6 +1328,38 @@
     padding: 0.5rem 0.75rem;
   }
 
+  /* Task hierarchy (ADR 0018): child tasks nest one level under a parent. */
+  .task-children {
+    display: grid;
+    gap: 0.5rem;
+    padding-left: 0.75rem;
+    border-left: 2px solid var(--line);
+  }
+  .task-children__heading {
+    font-size: var(--text-xs);
+    color: var(--subtext-2);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+  }
+  .task-children__summary,
+  .task-placement__parent {
+    font-size: var(--text-sm);
+    color: var(--subtext);
+  }
+  .task-children__list {
+    list-style: none;
+    padding: 0;
+  }
+  .task-placement {
+    display: grid;
+    gap: 0.375rem;
+  }
+  .task-placement > legend {
+    font-size: var(--text-xs);
+    color: var(--subtext-2);
+  }
+
   /* ── 13. Timeline and planner ──────────────────────────────────── */
 
   .week-plan {
@@ -1950,5 +1982,76 @@
   }
   .spacer {
     flex: 1;
+  }
+
+  /* ── 21. Organization manager ──────────────────────────────────── */
+
+  .organization-manager section + section {
+    margin-top: 1.25rem;
+  }
+  .organization-list {
+    display: grid;
+    gap: 0.75rem;
+    list-style: none;
+    padding: 0;
+  }
+  .organization-list > li {
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.5rem;
+  }
+  .organization-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .organization-swatch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .organization-swatch__color {
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+  }
+  .organization-backlog ul {
+    padding-left: 1rem;
+  }
+  .note-markdown {
+    display: grid;
+    gap: 0.35rem;
+    overflow-wrap: anywhere;
+  }
+  .note-markdown pre {
+    overflow-x: auto;
+  }
+  .note-checklist {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  /* Task links and attachments (ADR 0021) */
+  .task-links-panel > summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .task-links {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+  .task-links ul {
+    display: grid;
+    gap: 0.5rem;
+  }
+  .task-links__note {
+    white-space: pre-wrap;
+  }
+  .task-links__source {
+    display: block;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 }

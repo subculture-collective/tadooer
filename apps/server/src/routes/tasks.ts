@@ -24,6 +24,7 @@ import {
 } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import { taskResponse } from "./shared.ts";
+import { planningPatch, planningPatchProblem } from "../task-planning.ts";
 
 export const handleTasks: RouteHandler = async (
   request,
@@ -182,6 +183,21 @@ export const handleTasks: RouteHandler = async (
         sendError(response, 400, "INVALID_TASK", "Task input is invalid");
         return true;
       }
+      const planningProblem = planningPatchProblem(
+        database,
+        session.owner.id,
+        taskId,
+        parsed.data,
+      );
+      if (planningProblem !== undefined) {
+        sendError(
+          response,
+          planningProblem.status,
+          planningProblem.code,
+          planningProblem.message,
+        );
+        return true;
+      }
       sendConditionalTask(
         response,
         database.patchTask(
@@ -214,6 +230,7 @@ export const handleTasks: RouteHandler = async (
                       deadlineDate: null,
                       deadlineAt: parsed.data.deadline.value,
                     }),
+            ...planningPatch(parsed.data),
           },
           new Date().toISOString(),
         ),
@@ -236,8 +253,13 @@ export const handleTasks: RouteHandler = async (
     }
 
     if (method === "DELETE" && action === undefined) {
+      // Deleting a parent also deletes its active children (ADR 0018).
+      const scope = database.taskHierarchy.deletionScope(
+        session.owner.id,
+        taskId,
+      );
       const active = database.getActiveSession(session.owner.id);
-      if (active?.endedAt === null && active.taskId === taskId) {
+      if (active?.endedAt === null && scope.includes(active.taskId)) {
         sendError(
           response,
           409,
@@ -247,7 +269,10 @@ export const handleTasks: RouteHandler = async (
         return true;
       }
       if (
-        database.getTaskCalendarBlock(session.owner.id, taskId) !== undefined
+        scope.some(
+          (id) =>
+            database.getTaskCalendarBlock(session.owner.id, id) !== undefined,
+        )
       ) {
         sendError(
           response,

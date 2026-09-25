@@ -9,7 +9,7 @@ import { Badge } from "../ui/badge.tsx";
 import { Button } from "../ui/button.tsx";
 
 export type TaskListItemState =
-  "overdue" | "scheduled" | "planning" | "completed";
+  "overdue" | "scheduled" | "planned-day" | "planning" | "completed";
 
 interface TaskListItemProps {
   readonly task: Task;
@@ -72,10 +72,14 @@ export const TaskListItem = ({
         <strong>{task.title}</strong>
         <p className="today-task-meta">
           {state === "overdue"
-            ? "Overdue"
-            : state === "planning" || state === "completed"
-              ? "No time set"
-              : taskTime(task.plannedStart ?? at, timeZone)}
+            ? task.plannedStart == null && task.plannedDay != null
+              ? `Overdue · planned for ${task.plannedDay}`
+              : "Overdue"
+            : state === "planned-day"
+              ? "Today · no time set"
+              : state === "planning" || state === "completed"
+                ? "No time set"
+                : taskTime(task.plannedStart ?? at, timeZone)}
           {task.estimateMinutes === null
             ? ""
             : ` · ${String(task.estimateMinutes)} min`}

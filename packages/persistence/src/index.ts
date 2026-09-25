@@ -2,6 +2,7 @@ import {
   planningPreferencesSchema,
   notificationPreferencesSchema,
   checklistCommandSchema,
+  organizationIconPattern,
   type ChecklistCommand,
 } from "@suite/contracts";
 import { StructuredCaptureError } from "@suite/domain";
@@ -13,6 +14,53 @@ import { DatabaseSync } from "node:sqlite";
 import { SqliteCalendarProjectionStore } from "./calendar-projection-store.js";
 import { SqliteCredentialStore } from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
+import { SqliteNoteStore } from "./note-store.ts";
+export type { NoteMutationResult, NoteRecord } from "./note-store.ts";
+import {
+  SqliteTaskLinkStore,
+  taskLinksMigration,
+  type ImportedAttachment,
+  type ImportedIssueLink,
+} from "./task-link-store.ts";
+export type {
+  ImportedAttachment,
+  ImportedIssueLink,
+  TaskAttachmentRecord,
+  TaskIssueLinkRecord,
+  TaskLinkMutationResult,
+  TaskLinksRecord,
+} from "./task-link-store.ts";
+import {
+  dateOnlyPlanningMigration,
+  readTaskPlanning,
+  writeTaskPlanning,
+  type StoredStartReminder,
+} from "./task-planning-columns.ts";
+import {
+  scheduledReminders,
+  type HistoricalReference,
+  type TaskArchiveReviewReason,
+} from "@suite/domain";
+import { SqliteTaskHierarchyStore } from "./task-hierarchy-store.ts";
+import {
+  SqliteTaskArchiveStore,
+  taskArchiveMigration,
+} from "./task-archive-store.ts";
+export {
+  SqliteTaskArchiveStore,
+  TaskHistoryCursorError,
+  type ArchivedTaskRecord,
+  type TaskArchiveProvenanceRecord,
+  type TaskArchiveResult,
+  type TaskHistoryEntryRecord,
+  type TaskHistoryPage,
+} from "./task-archive-store.ts";
+export {
+  SqliteTaskHierarchyStore,
+  TaskHierarchyError,
+  type TaskHierarchyMoveResult,
+  type TaskHierarchyReorderResult,
+} from "./task-hierarchy-store.ts";
 
 interface Migration {
   readonly id: string;
@@ -131,6 +179,16 @@ export interface TaskRecord {
   readonly deadlineAt?: string | null;
   readonly projectId?: string | null;
   readonly tagIds?: readonly string[];
+  /** Owner-zone calendar date; exclusive with plannedStart (ADR 0020). */
+  readonly plannedDay?: string | null;
+  readonly startReminder?: StoredStartReminder;
+  readonly deadlineReminderMinutes?: number | null;
+  /** Top-level parent; null for a top-level task (ADR 0018). */
+  readonly parentId?: string | null;
+  /** Sparse sibling order key; null for a top-level task. */
+  readonly childPosition?: number | null;
+  /** Set while the task is archived history (ADR 0022). */
+  readonly archivedAt?: string | null;
 }
 
 export interface TaskPatch {
@@ -140,6 +198,9 @@ export interface TaskPatch {
   readonly estimateMinutes?: number | null;
   readonly deadlineDate?: string | null;
   readonly deadlineAt?: string | null;
+  readonly plannedDay?: string | null;
+  readonly startReminder?: StoredStartReminder;
+  readonly deadlineReminderMinutes?: number | null;
 }
 
 export interface HabitRecord {
@@ -315,7 +376,7 @@ export interface AutomationAuditRecord {
   readonly createdAt: string;
 }
 
-export interface ProjectRecord {
+interface OrganizationRecordBase {
   readonly id: string;
   readonly ownerId: string;
   readonly title: string;
@@ -323,10 +384,43 @@ export interface ProjectRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly archivedAt: string | null;
+  readonly color: string | null;
+  readonly icon: string | null;
+  readonly position: number;
 }
-export interface TagRecord extends ProjectRecord {
+export interface ProjectRecord extends OrganizationRecordBase {
+  readonly hiddenFromMenu: boolean;
+  /** Completion archives the project; reopen and restore clear both. */
+  readonly completedAt: string | null;
+  readonly backlogEnabled: boolean;
+  /** Active, non-deleted tasks of this project held in its backlog, in order. */
+  readonly backlogTaskIds: readonly string[];
+}
+export interface TagRecord extends OrganizationRecordBase {
   readonly normalizedName: string;
 }
+type OptionalOrganizationFields = "color" | "icon" | "position";
+type OptionalProjectFields =
+  | OptionalOrganizationFields
+  | "hiddenFromMenu"
+  | "completedAt"
+  | "backlogEnabled"
+  | "backlogTaskIds";
+export type ProjectCreateRecord = Omit<ProjectRecord, OptionalProjectFields> &
+  Partial<Omit<Pick<ProjectRecord, OptionalProjectFields>, "backlogTaskIds">>;
+export type TagCreateRecord = Omit<TagRecord, OptionalOrganizationFields> &
+  Partial<Pick<TagRecord, OptionalOrganizationFields>>;
+/** Editable organization fields shared by browser and assistant writes. */
+export interface OrganizationFields {
+  readonly title?: string | undefined;
+  readonly archived?: boolean | undefined;
+  readonly completed?: boolean | undefined;
+  readonly color?: string | null | undefined;
+  readonly icon?: string | null | undefined;
+  readonly hiddenFromMenu?: boolean | undefined;
+  readonly backlogEnabled?: boolean | undefined;
+}
+const colorPattern = /^#[0-9a-f]{6}$/;
 export interface SubtaskRecord {
   readonly id: string;
   readonly ownerId: string;
@@ -533,7 +627,7 @@ export interface NotificationDeliveryRecord {
   readonly ownerId: string;
   readonly taskId: string | null;
   readonly occurrenceStart: string;
-  readonly kind: "lead" | "at_start" | "test";
+  readonly kind: "lead" | "at_start" | "deadline" | "test";
   readonly taskRevision: number | null;
   readonly state:
     | "pending"
@@ -1260,6 +1354,89 @@ const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    id: "0022_organization_parity",
+    sql: `
+      ALTER TABLE projects ADD COLUMN color TEXT;
+      ALTER TABLE projects ADD COLUMN icon TEXT;
+      ALTER TABLE projects ADD COLUMN position INTEGER NOT NULL DEFAULT 0 CHECK(position >= 0);
+      ALTER TABLE projects ADD COLUMN hidden_from_menu INTEGER NOT NULL DEFAULT 0 CHECK(hidden_from_menu IN (0,1));
+      ALTER TABLE projects ADD COLUMN completed_at TEXT;
+      ALTER TABLE projects ADD COLUMN backlog_enabled INTEGER NOT NULL DEFAULT 0 CHECK(backlog_enabled IN (0,1));
+      ALTER TABLE tags ADD COLUMN color TEXT;
+      ALTER TABLE tags ADD COLUMN icon TEXT;
+      ALTER TABLE tags ADD COLUMN position INTEGER NOT NULL DEFAULT 0 CHECK(position >= 0);
+      UPDATE projects SET position = (
+        SELECT count(*) FROM projects AS earlier
+        WHERE earlier.owner_id = projects.owner_id
+          AND (earlier.title < projects.title COLLATE NOCASE
+            OR (earlier.title = projects.title COLLATE NOCASE AND earlier.id < projects.id))
+      );
+      UPDATE tags SET position = (
+        SELECT count(*) FROM tags AS earlier
+        WHERE earlier.owner_id = tags.owner_id
+          AND (earlier.display_name < tags.display_name COLLATE NOCASE
+            OR (earlier.display_name = tags.display_name COLLATE NOCASE AND earlier.id < tags.id))
+      );
+      CREATE TABLE project_backlog_tasks (
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL CHECK(position >= 0)
+      ) STRICT;
+      CREATE INDEX project_backlog_by_project ON project_backlog_tasks(owner_id, project_id, position, task_id);
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        tag_id TEXT REFERENCES tags(id) ON DELETE SET NULL,
+        content TEXT NOT NULL CHECK(length(content) <= 20000),
+        pinned_to_today INTEGER NOT NULL CHECK(pinned_to_today IN (0,1)),
+        position INTEGER NOT NULL CHECK(position >= 0),
+        revision INTEGER NOT NULL CHECK(revision > 0),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        CHECK(project_id IS NULL OR tag_id IS NULL)
+      ) STRICT;
+      CREATE INDEX notes_by_owner ON notes(owner_id, position, id);
+    `,
+  },
+  dateOnlyPlanningMigration,
+  {
+    // ADR 0018: two-level task hierarchy. Triggers keep the graph acyclic,
+    // owner-scoped and at most two levels deep even if application checks fail.
+    id: "0024_task_hierarchy",
+    sql: `
+      ALTER TABLE tasks ADD COLUMN parent_id TEXT REFERENCES tasks(id) ON DELETE CASCADE;
+      ALTER TABLE tasks ADD COLUMN child_position INTEGER;
+      ALTER TABLE tasks ADD COLUMN hierarchy_version INTEGER NOT NULL DEFAULT 1
+        CHECK (hierarchy_version > 0);
+      UPDATE tasks SET hierarchy_version = revision;
+      CREATE INDEX tasks_by_parent ON tasks(owner_id, parent_id, child_position, id)
+        WHERE parent_id IS NOT NULL;
+      CREATE TRIGGER tasks_hierarchy_insert_valid
+      BEFORE INSERT ON tasks
+      WHEN NEW.parent_id IS NOT NULL OR NEW.child_position IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'task hierarchy is invalid')
+        WHERE NEW.parent_id IS NULL OR NEW.child_position IS NULL
+          OR NEW.parent_id = NEW.id
+          OR NOT EXISTS (SELECT 1 FROM tasks p WHERE p.id = NEW.parent_id
+            AND p.owner_id = NEW.owner_id AND p.parent_id IS NULL);
+      END;
+      CREATE TRIGGER tasks_hierarchy_update_valid
+      BEFORE UPDATE OF parent_id, child_position ON tasks
+      WHEN NEW.parent_id IS NOT NULL OR NEW.child_position IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'task hierarchy is invalid')
+        WHERE NEW.parent_id IS NULL OR NEW.child_position IS NULL
+          OR NEW.parent_id = NEW.id
+          OR NOT EXISTS (SELECT 1 FROM tasks p WHERE p.id = NEW.parent_id
+            AND p.owner_id = NEW.owner_id AND p.parent_id IS NULL)
+          OR EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = NEW.id);
+      END;
+    `,
+  },
+  taskLinksMigration,
+  taskArchiveMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1274,9 +1451,43 @@ export class SuiteDatabase {
   readonly habits: SqliteHabitStore;
   readonly calendarProjections: SqliteCalendarProjectionStore;
   readonly planningPreferences: SqlitePlanningPreferencesStore;
+  readonly notes: SqliteNoteStore;
+  readonly taskHierarchy: SqliteTaskHierarchyStore;
+  readonly taskLinks: SqliteTaskLinkStore;
+  readonly taskArchive: SqliteTaskArchiveStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.notes = new SqliteNoteStore(database);
+    this.taskArchive = new SqliteTaskArchiveStore(database, {
+      getTask: (ownerId, taskId, includeInactive) =>
+        this.getTask(ownerId, taskId, includeInactive),
+      appendChange: (ownerId, taskId, kind, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "task",
+          taskId,
+          kind,
+          revision,
+          now,
+        );
+      },
+    });
+    this.taskHierarchy = new SqliteTaskHierarchyStore(database, {
+      getTask: (ownerId, taskId, includeDeleted) =>
+        this.getTask(ownerId, taskId, includeDeleted),
+      appendChange: (ownerId, taskId, kind, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "task",
+          taskId,
+          kind,
+          revision,
+          now,
+        );
+      },
+    });
+    this.taskLinks = new SqliteTaskLinkStore(database);
     this.habits = new SqliteHabitStore(
       database,
       (ownerId, kind, id, revision, now) => {
@@ -2102,50 +2313,60 @@ export class SuiteDatabase {
     readonly preferences: NotificationPreferencesRecord;
     readonly now: string;
   }): void {
-    const scheduled = input.preferences.enabled
-      ? input.tasks.filter(
-          (task) =>
-            task.status === "open" &&
-            task.deletedAt === null &&
-            task.plannedStart !== null,
-        )
-      : [];
+    // Per-task settings and owner preferences resolve in the domain schedule
+    // (ADR 0020). Each row keeps the ADR 0016 identity: owner, task,
+    // occurrence and kind, so a delivered reminder is never recreated.
     const desired = new Set<string>();
-    const kinds: readonly ("lead" | "at_start")[] = [
-      ...(input.preferences.leadReminderEnabled ? (["lead"] as const) : []),
-      ...(input.preferences.atStartReminderEnabled
-        ? (["at_start"] as const)
-        : []),
-    ];
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
-      for (const task of scheduled) {
-        if (task.plannedStart === null) continue;
-        for (const kind of kinds) {
-          const occurrenceStart = task.plannedStart;
-          desired.add(`${task.id}\n${occurrenceStart}\n${kind}`);
-          const dueAt = new Date(
-            Date.parse(occurrenceStart) - (kind === "lead" ? 15 * 60_000 : 0),
-          ).toISOString();
-          this.#database
-            .prepare(
-              `INSERT OR IGNORE INTO notification_deliveries
-                (id,owner_id,task_id,occurrence_start,reminder_kind,task_revision,state,due_at,next_attempt_at,attempt_count,error_code,created_at,updated_at,delivered_at)
-               VALUES (?,?,?,?,?,?,'pending',?,?,0,NULL,?,?,NULL)`,
-            )
-            .run(
-              randomUUID(),
-              input.ownerId,
-              task.id,
-              occurrenceStart,
-              kind,
-              task.revision,
-              dueAt,
-              dueAt,
-              input.now,
-              input.now,
-            );
-        }
+      for (const reminder of input.tasks.flatMap((task) =>
+        scheduledReminders(task, input.preferences),
+      )) {
+        desired.add(
+          `${reminder.taskId}\n${reminder.occurrenceStart}\n${reminder.kind}`,
+        );
+        const task = input.tasks.find(({ id }) => id === reminder.taskId);
+        const inserted = this.#database
+          .prepare(
+            `INSERT OR IGNORE INTO notification_deliveries
+              (id,owner_id,task_id,occurrence_start,reminder_kind,task_revision,state,due_at,next_attempt_at,attempt_count,error_code,created_at,updated_at,delivered_at)
+             VALUES (?,?,?,?,?,?,'pending',?,?,0,NULL,?,?,NULL)`,
+          )
+          .run(
+            randomUUID(),
+            input.ownerId,
+            reminder.taskId,
+            reminder.occurrenceStart,
+            reminder.kind,
+            task?.revision ?? null,
+            reminder.dueAt,
+            reminder.dueAt,
+            input.now,
+            input.now,
+          );
+        if (Number(inserted.changes) === 1) continue;
+        // An offset change moves a row that has not been attempted. A row
+        // cancelled as obsolete was never published, so it may return to
+        // pending. Delivered, suppressed, failed or in-flight rows stay final.
+        this.#database
+          .prepare(
+            `UPDATE notification_deliveries
+             SET state='pending',due_at=?,next_attempt_at=?,attempt_count=0,error_code=NULL,task_revision=?,updated_at=?
+             WHERE owner_id=? AND task_id=? AND occurrence_start=? AND reminder_kind=?
+               AND ((state='pending' AND attempt_count=0 AND due_at<>?)
+                 OR (state='cancelled' AND error_code='OBSOLETE'))`,
+          )
+          .run(
+            reminder.dueAt,
+            reminder.dueAt,
+            task?.revision ?? null,
+            input.now,
+            input.ownerId,
+            reminder.taskId,
+            reminder.occurrenceStart,
+            reminder.kind,
+            reminder.dueAt,
+          );
       }
       const active = this.#database
         .prepare(
@@ -2157,7 +2378,7 @@ export class SuiteDatabase {
         readonly id: string;
         readonly task_id: string;
         readonly occurrence_start: string;
-        readonly reminder_kind: "lead" | "at_start";
+        readonly reminder_kind: "lead" | "at_start" | "deadline";
       }[];
       for (const delivery of active) {
         const key = `${delivery.task_id}\n${delivery.occurrence_start}\n${delivery.reminder_kind}`;
@@ -2660,13 +2881,15 @@ export class SuiteDatabase {
       const task: TaskRecord = {
         ...currentTask,
         plannedStart: input.plannedStart,
+        plannedDay: null,
         estimateMinutes: input.estimateMinutes,
         revision: currentTask.revision + 1,
         updatedAt: input.now,
       };
+      // A calendar block's exact start supersedes a date-only plan.
       this.#database
         .prepare(
-          `UPDATE tasks SET planned_start = ?, estimate_minutes = ?,
+          `UPDATE tasks SET planned_start = ?, planned_day = NULL, estimate_minutes = ?,
              revision = ?, updated_at = ? WHERE owner_id = ? AND id = ?`,
         )
         .run(
@@ -2811,11 +3034,12 @@ export class SuiteDatabase {
   importTaskRecords(
     ownerId: string,
     records: readonly {
-      kind: "project" | "tag" | "task";
+      kind: "project" | "tag" | "task" | "note";
       sourceId: string;
       sourceHash: string;
       sourceJson: string;
       title: string;
+      /** Task notes, or the Markdown content of a note record. */
       notes: string;
       projectId: string | null;
       tagIds: readonly string[];
@@ -2825,12 +3049,46 @@ export class SuiteDatabase {
       estimateMinutes: number | null;
       completedAt: string | null;
       createdAt: string | null;
+      // Organization parity (ADR 0019); records arrive in their display order.
+      /** Archived at import time unless completion supplies the time. */
+      archived?: boolean;
+      color?: string | null;
+      icon?: string | null;
+      hiddenFromMenu?: boolean;
+      backlogEnabled?: boolean;
+      /** Source task IDs, applied after the batch's tasks exist. */
+      backlogTaskIds?: readonly string[];
+      pinnedToToday?: boolean;
+      plannedDay?: string | null;
+      startReminder?: StoredStartReminder;
+      deadlineReminderMinutes?: number | null;
+      /** Source parent task ID; the child is placed after all records exist. */
+      parentSourceId?: string | null;
+      /** Source order among the parent's children. */
+      childIndex?: number | null;
+      // Linked issue and attachments (ADR 0021); tasks only.
+      issueLink?: ImportedIssueLink | null;
+      attachments?: readonly ImportedAttachment[];
+      /**
+       * ADR 0022: for a task, `archived` imports it as archived history.
+       * `archiveStore` names its source store; review reasons and unresolved
+       * source references are stored as read-only provenance.
+       */
+      archiveStore?: "task" | "archiveYoung" | "archiveOld";
+      review?: readonly TaskArchiveReviewReason[];
+      historicalReferences?: readonly HistoricalReference[];
     }[],
     now: string,
   ): { created: number; existing: number } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
       const targets = new Map<string, string>();
+      const backlogs: {
+        projectId: string;
+        sourceTaskIds: readonly string[];
+      }[] = [];
+      const newChildren: (typeof records)[number][] = [];
+      const newTasks: { id: string; record: (typeof records)[number] }[] = [];
       let created = 0;
       let existing = 0;
       for (const record of records) {
@@ -2849,7 +3107,23 @@ export class SuiteDatabase {
           continue;
         }
         const createdAt = record.createdAt ?? now;
-        if (record.kind === "project") {
+        if (record.kind === "note") {
+          const projectId =
+            record.projectId === null
+              ? null
+              : targets.get(`project:${record.projectId}`);
+          if (projectId === undefined)
+            throw new Error("IMPORT_REFERENCE_MISSING");
+          this.notes.insert(ownerId, {
+            id,
+            content: record.notes,
+            projectId,
+            tagId: null,
+            pinnedToToday: record.pinnedToToday === true,
+            createdAt,
+            updatedAt: now,
+          });
+        } else if (record.kind === "project") {
           this.createProject({
             id,
             ownerId,
@@ -2857,8 +3131,20 @@ export class SuiteDatabase {
             revision: 1,
             createdAt,
             updatedAt: now,
-            archivedAt: null,
+            // Completing a Super Productivity project also archives it.
+            archivedAt:
+              record.completedAt ?? (record.archived === true ? now : null),
+            completedAt: record.completedAt,
+            color: record.color ?? null,
+            icon: record.icon ?? null,
+            hiddenFromMenu: record.hiddenFromMenu === true,
+            backlogEnabled: record.backlogEnabled === true,
           });
+          if ((record.backlogTaskIds ?? []).length > 0)
+            backlogs.push({
+              projectId: id,
+              sourceTaskIds: record.backlogTaskIds ?? [],
+            });
           this.#appendSyncChangeInTransaction(
             ownerId,
             "project",
@@ -2876,7 +3162,9 @@ export class SuiteDatabase {
             revision: 1,
             createdAt,
             updatedAt: now,
-            archivedAt: null,
+            archivedAt: record.archived === true ? now : null,
+            color: record.color ?? null,
+            icon: record.icon ?? null,
           });
           this.#appendSyncChangeInTransaction(
             ownerId,
@@ -2906,6 +3194,9 @@ export class SuiteDatabase {
               createdAt,
               updatedAt: now,
               plannedStart: record.plannedStart,
+              plannedDay: record.plannedDay ?? null,
+              startReminder: record.startReminder ?? { kind: "default" },
+              deadlineReminderMinutes: record.deadlineReminderMinutes ?? null,
               deadlineDate: record.deadlineDate,
               deadlineAt: record.deadlineAt,
               estimateMinutes: record.estimateMinutes,
@@ -2923,6 +3214,18 @@ export class SuiteDatabase {
               "UPDATE tasks SET completed_at=? WHERE owner_id=? AND id=?",
             )
             .run(record.completedAt, ownerId, id);
+          if (
+            (record.issueLink ?? null) !== null ||
+            (record.attachments ?? []).length > 0
+          )
+            this.taskLinks.insertImported(
+              ownerId,
+              id,
+              record.issueLink ?? null,
+              record.attachments ?? [],
+              randomUUID,
+              now,
+            );
         }
         this.#database
           .prepare(
@@ -2937,7 +3240,65 @@ export class SuiteDatabase {
             record.sourceJson,
             now,
           );
+        if (record.kind === "task" && record.parentSourceId != null)
+          newChildren.push(record);
+        if (record.kind === "task") newTasks.push({ id, record });
         created++;
+      }
+      const addToBacklog = this.#database.prepare(
+        "INSERT INTO project_backlog_tasks (owner_id,project_id,task_id,position) SELECT ?,?,id,? FROM tasks WHERE owner_id=? AND id=? AND project_id=?",
+      );
+      for (const backlog of backlogs)
+        backlog.sourceTaskIds.forEach((sourceId, position) => {
+          const taskId = targets.get(`task:${sourceId}`);
+          if (taskId === undefined) throw new Error("IMPORT_REFERENCE_MISSING");
+          if (
+            addToBacklog.run(
+              ownerId,
+              backlog.projectId,
+              position,
+              ownerId,
+              taskId,
+              backlog.projectId,
+            ).changes !== 1
+          )
+            throw new Error("IMPORT_REFERENCE_MISSING");
+        });
+      for (const child of newChildren.toSorted(
+        (left, right) => (left.childIndex ?? 0) - (right.childIndex ?? 0),
+      )) {
+        const taskId = targets.get(`task:${child.sourceId}`);
+        const parentId = targets.get(`task:${child.parentSourceId ?? ""}`);
+        if (taskId === undefined || parentId === undefined)
+          throw new Error("IMPORT_REFERENCE_MISSING");
+        const moved = this.taskHierarchy.move({
+          ownerId,
+          taskId,
+          parentId,
+          expectedRevision: 1,
+          now,
+        });
+        if (moved.kind !== "moved") throw new Error("IMPORT_HIERARCHY_INVALID");
+      }
+      // Archive after the hierarchy exists: archived rows are read-only.
+      for (const { id, record } of newTasks) {
+        if (
+          (record.review ?? []).length > 0 ||
+          (record.historicalReferences ?? []).length > 0 ||
+          record.archived === true
+        )
+          this.taskArchive.recordImportProvenance(
+            ownerId,
+            id,
+            {
+              sourceStore: record.archiveStore ?? "task",
+              review: record.review ?? [],
+              historicalReferences: record.historicalReferences ?? [],
+            },
+            now,
+          );
+        if (record.archived === true)
+          this.taskArchive.markImportedArchived(ownerId, id, now);
       }
       this.#database.exec("COMMIT;");
       return { created, existing };
@@ -2965,6 +3326,7 @@ export class SuiteDatabase {
         TaskRecord,
         | "title"
         | "plannedStart"
+        | "plannedDay"
         | "deadlineDate"
         | "deadlineAt"
         | "projectId"
@@ -3033,6 +3395,9 @@ export class SuiteDatabase {
         deadlineAt: task.deadlineAt ?? null,
         projectId: task.projectId ?? null,
         tagIds: task.tagIds ?? [],
+        plannedDay: task.plannedDay ?? null,
+        startReminder: task.startReminder ?? { kind: "default" },
+        deadlineReminderMinutes: task.deadlineReminderMinutes ?? null,
       };
       this.#database
         .prepare(
@@ -3055,6 +3420,11 @@ export class SuiteDatabase {
           created.deadlineAt ?? null,
           created.estimateMinutes,
         );
+      writeTaskPlanning(this.#database, ownerId, created.id, {
+        plannedDay: created.plannedDay ?? null,
+        startReminder: created.startReminder ?? { kind: "default" },
+        deadlineReminderMinutes: created.deadlineReminderMinutes ?? null,
+      });
       const initialFieldVersion = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id, field, version) VALUES (?, ?, 1)",
       );
@@ -3109,7 +3479,7 @@ export class SuiteDatabase {
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
                 completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
-         FROM tasks WHERE owner_id = ? AND deleted_at IS NULL
+         FROM tasks WHERE owner_id = ? AND deleted_at IS NULL AND archived_at IS NULL
          ORDER BY created_at DESC, id DESC`,
       )
       .all(ownerId) as unknown as readonly {
@@ -3217,6 +3587,10 @@ export class SuiteDatabase {
     return rows.map((row) => this.#withTaskTags(this.#taskFromRow(row)));
   }
 
+  /**
+   * An active task. `includeDeleted` also returns soft-deleted and archived
+   * tasks; callers that write must check `deletedAt` and `archivedAt`.
+   */
   getTask(
     ownerId: string,
     taskId: string,
@@ -3227,7 +3601,7 @@ export class SuiteDatabase {
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
                 completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
          FROM tasks WHERE owner_id = ? AND id = ?
-           AND (? = 1 OR deleted_at IS NULL)`,
+           AND (? = 1 OR (deleted_at IS NULL AND archived_at IS NULL))`,
       )
       .get(ownerId, taskId, includeDeleted ? 1 : 0) as unknown as
       TaskRow | undefined;
@@ -3264,6 +3638,24 @@ export class SuiteDatabase {
         ...(patch.deadlineAt === undefined
           ? {}
           : { deadlineAt: patch.deadlineAt }),
+        // A planned day and an exact start are exclusive; setting one
+        // clears the other (ADR 0020).
+        ...(patch.plannedDay === undefined
+          ? patch.plannedStart == null
+            ? {}
+            : { plannedDay: null }
+          : {
+              plannedDay: patch.plannedDay,
+              ...(patch.plannedDay === null || patch.plannedStart !== undefined
+                ? {}
+                : { plannedStart: null }),
+            }),
+        ...(patch.startReminder === undefined
+          ? {}
+          : { startReminder: patch.startReminder }),
+        ...(patch.deadlineReminderMinutes === undefined
+          ? {}
+          : { deadlineReminderMinutes: patch.deadlineReminderMinutes }),
       }),
       now,
     );
@@ -3947,7 +4339,11 @@ export class SuiteDatabase {
     const rows = this.#database
       .prepare("SELECT field,version FROM task_field_versions WHERE task_id=?")
       .all(taskId) as unknown as readonly { field: string; version: number }[];
-    return Object.fromEntries(rows.map((row) => [row.field, row.version]));
+    const parent = this.taskHierarchy.parentVersion(ownerId, taskId);
+    return {
+      ...Object.fromEntries(rows.map((row) => [row.field, row.version])),
+      ...(parent === undefined ? {} : { parent }),
+    };
   }
 
   fullSyncSnapshot(ownerId: string): {
@@ -3985,19 +4381,32 @@ export class SuiteDatabase {
     ownerId: string,
     id: string,
     expectedRevision: number | null,
-    fields: {
-      readonly title?: string | undefined;
-      readonly archived?: boolean | undefined;
-    },
+    fields: OrganizationFields,
     now: string,
   ): ProjectRecord | TagRecord | undefined {
     const title = fields.title?.trim();
+    const color =
+      typeof fields.color === "string"
+        ? fields.color.toLowerCase()
+        : fields.color;
+    const projectOnly = [
+      fields.completed,
+      fields.hiddenFromMenu,
+      fields.backlogEnabled,
+    ];
     if (
       (title !== undefined &&
         (title.length === 0 ||
           title.length > (kind === "project" ? 240 : 100))) ||
       (fields.archived !== undefined && typeof fields.archived !== "boolean") ||
-      (title === undefined && fields.archived === undefined)
+      (fields.completed !== undefined &&
+        typeof fields.completed !== "boolean") ||
+      (fields.archived !== undefined && fields.completed !== undefined) ||
+      (kind === "tag" && projectOnly.some((value) => value !== undefined)) ||
+      (typeof color === "string" && !colorPattern.test(color)) ||
+      (typeof fields.icon === "string" &&
+        !organizationIconPattern.test(fields.icon)) ||
+      Object.values(fields).every((value) => value === undefined)
     )
       return undefined;
     this.#database.exec("SAVEPOINT organization_mutation;");
@@ -4010,7 +4419,8 @@ export class SuiteDatabase {
         (expectedRevision === null &&
           (current !== undefined ||
             title === undefined ||
-            fields.archived !== undefined)) ||
+            fields.archived !== undefined ||
+            fields.completed !== undefined)) ||
         (expectedRevision !== null && current?.revision !== expectedRevision)
       ) {
         this.#database.exec("RELEASE SAVEPOINT organization_mutation;");
@@ -4025,8 +4435,16 @@ export class SuiteDatabase {
           createdAt: now,
           updatedAt: now,
           archivedAt: null,
+          color: color ?? null,
+          icon: fields.icon ?? null,
+          position: this.#nextOrganizationPosition(kind, ownerId),
         };
-        if (kind === "project") this.createProject(record);
+        if (kind === "project")
+          this.createProject({
+            ...record,
+            hiddenFromMenu: fields.hiddenFromMenu ?? false,
+            backlogEnabled: fields.backlogEnabled ?? false,
+          });
         else
           this.createTag({
             ...record,
@@ -4035,27 +4453,56 @@ export class SuiteDatabase {
       } else {
         if (current === undefined) throw new Error("Organization disappeared");
         const nextTitle = title ?? current.title;
-        const archivedAt =
-          fields.archived === undefined
-            ? current.archivedAt
-            : fields.archived
-              ? (current.archivedAt ?? now)
-              : null;
-        if (kind === "project") {
+        let archivedAt = current.archivedAt;
+        let completedAt = "completedAt" in current ? current.completedAt : null;
+        if (fields.archived === true) archivedAt = current.archivedAt ?? now;
+        // Restoring an archive also reopens a completed project (SP 19.1.0).
+        if (fields.archived === false || fields.completed === false) {
+          archivedAt = null;
+          completedAt = null;
+        }
+        if (fields.completed === true) {
+          completedAt = completedAt ?? now;
+          archivedAt = current.archivedAt ?? now;
+        }
+        const nextColor = color === undefined ? current.color : color;
+        const nextIcon = fields.icon === undefined ? current.icon : fields.icon;
+        if (kind === "project" && "completedAt" in current) {
           this.#database
             .prepare(
-              "UPDATE projects SET title=?, archived_at=?, revision=revision+1, updated_at=? WHERE owner_id=? AND id=? AND revision=?",
+              "UPDATE projects SET title=?, archived_at=?, completed_at=?, color=?, icon=?, hidden_from_menu=?, backlog_enabled=?, revision=revision+1, updated_at=? WHERE owner_id=? AND id=? AND revision=?",
             )
-            .run(nextTitle, archivedAt, now, ownerId, id, expectedRevision);
+            .run(
+              nextTitle,
+              archivedAt,
+              completedAt,
+              nextColor,
+              nextIcon,
+              (fields.hiddenFromMenu ?? current.hiddenFromMenu) ? 1 : 0,
+              (fields.backlogEnabled ?? current.backlogEnabled) ? 1 : 0,
+              now,
+              ownerId,
+              id,
+              expectedRevision,
+            );
+          // Disabling a backlog returns its tasks to the regular list (SP 19.1.0).
+          if (fields.backlogEnabled === false)
+            this.#database
+              .prepare(
+                "DELETE FROM project_backlog_tasks WHERE owner_id=? AND project_id=?",
+              )
+              .run(ownerId, id);
         } else {
           this.#database
             .prepare(
-              "UPDATE tags SET display_name=?, normalized_name=?, archived_at=?, revision=revision+1, updated_at=? WHERE owner_id=? AND id=? AND revision=?",
+              "UPDATE tags SET display_name=?, normalized_name=?, archived_at=?, color=?, icon=?, revision=revision+1, updated_at=? WHERE owner_id=? AND id=? AND revision=?",
             )
             .run(
               nextTitle,
               nextTitle.normalize("NFKC").toLocaleLowerCase(),
               archivedAt,
+              nextColor,
+              nextIcon,
               now,
               ownerId,
               id,
@@ -4086,10 +4533,148 @@ export class SuiteDatabase {
     }
   }
 
-  createProject(record: ProjectRecord): void {
+  /**
+   * Replaces the owner's complete project or tag order. Every record must be
+   * listed with its current revision; only moved records gain a revision.
+   */
+  reorderOrganization(
+    kind: "project" | "tag",
+    ownerId: string,
+    items: readonly { readonly id: string; readonly revision: number }[],
+    now: string,
+  ): readonly (ProjectRecord | TagRecord)[] | undefined {
+    this.#database.exec("SAVEPOINT organization_order;");
+    try {
+      const current: readonly (ProjectRecord | TagRecord)[] =
+        kind === "project"
+          ? this.listProjects(ownerId)
+          : this.listTags(ownerId);
+      if (
+        current.length !== items.length ||
+        new Set(items.map(({ id }) => id)).size !== items.length ||
+        items.some(
+          (item) =>
+            current.find(({ id }) => id === item.id)?.revision !==
+            item.revision,
+        )
+      ) {
+        this.#database.exec("RELEASE SAVEPOINT organization_order;");
+        return undefined;
+      }
+      const update = this.#database.prepare(
+        `UPDATE ${kind === "project" ? "projects" : "tags"} SET position=?, revision=revision+1, updated_at=? WHERE owner_id=? AND id=?`,
+      );
+      items.forEach((item, position) => {
+        const before = current.find(({ id }) => id === item.id);
+        if (before === undefined || before.position === position) return;
+        update.run(position, now, ownerId, item.id);
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          kind,
+          item.id,
+          "upsert",
+          before.revision + 1,
+          now,
+        );
+      });
+      const result =
+        kind === "project"
+          ? this.listProjects(ownerId)
+          : this.listTags(ownerId);
+      this.#database.exec("RELEASE SAVEPOINT organization_order;");
+      return result;
+    } catch (error) {
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT organization_order; RELEASE SAVEPOINT organization_order;",
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Moves one active task of an unarchived, backlog-enabled project into or out
+   * of that project's backlog. Membership belongs to the project record.
+   */
+  setProjectBacklog(
+    ownerId: string,
+    projectId: string,
+    expectedRevision: number,
+    taskId: string,
+    inBacklog: boolean,
+    now: string,
+  ):
+    | { readonly kind: "applied"; readonly project: ProjectRecord }
+    | { readonly kind: "conflict" | "invalid" } {
+    this.#database.exec("SAVEPOINT project_backlog;");
+    try {
+      const project = this.#project(ownerId, projectId);
+      if (project?.revision !== expectedRevision) {
+        this.#database.exec("RELEASE SAVEPOINT project_backlog;");
+        return { kind: "conflict" };
+      }
+      const task = this.getTask(ownerId, taskId);
+      if (
+        !project.backlogEnabled ||
+        project.archivedAt !== null ||
+        task?.projectId !== projectId ||
+        project.backlogTaskIds.includes(taskId) === inBacklog
+      ) {
+        this.#database.exec("RELEASE SAVEPOINT project_backlog;");
+        return { kind: "invalid" };
+      }
+      if (inBacklog)
+        this.#database
+          .prepare(
+            "INSERT INTO project_backlog_tasks (owner_id,project_id,task_id,position) VALUES (?,?,?,(SELECT coalesce(max(position)+1,0) FROM project_backlog_tasks WHERE owner_id=? AND project_id=?)) ON CONFLICT(task_id) DO UPDATE SET project_id=excluded.project_id, position=excluded.position",
+          )
+          .run(ownerId, projectId, taskId, ownerId, projectId);
+      else
+        this.#database
+          .prepare(
+            "DELETE FROM project_backlog_tasks WHERE owner_id=? AND task_id=?",
+          )
+          .run(ownerId, taskId);
+      this.#database
+        .prepare(
+          "UPDATE projects SET revision=revision+1, updated_at=? WHERE owner_id=? AND id=?",
+        )
+        .run(now, ownerId, projectId);
+      const updated = this.#project(ownerId, projectId);
+      if (updated === undefined) throw new Error("Backlog project missing");
+      this.#appendSyncChangeInTransaction(
+        ownerId,
+        "project",
+        projectId,
+        "upsert",
+        updated.revision,
+        now,
+      );
+      this.#database.exec("RELEASE SAVEPOINT project_backlog;");
+      return { kind: "applied", project: updated };
+    } catch (error) {
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT project_backlog; RELEASE SAVEPOINT project_backlog;",
+      );
+      throw error;
+    }
+  }
+
+  #nextOrganizationPosition(kind: "project" | "tag", ownerId: string): number {
+    return Number(
+      (
+        this.#database
+          .prepare(
+            `SELECT coalesce(max(position) + 1, 0) AS next FROM ${kind === "project" ? "projects" : "tags"} WHERE owner_id=?`,
+          )
+          .get(ownerId) as { next: unknown }
+      ).next,
+    );
+  }
+
+  createProject(record: ProjectCreateRecord): void {
     this.#database
       .prepare(
-        "INSERT INTO projects (id, owner_id, title, revision, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO projects (id, owner_id, title, revision, created_at, updated_at, archived_at, color, icon, position, hidden_from_menu, completed_at, backlog_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         record.id,
@@ -4099,6 +4684,13 @@ export class SuiteDatabase {
         record.createdAt,
         record.updatedAt,
         record.archivedAt,
+        record.color ?? null,
+        record.icon ?? null,
+        record.position ??
+          this.#nextOrganizationPosition("project", record.ownerId),
+        record.hiddenFromMenu === true ? 1 : 0,
+        record.completedAt ?? null,
+        record.backlogEnabled === true ? 1 : 0,
       );
   }
   archiveProject(
@@ -4118,13 +4710,13 @@ export class SuiteDatabase {
     return (
       this.#database
         .prepare(
-          "SELECT * FROM projects WHERE owner_id = ? ORDER BY archived_at IS NOT NULL, title COLLATE NOCASE, id",
+          "SELECT * FROM projects WHERE owner_id = ? ORDER BY archived_at IS NOT NULL, position, title COLLATE NOCASE, id",
         )
         .all(ownerId) as unknown as readonly Record<
         string,
         string | number | null
       >[]
-    ).map((row) => this.#projectFromRow(row));
+    ).map((row) => this.#projectFromRow(row, this.#backlogTaskIds(ownerId)));
   }
   renameProject(
     ownerId: string,
@@ -4140,10 +4732,10 @@ export class SuiteDatabase {
       .run(title, now, ownerId, id, expectedRevision);
     return result.changes === 1 ? this.#project(ownerId, id) : undefined;
   }
-  createTag(record: TagRecord): void {
+  createTag(record: TagCreateRecord): void {
     this.#database
       .prepare(
-        "INSERT INTO tags (id, owner_id, display_name, normalized_name, revision, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO tags (id, owner_id, display_name, normalized_name, revision, created_at, updated_at, archived_at, color, icon, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         record.id,
@@ -4154,6 +4746,10 @@ export class SuiteDatabase {
         record.createdAt,
         record.updatedAt,
         record.archivedAt,
+        record.color ?? null,
+        record.icon ?? null,
+        record.position ??
+          this.#nextOrganizationPosition("tag", record.ownerId),
       );
   }
   archiveTag(
@@ -4173,16 +4769,13 @@ export class SuiteDatabase {
     return (
       this.#database
         .prepare(
-          "SELECT * FROM tags WHERE owner_id=? ORDER BY archived_at IS NOT NULL,display_name COLLATE NOCASE,id",
+          "SELECT * FROM tags WHERE owner_id=? ORDER BY archived_at IS NOT NULL,position,display_name COLLATE NOCASE,id",
         )
         .all(ownerId) as unknown as readonly Record<
         string,
         string | number | null
       >[]
-    ).map((row) => ({
-      ...this.#projectFromRow({ ...row, title: String(row.display_name) }),
-      normalizedName: String(row.normalized_name),
-    }));
+    ).map((row) => this.#tagFromRow(row));
   }
   renameTag(
     ownerId: string,
@@ -4223,7 +4816,7 @@ export class SuiteDatabase {
       }
       const changed = this.#database
         .prepare(
-          "UPDATE tasks SET project_id=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL",
+          "UPDATE tasks SET project_id=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL AND archived_at IS NULL",
         )
         .run(projectId, now, ownerId, taskId, expectedRevision).changes;
       if (changed !== 1) {
@@ -4245,6 +4838,34 @@ export class SuiteDatabase {
         task.revision,
         now,
       );
+      // Leaving a project also leaves that project's backlog.
+      const backlog = this.#database
+        .prepare(
+          "SELECT project_id FROM project_backlog_tasks WHERE owner_id=? AND task_id=?",
+        )
+        .get(ownerId, taskId) as { project_id: string } | undefined;
+      if (backlog !== undefined && backlog.project_id !== projectId) {
+        this.#database
+          .prepare(
+            "DELETE FROM project_backlog_tasks WHERE owner_id=? AND task_id=?",
+          )
+          .run(ownerId, taskId);
+        this.#database
+          .prepare(
+            "UPDATE projects SET revision=revision+1, updated_at=? WHERE owner_id=? AND id=?",
+          )
+          .run(now, ownerId, backlog.project_id);
+        const previous = this.#project(ownerId, backlog.project_id);
+        if (previous !== undefined)
+          this.#appendSyncChangeInTransaction(
+            ownerId,
+            "project",
+            previous.id,
+            "upsert",
+            previous.revision,
+            now,
+          );
+      }
       this.#database.exec("RELEASE SAVEPOINT task_project;");
       return task;
     } catch (error) {
@@ -5411,6 +6032,26 @@ export class SuiteDatabase {
         this.#database.exec("COMMIT;");
         return { kind: "conflict", fields: ["task"] };
       }
+      // Archived history is read-only (ADR 0022): an offline edit queued
+      // before the archive becomes a visible, replay-stable conflict.
+      if (task.archivedAt != null) {
+        this.#database
+          .prepare(
+            "INSERT INTO sync_operation_outcomes (owner_id,client_id,operation_id,request_hash,state,entity_id,revision,conflict_fields,created_at) VALUES (?,?,?,?, 'conflict',?,?,?,?)",
+          )
+          .run(
+            input.ownerId,
+            input.clientId,
+            input.operationId,
+            input.requestHash,
+            input.taskId,
+            task.revision,
+            JSON.stringify(["archivedAt"]),
+            input.now,
+          );
+        this.#database.exec("COMMIT;");
+        return { kind: "conflict", fields: ["archivedAt"], task };
+      }
       const fields = Object.keys(
         input.patch,
       ) as (keyof typeof input.baseVersions)[];
@@ -5725,9 +6366,13 @@ export class SuiteDatabase {
         : this.getActiveSession(input.ownerId);
       if (
         task?.revision !== input.baseRevision ||
+        task.archivedAt != null ||
         (input.restore ? task.deletedAt === null : task.deletedAt !== null) ||
         (activeSession?.endedAt === null &&
-          activeSession.taskId === input.taskId)
+          activeSession.taskId === input.taskId) ||
+        (!input.restore &&
+          this.taskHierarchy.blockedChildIds(input.ownerId, input.taskId)
+            .length > 0)
       ) {
         this.#database
           .prepare(
@@ -5759,6 +6404,12 @@ export class SuiteDatabase {
           input.taskId,
           task.revision,
         );
+      this.#applyHierarchyLifecycle(
+        input.ownerId,
+        task,
+        input.restore ? null : input.now,
+        input.now,
+      );
       const next = this.getTask(input.ownerId, input.taskId, true);
       if (next === undefined) throw new Error("Deleted task disappeared");
       this.#database
@@ -5803,6 +6454,7 @@ export class SuiteDatabase {
       const current = this.getTask(ownerId, taskId, true);
       if (
         current === undefined ||
+        current.archivedAt != null ||
         (requireDeleted
           ? current.deletedAt === null
           : current.deletedAt !== null)
@@ -5814,11 +6466,25 @@ export class SuiteDatabase {
         this.#database.exec("RELEASE SAVEPOINT conditional_task;");
         return { kind: "precondition-failed", task: current };
       }
+      const updated = update(current);
       const next = {
-        ...update(current),
+        ...updated,
+        // Deadline reminders need a timed deadline; clearing or changing the
+        // deadline to a date removes the reminder, as in the source app.
+        deadlineReminderMinutes:
+          (updated.deadlineAt ?? null) === null
+            ? null
+            : (updated.deadlineReminderMinutes ?? null),
         revision: current.revision + 1,
         updatedAt: now,
       };
+      // Release exclusive planning columns so the consistency triggers see
+      // only the final state after both updates below.
+      writeTaskPlanning(this.#database, ownerId, taskId, {
+        ...readTaskPlanning(this.#database, ownerId, taskId),
+        plannedDay: null,
+        deadlineReminderMinutes: null,
+      });
       const changed = this.#database
         .prepare(
           `UPDATE tasks SET title = ?, notes = ?, status = ?, revision = ?,
@@ -5843,6 +6509,11 @@ export class SuiteDatabase {
           expectedRevision,
         ).changes;
       if (changed !== 1) throw new Error("Conditional task update was lost");
+      writeTaskPlanning(this.#database, ownerId, taskId, {
+        plannedDay: next.plannedDay ?? null,
+        startReminder: next.startReminder ?? { kind: "default" },
+        deadlineReminderMinutes: next.deadlineReminderMinutes,
+      });
       const fieldVersions = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
       );
@@ -5860,6 +6531,7 @@ export class SuiteDatabase {
         current.deadlineAt !== next.deadlineAt
       )
         fieldVersions.run(taskId, "deadline", next.revision);
+      this.#applyHierarchyLifecycle(ownerId, current, next.deletedAt, now);
       this.#appendSyncChangeInTransaction(
         ownerId,
         "task",
@@ -5869,13 +6541,34 @@ export class SuiteDatabase {
         now,
       );
       this.#database.exec("RELEASE SAVEPOINT conditional_task;");
-      return { kind: "updated", task: next };
+      return {
+        kind: "updated",
+        task: this.getTask(ownerId, taskId, true) ?? next,
+      };
     } catch (error: unknown) {
       this.#database.exec(
         "ROLLBACK TO SAVEPOINT conditional_task; RELEASE SAVEPOINT conditional_task;",
       );
       throw error;
     }
+  }
+
+  /** Soft-delete cascades to children; restore brings back co-deleted children. */
+  #applyHierarchyLifecycle(
+    ownerId: string,
+    before: TaskRecord,
+    deletedAt: string | null,
+    now: string,
+  ): void {
+    if (before.deletedAt === null && deletedAt !== null)
+      this.taskHierarchy.cascadeDelete(ownerId, before.id, deletedAt, now);
+    else if (before.deletedAt !== null && deletedAt === null)
+      this.taskHierarchy.afterRestore(
+        ownerId,
+        before.id,
+        before.deletedAt,
+        now,
+      );
   }
 
   #findTask(ownerId: string, taskId: string): TaskRecord | undefined {
@@ -5942,9 +6635,17 @@ export class SuiteDatabase {
 
   #withTaskTags(task: TaskRecord): TaskRecord {
     const project = this.#database
-      .prepare("SELECT project_id FROM tasks WHERE owner_id = ? AND id = ?")
+      .prepare(
+        "SELECT project_id, parent_id, child_position, archived_at FROM tasks WHERE owner_id = ? AND id = ?",
+      )
       .get(task.ownerId, task.id) as unknown as
-      { project_id: string | null } | undefined;
+      | {
+          project_id: string | null;
+          parent_id: string | null;
+          child_position: number | null;
+          archived_at: string | null;
+        }
+      | undefined;
     const tags = this.#database
       .prepare("SELECT tag_id FROM task_tags WHERE task_id = ? ORDER BY tag_id")
       .all(task.id) as unknown as readonly { tag_id: string }[];
@@ -5952,6 +6653,10 @@ export class SuiteDatabase {
       ...task,
       projectId: project?.project_id ?? null,
       tagIds: tags.map((tag) => tag.tag_id),
+      ...readTaskPlanning(this.#database, task.ownerId, task.id),
+      parentId: project?.parent_id ?? null,
+      childPosition: project?.child_position ?? null,
+      archivedAt: project?.archived_at ?? null,
     };
   }
 
@@ -5960,7 +6665,34 @@ export class SuiteDatabase {
       .prepare("SELECT * FROM projects WHERE owner_id = ? AND id = ?")
       .get(ownerId, id) as unknown as
       Record<string, string | number | null> | undefined;
-    return row === undefined ? undefined : this.#projectFromRow(row);
+    return row === undefined
+      ? undefined
+      : this.#projectFromRow(row, this.#backlogTaskIds(ownerId, id));
+  }
+  /** Backlog task IDs by project, excluding deleted or reassigned tasks. */
+  #backlogTaskIds(
+    ownerId: string,
+    projectId?: string,
+  ): ReadonlyMap<string, readonly string[]> {
+    const rows = this.#database
+      .prepare(
+        `SELECT b.project_id, b.task_id FROM project_backlog_tasks b
+         JOIN tasks t ON t.id = b.task_id AND t.owner_id = b.owner_id
+         WHERE b.owner_id = ? AND t.deleted_at IS NULL AND t.archived_at IS NULL
+           AND t.project_id = b.project_id
+           ${projectId === undefined ? "" : "AND b.project_id = ?"}
+         ORDER BY b.project_id, b.position, b.task_id`,
+      )
+      .all(
+        ...(projectId === undefined ? [ownerId] : [ownerId, projectId]),
+      ) as unknown as readonly { project_id: string; task_id: string }[];
+    const grouped = new Map<string, string[]>();
+    for (const row of rows)
+      grouped.set(row.project_id, [
+        ...(grouped.get(row.project_id) ?? []),
+        row.task_id,
+      ]);
+    return grouped;
   }
   #templateFromRow(
     row: Record<string, string | number | null>,
@@ -6887,15 +7619,39 @@ export class SuiteDatabase {
       createdAt: String(row.created_at),
     };
   }
-  #projectFromRow(row: Record<string, string | number | null>): ProjectRecord {
+  #organizationFromRow(
+    row: Record<string, string | number | null>,
+    title: string,
+  ): Omit<TagRecord, "normalizedName"> {
     return {
       id: String(row.id),
       ownerId: String(row.owner_id),
-      title: String(row.title),
+      title,
       revision: Number(row.revision),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       archivedAt: row.archived_at === null ? null : String(row.archived_at),
+      color: row.color == null ? null : String(row.color),
+      icon: row.icon == null ? null : String(row.icon),
+      position: Number(row.position ?? 0),
+    };
+  }
+  #projectFromRow(
+    row: Record<string, string | number | null>,
+    backlog: ReadonlyMap<string, readonly string[]>,
+  ): ProjectRecord {
+    return {
+      ...this.#organizationFromRow(row, String(row.title)),
+      hiddenFromMenu: Number(row.hidden_from_menu) === 1,
+      completedAt: row.completed_at == null ? null : String(row.completed_at),
+      backlogEnabled: Number(row.backlog_enabled) === 1,
+      backlogTaskIds: backlog.get(String(row.id)) ?? [],
+    };
+  }
+  #tagFromRow(row: Record<string, string | number | null>): TagRecord {
+    return {
+      ...this.#organizationFromRow(row, String(row.display_name)),
+      normalizedName: String(row.normalized_name),
     };
   }
   #tag(ownerId: string, id: string): TagRecord | undefined {
@@ -6903,12 +7659,7 @@ export class SuiteDatabase {
       .prepare("SELECT * FROM tags WHERE owner_id=? AND id=?")
       .get(ownerId, id) as unknown as
       Record<string, string | number | null> | undefined;
-    return row === undefined
-      ? undefined
-      : {
-          ...this.#projectFromRow({ ...row, title: String(row.display_name) }),
-          normalizedName: String(row.normalized_name),
-        };
+    return row === undefined ? undefined : this.#tagFromRow(row);
   }
 
   #migrate(): void {

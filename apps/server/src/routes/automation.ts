@@ -1,6 +1,8 @@
+import { planningPatch, planningPatchProblem } from "../task-planning.ts";
 import { readDayPlan } from "../day-plan.ts";
 import { readNotificationStatus } from "../notification-status.ts";
-import { StructuredCaptureError } from "@suite/domain";
+import { StructuredCaptureError, validateTaskParent } from "@suite/domain";
+import { hierarchyViolationError } from "./task-hierarchy.ts";
 import { createCapturedTask, resolveTaskCapture } from "../task-capture.ts";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -17,7 +19,9 @@ import {
   automationConfirmRequestSchema,
   automationFocusCommandInputSchema,
   plannerWindowSchema,
+  taskLinksResourceInputSchema,
   templateSearchRequestSchema,
+  taskHistoryQuerySchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -32,6 +36,25 @@ import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import type { SuiteDatabase } from "@suite/persistence";
 import {
+  confirmOrganizationParity,
+  isOrganizationParityCommand,
+  organizationFieldsFor,
+  organizationSummary,
+  previewOrganizationParity,
+} from "./automation-organization-parity.ts";
+import {
+  confirmTaskLinks,
+  isTaskLinkCommand,
+  previewTaskLinks,
+} from "./automation-task-links.ts";
+import { taskLinksResponse } from "./task-links.ts";
+import {
+  confirmTaskArchive,
+  isTaskArchiveCommand,
+  previewTaskArchive,
+} from "./automation-task-archive.ts";
+import { taskHistoryBody } from "./task-archive.ts";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -42,6 +65,7 @@ import {
   taskResponse,
   projectResponse,
   tagResponse,
+  noteResponse,
   calendarEventResponse,
   templateResponse,
   templateBlueprintResponse,
@@ -138,8 +162,10 @@ export const handleAutomation: RouteHandler = async (
   const { stores: database, auth, baikal: connector, sessionClock } = ctx;
   const method = request.method ?? "GET";
   const deletionBlocked = (ownerId: string, taskId: string): boolean => {
+    // Deleting a parent also deletes its active children (ADR 0018).
+    const scope = database.taskHierarchy.deletionScope(ownerId, taskId);
     const active = database.getActiveSession(ownerId);
-    if (active?.endedAt === null && active.taskId === taskId) {
+    if (active?.endedAt === null && scope.includes(active.taskId)) {
       sendError(
         response,
         409,
@@ -148,7 +174,11 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
-    if (database.getTaskCalendarBlock(ownerId, taskId) !== undefined) {
+    if (
+      scope.some(
+        (id) => database.getTaskCalendarBlock(ownerId, id) !== undefined,
+      )
+    ) {
       sendError(
         response,
         409,
@@ -396,13 +426,45 @@ export const handleAutomation: RouteHandler = async (
       body = {
         tasks: database.listDeletedTasks(token.ownerId).map(taskResponse),
       };
-    else if (resource === "projects.list")
+    else if (resource === "tasks.history") {
+      const input = taskHistoryQuerySchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      body = input.success
+        ? taskHistoryBody(database, token.ownerId, input.data)
+        : undefined;
+      if (body === undefined) {
+        sendError(
+          response,
+          400,
+          "INVALID_HISTORY_QUERY",
+          "History search, cursor or limit is invalid",
+        );
+        return true;
+      }
+    } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
       };
     else if (resource === "tags.list")
       body = { tags: database.listTags(token.ownerId).map(tagResponse) };
-    else if (resource === "templates.list") {
+    else if (resource === "notes.list")
+      body = { notes: database.notes.list(token.ownerId).map(noteResponse) };
+    else if (resource === "task_links.get") {
+      const input = taskLinksResourceInputSchema.safeParse({
+        taskId: url.searchParams.get("taskId"),
+      });
+      if (!input.success) {
+        sendError(response, 400, "INVALID_TASK_LINKS", "A task id is required");
+        return true;
+      }
+      const links = database.taskLinks.get(token.ownerId, input.data.taskId);
+      if (links === undefined) {
+        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+        return true;
+      }
+      body = taskLinksResponse(links);
+    } else if (resource === "templates.list") {
       const query = templateSearchRequestSchema.safeParse({
         query: url.searchParams.get("query") ?? "",
         includeArchived: url.searchParams.get("includeArchived") === "true",
@@ -593,6 +655,9 @@ export const handleAutomation: RouteHandler = async (
         | "template_set"
         | "tag"
         | "project"
+        | "note"
+        | "task_attachment"
+        | "task_issue_link"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -610,6 +675,9 @@ export const handleAutomation: RouteHandler = async (
         | "template_set"
         | "tag"
         | "project"
+        | "note"
+        | "task_attachment"
+        | "task_issue_link"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -791,12 +859,154 @@ export const handleAutomation: RouteHandler = async (
           entityId: input.id,
           revision: current.revision,
         });
-      taskSummary =
-        input.action === "create"
-          ? `Create ${kind} "${input.title}"`
-          : input.action === "rename"
-            ? `Rename ${kind} "${current?.title ?? ""}" to "${input.title}"`
-            : `${input.action === "archive" ? "Archive" : "Restore"} ${kind} "${current?.title ?? ""}"; task assignments are retained`;
+      taskSummary = organizationSummary(kind, input, current?.title ?? "");
+    } else if (isOrganizationParityCommand(command)) {
+      const planned = previewOrganizationParity(
+        database,
+        token.ownerId,
+        command,
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isTaskArchiveCommand(command)) {
+      // ADR 0022: freezes the parent and every child the archive moves.
+      const planned = previewTaskArchive(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (command.operation === "tasks.hierarchy") {
+      // ADR 0018: the preview freezes the task, the target parent and, for a
+      // reorder, every child revision; confirmation fails if any changed.
+      const input = command.input;
+      const reject = (status: number, code: string, message: string) => {
+        sendError(response, status, code, message);
+        return true;
+      };
+      if (input.action === "move") {
+        const task = database.getTask(token.ownerId, input.taskId);
+        if (task?.revision !== input.expectedRevision)
+          return reject(
+            412,
+            "REVISION_CONFLICT",
+            "Task changed or is unavailable",
+          );
+        const parent =
+          input.parentId === null
+            ? undefined
+            : database.getTask(token.ownerId, input.parentId, true);
+        if (input.parentId !== null) {
+          const violation = validateTaskParent({
+            taskId: task.id,
+            parent,
+            taskHasActiveChildren:
+              database.taskHierarchy.childIds(token.ownerId, task.id).length >
+              0,
+          });
+          if (violation !== null) {
+            const error = hierarchyViolationError(violation);
+            return reject(error.status, error.code, error.message);
+          }
+        }
+        affected.push({ entityKind: "task", entityId: task.id });
+        baseRevisions.push({
+          entityKind: "task",
+          entityId: task.id,
+          revision: task.revision,
+        });
+        if (parent !== undefined) {
+          affected.push({ entityKind: "task", entityId: parent.id });
+          baseRevisions.push({
+            entityKind: "task",
+            entityId: parent.id,
+            revision: parent.revision,
+          });
+        }
+        taskSummary =
+          parent === undefined
+            ? `Make task "${task.title}" a top-level task`
+            : `Move task "${task.title}" under "${parent.title}" ${
+                input.index == null
+                  ? "as its last child"
+                  : `at child position ${String(input.index + 1)}`
+              }`;
+      } else {
+        const parent = database.getTask(token.ownerId, input.parentId);
+        if (parent?.revision !== input.expectedParentRevision)
+          return reject(
+            412,
+            "REVISION_CONFLICT",
+            "Parent task changed or is unavailable",
+          );
+        affected.push({ entityKind: "task", entityId: parent.id });
+        baseRevisions.push({
+          entityKind: "task",
+          entityId: parent.id,
+          revision: parent.revision,
+        });
+        if (input.action === "create_child") {
+          const violation = validateTaskParent({
+            taskId: "",
+            parent,
+            taskHasActiveChildren: false,
+          });
+          if (violation !== null) {
+            const error = hierarchyViolationError(violation);
+            return reject(error.status, error.code, error.message);
+          }
+          taskSummary = `Add child task "${input.task.title}" under "${parent.title}"`;
+        } else {
+          const children = database.taskHierarchy.listChildren(
+            token.ownerId,
+            parent.id,
+          );
+          if (children.length > 200)
+            return reject(
+              400,
+              "INVALID_CHILD_ORDER",
+              "Reorder at most 200 child tasks in one assistant action",
+            );
+          if (
+            input.items.length !== children.length ||
+            input.items.some(
+              (item) =>
+                children.find(({ id }) => id === item.id)?.revision !==
+                item.revision,
+            )
+          )
+            return reject(
+              412,
+              "TASK_CHILDREN_CHANGED",
+              "Child tasks changed or are unavailable",
+            );
+          for (const child of children) {
+            affected.push({ entityKind: "task", entityId: child.id });
+            baseRevisions.push({
+              entityKind: "task",
+              entityId: child.id,
+              revision: child.revision,
+            });
+          }
+          taskSummary = `Reorder all ${String(children.length)} child tasks of "${parent.title}"`;
+        }
+      }
+    } else if (isTaskLinkCommand(command)) {
+      const planned = previewTaskLinks(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
     } else if (
       command.operation === "tasks.assign_project" ||
       command.operation === "tasks.set_tags"
@@ -904,6 +1114,24 @@ export const handleAutomation: RouteHandler = async (
         deletionBlocked(token.ownerId, task.id)
       )
         return true;
+      const planningProblem =
+        command.operation === "tasks.update"
+          ? planningPatchProblem(
+              database,
+              token.ownerId,
+              task.id,
+              command.input.patch,
+            )
+          : undefined;
+      if (planningProblem !== undefined) {
+        sendError(
+          response,
+          planningProblem.status,
+          planningProblem.code,
+          planningProblem.message,
+        );
+        return true;
+      }
       taskSummary =
         command.operation === "tasks.delete"
           ? `Delete task "${task.title}"; it remains available in recovery`
@@ -1385,6 +1613,9 @@ export const handleAutomation: RouteHandler = async (
           .listProjects(token.ownerId)
           .find(({ id }) => id === entityId) ??
         database.listTags(token.ownerId).find(({ id }) => id === entityId) ??
+        database.notes.get(token.ownerId, entityId) ??
+        database.taskLinks.getAttachment(token.ownerId, entityId) ??
+        database.taskLinks.getIssueLink(token.ownerId, entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1541,9 +1772,7 @@ export const handleAutomation: RouteHandler = async (
           token.ownerId,
           input.id,
           input.action === "create" ? null : input.expectedRevision,
-          input.action === "create" || input.action === "rename"
-            ? { title: input.title }
-            : { archived: input.action === "archive" },
+          organizationFieldsFor(input),
           new Date().toISOString(),
         );
         if (record === undefined)
@@ -1552,6 +1781,134 @@ export const handleAutomation: RouteHandler = async (
           ? { tag: tagResponse(record) }
           : { project: projectResponse(record) };
       };
+    } else if (isOrganizationParityCommand(command)) {
+      const confirmation = confirmOrganizationParity(
+        database,
+        token.ownerId,
+        command,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isTaskArchiveCommand(command)) {
+      const confirmation = confirmTaskArchive(
+        database,
+        token.ownerId,
+        command,
+        Object.keys(preview.baseRevisions),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (command.operation === "tasks.hierarchy") {
+      const input = command.input;
+      applyLocalMutation = () => {
+        const now = new Date().toISOString();
+        const children = (parentId: string | null) =>
+          parentId === null
+            ? []
+            : database.taskHierarchy
+                .listChildren(token.ownerId, parentId)
+                .map(taskResponse);
+        const parentOf = (parentId: string | null) => {
+          const parent =
+            parentId === null
+              ? undefined
+              : database.getTask(token.ownerId, parentId);
+          return parent === undefined ? null : taskResponse(parent);
+        };
+        if (input.action === "reorder") {
+          const reordered = database.taskHierarchy.reorder({
+            ownerId: token.ownerId,
+            parentId: input.parentId,
+            items: input.items,
+            now,
+          });
+          if (reordered.kind !== "reordered")
+            throw new Error("Child tasks changed during atomic confirmation");
+          return {
+            hierarchy: {
+              task: null,
+              parent: parentOf(input.parentId),
+              children: children(input.parentId),
+            },
+            replayed: false,
+          };
+        }
+        if (input.action === "move") {
+          const moved = database.taskHierarchy.move({
+            ownerId: token.ownerId,
+            taskId: input.taskId,
+            parentId: input.parentId,
+            index: input.index ?? null,
+            expectedRevision: input.expectedRevision,
+            now,
+          });
+          if (moved.kind !== "moved")
+            throw new Error(
+              "Task hierarchy changed during atomic confirmation",
+            );
+          return {
+            hierarchy: {
+              task: taskResponse(moved.task),
+              parent: parentOf(input.parentId),
+              children: children(input.parentId),
+            },
+            replayed: false,
+          };
+        }
+        const created = database.taskHierarchy.createChild({
+          ownerId: token.ownerId,
+          parentId: input.parentId,
+          index: input.index ?? null,
+          now,
+          create: () =>
+            createCapturedTask(
+              database,
+              token.ownerId,
+              internalKey,
+              createHash("sha256").update(JSON.stringify(input)).digest("hex"),
+              input.task,
+              now,
+            ),
+        });
+        if (created.kind !== "created" && created.kind !== "replayed")
+          throw new Error("Child task could not be created atomically");
+        return {
+          hierarchy: {
+            task: taskResponse(created.task),
+            parent: parentOf(input.parentId),
+            children: children(input.parentId),
+          },
+          replayed: created.kind === "replayed",
+        };
+      };
+    } else if (isTaskLinkCommand(command)) {
+      const confirmation = confirmTaskLinks(database, token.ownerId, command);
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
     } else if (
       command.operation === "tasks.assign_project" ||
       command.operation === "tasks.set_tags"
@@ -1673,6 +2030,7 @@ export const handleAutomation: RouteHandler = async (
                   : deadline.kind === "date"
                     ? { deadlineDate: deadline.value, deadlineAt: null }
                     : { deadlineDate: null, deadlineAt: deadline.value }),
+              ...planningPatch(command.input.patch),
             },
             now,
           );

@@ -1,13 +1,21 @@
 import { PageHeader } from "../components/ui/page-header.tsx";
 import { DeadlineFields } from "../components/tasks/DeadlineFields.tsx";
-import type { SyntheticEvent } from "react";
+import type { ReactElement, SyntheticEvent } from "react";
+import { groupTaskHierarchy } from "@suite/domain";
+import {
+  TaskChildrenSection,
+  TaskPlacementControls,
+  type TaskHierarchyActions,
+} from "../components/tasks/TaskHierarchy.tsx";
 import type {
   BaikalStatusResponse,
   Project,
   Subtask,
   Tag,
   Task,
+  TaskPatchRequest,
 } from "@suite/contracts";
+import { TaskPlanningForm } from "../components/tasks/TaskPlanningForm.tsx";
 import { Field } from "../field.tsx";
 import { TimeBlockForm } from "../time-block-form.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -17,8 +25,10 @@ import { EmptyState } from "../components/ui/empty-state.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
+import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
+import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
 
-export interface TasksPageProps {
+export interface TasksPageProps extends TaskHierarchyActions {
   readonly tasks: readonly Task[];
   readonly visibleTasks: readonly Task[];
   readonly recovery: readonly Task[];
@@ -69,9 +79,26 @@ export interface TasksPageProps {
   ) => Promise<boolean>;
   readonly onRemoveTask: (task: Task) => Promise<void>;
   readonly onRecoverTask: (task: Task) => Promise<void>;
+  /** Moves a top-level task and its children to History (ADR 0022); online only. */
+  readonly onArchiveTask?: (task: Task) => Promise<void>;
+  /** Enables project/tag/note management when a session is available. */
+  readonly organization?: {
+    readonly csrfToken: string;
+    readonly online: boolean;
+    readonly onProjectsChange: (projects: readonly Project[]) => void;
+    readonly onTagsChange: (tags: readonly Tag[]) => void;
+  };
+  /** Owner planning zone for date-only plans (ADR 0020). */
+  readonly timeZone?: string;
+  readonly onSubmitTaskPlanning?: (
+    task: Task,
+    patch: TaskPatchRequest,
+  ) => Promise<void>;
 }
 
 export const TasksPage = ({
+  tasks,
+  organization,
   visibleTasks,
   recovery,
   projects,
@@ -100,7 +127,256 @@ export const TasksPage = ({
   onChangeTaskStatus,
   onRemoveTask,
   onRecoverTask,
+  onArchiveTask,
+  timeZone = "UTC",
+  onSubmitTaskPlanning,
+  onCreateChildTask,
+  onMoveTask,
 }: TasksPageProps) => {
+  const visibleIds = new Set(visibleTasks.map(({ id }) => id));
+  // Children render under a visible parent; a child whose parent is filtered
+  // out stays visible at top level with its placement shown.
+  const topLevel = visibleTasks.filter(
+    (task) => task.parentId == null || !visibleIds.has(task.parentId),
+  );
+  const { childrenByParent } = groupTaskHierarchy(visibleTasks);
+  const allChildren = groupTaskHierarchy(tasks).childrenByParent;
+  const titleById = new Map(tasks.map(({ id, title }) => [id, title]));
+  const parentCandidates = tasks.filter(
+    (task) => task.parentId == null && task.deletedAt == null,
+  );
+  const renderTask = (task: Task, siblings: readonly Task[]): ReactElement => (
+    <li
+      key={task.id}
+      className={[
+        task.status === "completed" ? "task--completed" : "",
+        task.parentId == null ? "" : "task--child",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <div className="task-heading">
+        <strong>{task.title}</strong>
+        <small>
+          {task.status === "completed" ? "Completed" : "Open"} · Revision{" "}
+          {task.revision}
+        </small>
+      </div>
+      {task.notes !== "" && <span>{task.notes}</span>}
+      {provenance[task.id] !== undefined && (
+        <p className="template-provenance">Created from a reusable template.</p>
+      )}
+      {task.plannedStart != null && (
+        <p className="planned-time">
+          Planned {new Date(task.plannedStart).toLocaleString()} ·{" "}
+          {task.estimateMinutes} minutes
+        </p>
+      )}
+      {task.plannedStart == null && task.plannedDay != null && (
+        <p className="planned-time">
+          Planned for {task.plannedDay} · no time set
+        </p>
+      )}
+      <form
+        className="task-edit"
+        onSubmit={(event) => void onSubmitTaskEdit(event, task)}
+      >
+        <Field
+          label="Title"
+          name="title"
+          autoComplete="off"
+          defaultValue={task.title}
+        />
+        <Field
+          label="Notes"
+          name="notes"
+          autoComplete="off"
+          defaultValue={task.notes}
+          required={false}
+        />
+        <label className="field">
+          <span>Estimate minutes</span>
+          <Input
+            name="estimateMinutes"
+            type="number"
+            min="1"
+            max="720"
+            defaultValue={task.estimateMinutes ?? ""}
+          />
+        </label>
+        <DeadlineFields
+          key={JSON.stringify(task.deadline)}
+          deadline={task.deadline}
+        />
+        <Button disabled={busy}>Save task</Button>
+      </form>
+      <TaskPlacementControls
+        task={task}
+        siblings={siblings}
+        parents={parentCandidates}
+        parentTitle={
+          task.parentId == null ? null : (titleById.get(task.parentId) ?? null)
+        }
+        hasChildren={(allChildren.get(task.id)?.length ?? 0) > 0}
+        busy={busy}
+        onMoveTask={onMoveTask}
+      />
+      <TimeBlockForm
+        task={task}
+        calendars={baikalCalendars}
+        busy={busy}
+        available={calendarActionsAvailable}
+        onSubmit={onSubmitTimeBlock}
+        onRemove={onRemoveTimeBlock}
+      />
+      {onSubmitTaskPlanning !== undefined && (
+        <TaskPlanningForm
+          key={`${task.id}:${String(task.revision)}`}
+          task={task}
+          timeZone={timeZone}
+          busy={busy}
+          available={calendarActionsAvailable}
+          onSubmit={onSubmitTaskPlanning}
+        />
+      )}
+      <form
+        className="task-edit"
+        onSubmit={(event) => void onSubmitTaskOrganization(event, task)}
+      >
+        <label className="field">
+          <span>Project</span>
+          <NativeSelect name="projectId" defaultValue={task.projectId ?? ""}>
+            <option value="">No project</option>
+            {projects
+              .filter((project) => project.archivedAt === null)
+              .map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.title}
+                </option>
+              ))}
+          </NativeSelect>
+        </label>
+        <fieldset>
+          <legend>Tags</legend>
+          {tags
+            .filter((tag) => tag.archivedAt === null)
+            .map((tag) => (
+              <label key={tag.id}>
+                <Checkbox
+                  name="tagIds"
+                  value={tag.id}
+                  defaultChecked={task.tagIds?.includes(tag.id) === true}
+                />
+                {tag.displayName}
+              </label>
+            ))}
+        </fieldset>
+        <Button disabled={busy}>Save organization</Button>
+      </form>
+      <div>
+        <strong>Checklist</strong>
+        <ul>
+          {(subtasks[task.id] ?? []).map((subtask, index, items) => (
+            <li key={subtask.id}>
+              {subtask.completed ? "✓" : "○"} {subtask.title}
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => void onChangeSubtask(subtask, "toggle")}
+              >
+                {subtask.completed ? "Reopen" : "Complete"}
+              </Button>
+              <Button
+                type="button"
+                disabled={busy || index === 0}
+                onClick={() => void onChangeSubtask(subtask, "up")}
+              >
+                Move up
+              </Button>
+              <Button
+                type="button"
+                disabled={busy || index === items.length - 1}
+                onClick={() => void onChangeSubtask(subtask, "down")}
+              >
+                Move down
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => void onChangeSubtask(subtask, "delete")}
+              >
+                Delete item
+              </Button>
+            </li>
+          ))}
+        </ul>
+        <form onSubmit={(event) => void onSubmitSubtask(event, task)}>
+          <Field label="New checklist item" name="title" autoComplete="off" />
+          <Button disabled={busy}>Add item</Button>
+        </form>
+      </div>
+      {task.parentId == null && (
+        <TaskChildrenSection
+          parent={task}
+          items={childrenByParent.get(task.id) ?? []}
+          allItems={allChildren.get(task.id) ?? []}
+          busy={busy}
+          renderChild={(child) =>
+            renderTask(child, allChildren.get(task.id) ?? [])
+          }
+          onCreateChildTask={onCreateChildTask}
+        />
+      )}
+      {organization !== undefined && (
+        <TaskLinksPanel
+          taskId={task.id}
+          csrfToken={organization.csrfToken}
+          online={organization.online}
+        />
+      )}
+      <div className="task-actions">
+        <Button
+          type="button"
+          disabled={busy}
+          onClick={() => void onSaveTaskAsTemplate(task)}
+        >
+          Save as template
+        </Button>
+        <Button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            void onChangeTaskStatus(
+              task,
+              task.status === "completed" ? "reopen" : "complete",
+            )
+          }
+        >
+          {task.status === "completed" ? "Reopen" : "Complete"}
+        </Button>
+        {onArchiveTask !== undefined && task.parentId == null && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy || organization?.online === false}
+            title="Move this task and its children to History"
+            onClick={() => void onArchiveTask(task)}
+          >
+            Archive
+          </Button>
+        )}
+        <Button
+          variant="destructive"
+          type="button"
+          disabled={busy}
+          onClick={() => void onRemoveTask(task)}
+        >
+          Delete
+        </Button>
+      </div>
+    </li>
+  );
   return (
     <>
       <PageHeader
@@ -130,6 +406,14 @@ export const TasksPage = ({
           </div>
         </CardContent>
       </Card>
+      {organization !== undefined && (
+        <OrganizationPanel
+          projects={projects}
+          tags={tags}
+          tasks={tasks}
+          {...organization}
+        />
+      )}
       <Card className="task-filter-bar" role="search" aria-label="Filter tasks">
         <CardContent className="flex flex-wrap items-end gap-2 pt-4">
           <label>
@@ -164,11 +448,16 @@ export const TasksPage = ({
               }
             >
               <option value="">All projects</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.title}
-                </option>
-              ))}
+              {projects
+                .filter(
+                  (project) =>
+                    !project.hiddenFromMenu || project.id === taskProjectFilter,
+                )
+                .map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.title}
+                  </option>
+                ))}
             </NativeSelect>
           </label>
           <label>
@@ -194,188 +483,14 @@ export const TasksPage = ({
         <EmptyState title="No tasks match these filters." />
       ) : (
         <ul className="tasks">
-          {visibleTasks.map((task) => (
-            <li
-              key={task.id}
-              className={task.status === "completed" ? "task--completed" : ""}
-            >
-              <div className="task-heading">
-                <strong>{task.title}</strong>
-                <small>
-                  {task.status === "completed" ? "Completed" : "Open"} ·
-                  Revision {task.revision}
-                </small>
-              </div>
-              {task.notes !== "" && <span>{task.notes}</span>}
-              {provenance[task.id] !== undefined && (
-                <p className="template-provenance">
-                  Created from a reusable template.
-                </p>
-              )}
-              {task.plannedStart != null && (
-                <p className="planned-time">
-                  Planned {new Date(task.plannedStart).toLocaleString()} ·{" "}
-                  {task.estimateMinutes} minutes
-                </p>
-              )}
-              <form
-                className="task-edit"
-                onSubmit={(event) => void onSubmitTaskEdit(event, task)}
-              >
-                <Field
-                  label="Title"
-                  name="title"
-                  autoComplete="off"
-                  defaultValue={task.title}
-                />
-                <Field
-                  label="Notes"
-                  name="notes"
-                  autoComplete="off"
-                  defaultValue={task.notes}
-                  required={false}
-                />
-                <label className="field">
-                  <span>Estimate minutes</span>
-                  <Input
-                    name="estimateMinutes"
-                    type="number"
-                    min="1"
-                    max="720"
-                    defaultValue={task.estimateMinutes ?? ""}
-                  />
-                </label>
-                <DeadlineFields
-                  key={JSON.stringify(task.deadline)}
-                  deadline={task.deadline}
-                />
-                <Button disabled={busy}>Save task</Button>
-              </form>
-              <TimeBlockForm
-                task={task}
-                calendars={baikalCalendars}
-                busy={busy}
-                available={calendarActionsAvailable}
-                onSubmit={onSubmitTimeBlock}
-                onRemove={onRemoveTimeBlock}
-              />
-              <form
-                className="task-edit"
-                onSubmit={(event) => void onSubmitTaskOrganization(event, task)}
-              >
-                <label className="field">
-                  <span>Project</span>
-                  <NativeSelect
-                    name="projectId"
-                    defaultValue={task.projectId ?? ""}
-                  >
-                    <option value="">No project</option>
-                    {projects
-                      .filter((project) => project.archivedAt === null)
-                      .map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.title}
-                        </option>
-                      ))}
-                  </NativeSelect>
-                </label>
-                <fieldset>
-                  <legend>Tags</legend>
-                  {tags
-                    .filter((tag) => tag.archivedAt === null)
-                    .map((tag) => (
-                      <label key={tag.id}>
-                        <Checkbox
-                          name="tagIds"
-                          value={tag.id}
-                          defaultChecked={
-                            task.tagIds?.includes(tag.id) === true
-                          }
-                        />
-                        {tag.displayName}
-                      </label>
-                    ))}
-                </fieldset>
-                <Button disabled={busy}>Save organization</Button>
-              </form>
-              <div>
-                <strong>Checklist</strong>
-                <ul>
-                  {(subtasks[task.id] ?? []).map((subtask, index, items) => (
-                    <li key={subtask.id}>
-                      {subtask.completed ? "✓" : "○"} {subtask.title}
-                      <Button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void onChangeSubtask(subtask, "toggle")}
-                      >
-                        {subtask.completed ? "Reopen" : "Complete"}
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={busy || index === 0}
-                        onClick={() => void onChangeSubtask(subtask, "up")}
-                      >
-                        Move up
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={busy || index === items.length - 1}
-                        onClick={() => void onChangeSubtask(subtask, "down")}
-                      >
-                        Move down
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        disabled={busy}
-                        onClick={() => void onChangeSubtask(subtask, "delete")}
-                      >
-                        Delete item
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-                <form onSubmit={(event) => void onSubmitSubtask(event, task)}>
-                  <Field
-                    label="New checklist item"
-                    name="title"
-                    autoComplete="off"
-                  />
-                  <Button disabled={busy}>Add item</Button>
-                </form>
-              </div>
-              <div className="task-actions">
-                <Button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void onSaveTaskAsTemplate(task)}
-                >
-                  Save as template
-                </Button>
-                <Button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    void onChangeTaskStatus(
-                      task,
-                      task.status === "completed" ? "reopen" : "complete",
-                    )
-                  }
-                >
-                  {task.status === "completed" ? "Reopen" : "Complete"}
-                </Button>
-                <Button
-                  variant="destructive"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void onRemoveTask(task)}
-                >
-                  Delete
-                </Button>
-              </div>
-            </li>
-          ))}
+          {topLevel.map((task) =>
+            renderTask(
+              task,
+              task.parentId == null
+                ? []
+                : (allChildren.get(task.parentId) ?? []),
+            ),
+          )}
         </ul>
       )}
       <Card className="recovery">
@@ -393,6 +508,14 @@ export const TasksPage = ({
               {recovery.map((task) => (
                 <li key={task.id}>
                   <strong>{task.title}</strong>
+                  {task.parentId != null && (
+                    <small>
+                      Child of{" "}
+                      {titleById.get(task.parentId) ?? "a deleted task"};
+                      restoring it alone makes it top-level if its parent is
+                      still deleted
+                    </small>
+                  )}
                   <Button
                     type="button"
                     disabled={busy}

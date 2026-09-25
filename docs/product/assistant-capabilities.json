@@ -97,17 +97,17 @@
       "catalog": ["tasks.create"],
       "status": "covered",
       "issue": 39,
-      "authority": "Preview resolves source input; caller idempotency key binds one creation.",
+      "authority": "Preview resolves source input, including planned day and reminder settings, and rejects a planned day with an exact start; caller idempotency key binds one creation.",
       "source": "apps/web/src/api.ts"
     },
     {
       "id": "tasks-edit",
-      "action": "Title, notes, dates and estimate edits",
+      "action": "Title, notes, dates, planned day, reminder and estimate edits",
       "webApi": ["patchTask"],
       "catalog": ["tasks.update"],
       "status": "covered",
       "issue": 39,
-      "authority": "Exact expected task revision; atomic mutation/audit/receipt. Calendar-linked scheduling restrictions still apply.",
+      "authority": "Exact expected task revision; atomic mutation/audit/receipt. Calendar-linked scheduling restrictions still apply: preview rejects a planned day while a calendar block exists and a deadline reminder without a timed deadline (ADR 0020).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -196,24 +196,62 @@
     },
     {
       "id": "organization-write",
-      "action": "Project/tag lifecycle and task assignment",
+      "action": "Project/tag lifecycle, appearance, order, backlog and task assignment",
       "webApi": [
         "createProject",
         "createTag",
         "patchProject",
         "patchTag",
+        "reorderProjects",
+        "reorderTags",
+        "setProjectBacklog",
         "assignTaskProject",
         "assignTaskTags"
       ],
       "catalog": [
         "projects.mutate",
+        "projects.reorder",
+        "projects.set_backlog",
         "tags.mutate",
+        "tags.reorder",
         "tasks.assign_project",
         "tasks.set_tags"
       ],
       "status": "covered",
       "issue": 55,
-      "authority": "Project/tag write scopes and task write scope; frozen revisions, explicit preview confirmation, atomic sync/audit/replay.",
+      "authority": "Project/tag write scopes and task write scope; frozen revisions (every record for reorder), explicit preview confirmation, atomic sync/audit/replay. Completion archives; restore/reopen clears both.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "notes",
+      "action": "Project, tag and standalone notes: create, edit, pin, reorder and delete",
+      "webApi": [
+        "getNotes",
+        "createNote",
+        "patchNote",
+        "deleteNote",
+        "reorderNotes"
+      ],
+      "catalog": ["notes.list", "notes.mutate"],
+      "status": "covered",
+      "issue": 28,
+      "authority": "Dedicated notes read/write scopes; owner-checked project/tag association, note revisions, complete-membership reorder and atomic audit/replay. Deletion is permanent and needs explicit approval. Notes are online-only.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "task-links",
+      "action": "Task attachments and imported issue links: read, add/edit/remove link and note attachments, remove an issue link",
+      "webApi": [
+        "getTaskLinks",
+        "createTaskAttachment",
+        "patchTaskAttachment",
+        "deleteTaskAttachment",
+        "deleteTaskIssueLink"
+      ],
+      "catalog": ["task_links.get", "task_links.mutate"],
+      "status": "covered",
+      "issue": 30,
+      "authority": "Dedicated task_links read/write scopes; owner-checked task, attachment and issue-link revisions with atomic audit/replay. Only http(s) links without credentials are stored as openable. Previews name hosts, not full addresses. No operation contacts an issue provider; refresh or write-back needs a fresh provider authorization that does not exist yet. Online-only.",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -230,6 +268,26 @@
       "status": "covered",
       "issue": 56,
       "authority": "Task read/write scopes, owner-scoped checklist and parent revisions; exact reorder membership; atomic mutation, sync and confirmation receipt. Explicit approval for deletion/reorder.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "task-hierarchy",
+      "action": "Create child tasks, move tasks between parents or to top level, reorder children",
+      "webApi": [],
+      "catalog": ["tasks.hierarchy"],
+      "status": "covered",
+      "issue": 27,
+      "authority": "tasks:write; the preview freezes the task, target parent and every reordered child revision, and rejects depth, cycle and deleted-parent targets. The browser writes through the sync outbox (task.move), not api.ts. Hierarchy reads come from tasks.list parentId/childPosition.",
+      "source": "packages/contracts/src/index.ts"
+    },
+    {
+      "id": "task-history",
+      "action": "Search archived task history, archive a top-level task with its children, restore an archived family",
+      "webApi": ["getTaskHistory", "archiveTask", "unarchiveTask"],
+      "catalog": ["tasks.history", "tasks.archive", "tasks.unarchive"],
+      "status": "covered",
+      "issue": 38,
+      "authority": "tasks:read for owner-scoped history search with read-only import provenance; tasks:write for archive and restore. The preview freezes the parent and every child it moves; a changed or added child makes confirmation stale. Online-only in the browser (ADR 0022).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -375,12 +433,12 @@
     },
     {
       "id": "future-parity",
-      "action": "Full hierarchy, archived history, recurrence and manual worklogs",
+      "action": "Recurrence and manual worklogs",
       "webApi": [],
       "catalog": [],
       "status": "future",
       "issue": 32,
-      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #27, #38, #41, #42.",
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #41, #42. Hierarchy (#27) and archived history (#38) have their own rows.",
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {

@@ -51,7 +51,8 @@ it("prepares exact core fields without retaining integration secrets", () => {
 it("blocks unsupported workflows without rounding estimates or inventing dates", () => {
   for (const extra of [
     { timeEstimate: 1 },
-    { dueDay: "2026-09-20" },
+    // Reminders need an exact start; date-only plans have no reminder time.
+    { dueDay: "2026-09-20", remindAt: 1700000000000 },
     { isDone: true },
     { attachments: [{ path: "file" }] },
     { remindAt: 1700000000000 },
@@ -68,29 +69,183 @@ it("blocks unsupported workflows without rounding estimates or inventing dates",
   }
 });
 
-it("does not reinterpret virtual Today views, project backlogs, or completed projects", () => {
-  for (const extra of [
-    { tag: state({ TODAY: { id: "TODAY", title: "Today" } }) },
-    {
-      project: state({
-        p: { id: "p", title: "Project", backlogTaskIds: ["t"] },
+it("keeps Today and board system tags out of ordinary tags", () => {
+  const prepare = (extra: Record<string, unknown>, task = {}) =>
+    prepareSuperProductivityImport(
+      JSON.stringify({
+        task: state({ t: { id: "t", title: "Task", ...task } }),
+        ...extra,
       }),
-    },
-    {
-      project: state({
-        p: { id: "p", title: "Project", isDone: true, doneOn: 1700000000000 },
+    );
+  // An empty Today view and unused markers are skipped with a notice.
+  const skipped = prepare({
+    tag: state({
+      TODAY: { id: "TODAY", title: "Today", taskIds: [] },
+      EM_URGENT: { id: "EM_URGENT", title: "urgent" },
+    }),
+  });
+  expect(skipped.report.canApply).toBe(true);
+  expect(skipped.records.filter(({ kind }) => kind === "tag")).toEqual([]);
+  expect(skipped.report.issues.map(({ code }) => code)).toEqual([
+    "configuration_not_imported",
+    "configuration_not_imported",
+  ]);
+  // Today's order and used priority markers need #29 / #63 first.
+  expect(
+    prepare({
+      tag: state({ TODAY: { id: "TODAY", title: "Today", taskIds: ["t"] } }),
+    }).report.canApply,
+  ).toBe(false);
+  expect(
+    prepare(
+      { tag: state({ EM_URGENT: { id: "EM_URGENT", title: "urgent" } }) },
+      { tagIds: ["EM_URGENT"] },
+    ).report.canApply,
+  ).toBe(false);
+});
+
+it("maps project lifecycle, appearance, backlog, menu order and notes", () => {
+  const { report, records } = prepareSuperProductivityImport(
+    JSON.stringify({
+      task: state({
+        t1: { id: "t1", title: "Active", projectId: "b" },
+        t2: { id: "t2", title: "Later", projectId: "b" },
       }),
-    },
-  ]) {
-    expect(
-      prepareSuperProductivityImport(
-        JSON.stringify({
-          task: state({ t: { id: "t", title: "Task" } }),
-          ...extra,
+      project: state({
+        a: {
+          id: "a",
+          title: "Done project",
+          isDone: true,
+          doneOn: 1700000000000,
+          isArchived: true,
+          icon: "work",
+          theme: { primary: "#AABBCC", backgroundImageDark: "x.png" },
+          noteIds: ["n2", "missing-note"],
+        },
+        b: {
+          id: "b",
+          title: "Backlog project",
+          isEnableBacklog: true,
+          backlogTaskIds: ["t2", "missing-task"],
+          isHiddenFromMenu: true,
+          noteIds: ["n1"],
+        },
+      }),
+      tag: state({
+        x: { id: "x", title: "X", color: "#abc", icon: "🏷️", isArchived: true },
+        y: { id: "y", title: "Y" },
+      }),
+      menuTree: {
+        projectTree: [
+          {
+            k: "f",
+            id: "folder",
+            name: "Work",
+            children: [{ k: "p", id: "b" }],
+          },
+          { k: "p", id: "a" },
+        ],
+        tagTree: [
+          { k: "t", id: "y" },
+          { k: "t", id: "x" },
+        ],
+      },
+      note: {
+        ...state({
+          n1: {
+            id: "n1",
+            projectId: "b",
+            content: "# Plan\n- [ ] item",
+            isPinnedToToday: true,
+            created: 1700000000000,
+            modified: 1700000000001,
+          },
+          n2: { id: "n2", projectId: "a", content: "Retro" },
+          n3: { id: "n3", projectId: null, content: "Loose" },
         }),
-      ).report.canApply,
-    ).toBe(false);
-  }
+        todayOrder: ["n1"],
+      },
+    }),
+  );
+  expect(report.canApply).toBe(true);
+  expect(
+    report.issues
+      .map(({ code }) => code)
+      .every((code) => code === "configuration_not_imported"),
+  ).toBe(true);
+  expect(report.issues.map(({ detail }) => detail).join("\n")).toMatch(
+    /folders are not imported/,
+  );
+  expect(records.map(({ kind, sourceId }) => `${kind}:${sourceId}`)).toEqual([
+    "project:b",
+    "project:a",
+    "tag:y",
+    "tag:x",
+    "task:t1",
+    "task:t2",
+    "note:n1",
+    "note:n2",
+    "note:n3",
+  ]);
+  expect(records[0]).toMatchObject({
+    backlogEnabled: true,
+    backlogTaskIds: ["t2"],
+    hiddenFromMenu: true,
+    archived: false,
+    completedAt: null,
+  });
+  expect(records[1]).toMatchObject({
+    completedAt: new Date(1700000000000).toISOString(),
+    archived: true,
+    icon: "work",
+    color: "#aabbcc",
+  });
+  expect(records[3]).toMatchObject({
+    color: "#aabbcc",
+    icon: "🏷️",
+    archived: true,
+  });
+  expect(records[6]).toMatchObject({
+    notes: "# Plan\n- [ ] item",
+    projectId: "b",
+    pinnedToToday: true,
+    createdAt: new Date(1700000000000).toISOString(),
+  });
+});
+
+it("blocks inconsistent organization data instead of guessing", () => {
+  const prepare = (extra: Record<string, unknown>) =>
+    prepareSuperProductivityImport(
+      JSON.stringify({
+        task: state({ t: { id: "t", title: "Task" } }),
+        ...extra,
+      }),
+    ).report.canApply;
+  for (const extra of [
+    // Backlog task outside the project, or a disabled backlog with tasks.
+    {
+      project: state({
+        p: {
+          id: "p",
+          title: "P",
+          isEnableBacklog: true,
+          backlogTaskIds: ["t"],
+        },
+      }),
+    },
+    { project: state({ p: { id: "p", title: "P", backlogTaskIds: ["t"] } }) },
+    // Completion without its time, invalid icon or colour.
+    { project: state({ p: { id: "p", title: "P", isDone: true } }) },
+    { project: state({ p: { id: "p", title: "P", icon: "<b>x</b>" } }) },
+    { tag: state({ x: { id: "x", title: "X", color: "red" } }) },
+    // Image notes, legacy notes text and dangling note projects.
+    { note: state({ n: { id: "n", content: "Pic", imgUrl: "file:///x" } }) },
+    { project: state({ p: { id: "p", title: "P", notes: "legacy" } }) },
+    { note: state({ n: { id: "n", content: "Note", projectId: "gone" } }) },
+    { note: state({ n: { id: "n", content: "Note", unknown: 1 } }) },
+    { menuTree: { projectTree: [{ k: "x", id: "p" }], tagTree: [] } },
+  ])
+    expect(prepare(extra), JSON.stringify(extra)).toBe(false);
 });
 
 it("reports every export section and blocks unreviewed or unsupported data", () => {
@@ -116,11 +271,9 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
   expect(codes(configured)).toEqual([
     "configuration_not_imported",
     "configuration_not_imported",
-    "configuration_not_imported",
   ]);
 
   for (const extra of [
-    { note: state({ n: { id: "n", content: "Note" } }) },
     { metric: state({ "2026-09-24": { id: "2026-09-24" } }) },
     { reminders: [{ id: "r" }] },
     { pluginUserData: [{ id: "plugin", data: "{}" }] },
@@ -151,7 +304,7 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
   ).toBe(true);
 });
 
-it("retains reviewed presentation fields in provenance without applying them", () => {
+it("applies tag colour while retaining reviewed fields in provenance", () => {
   const { records } = prepareSuperProductivityImport(
     JSON.stringify({
       task: state({ t: { id: "t", title: "Task", tagIds: ["x"] } }),
@@ -163,4 +316,82 @@ it("retains reviewed presentation fields in provenance without applying them", (
     title: "X",
     color: "#abcdef",
   });
+  expect(records[0]).toMatchObject({ color: "#abcdef", icon: null });
+});
+
+it("imports source children as ordered full tasks and keeps derived parent estimates in provenance", () => {
+  const { report, records } = prepareSuperProductivityImport(
+    JSON.stringify({
+      task: state({
+        second: {
+          id: "second",
+          title: "Second",
+          parentId: "parent",
+          notes: "Second notes",
+          timeEstimate: 900000,
+          deadlineDay: "2026-10-02",
+        },
+        parent: {
+          id: "parent",
+          title: "Parent",
+          subTaskIds: ["first", "second"],
+          // Derived by Super Productivity from open children, not whole minutes.
+          timeEstimate: 900001,
+        },
+        first: {
+          id: "first",
+          title: "First",
+          parentId: "parent",
+          isDone: true,
+          doneOn: 1700000060000,
+          timeEstimate: 600000,
+        },
+      }),
+    }),
+  );
+  expect(report.issues).toEqual([]);
+  expect(report.canApply).toBe(true);
+  const byId = new Map(records.map((record) => [record.sourceId, record]));
+  expect(byId.get("parent")).toMatchObject({
+    parentSourceId: null,
+    estimateMinutes: null,
+  });
+  expect(JSON.parse(byId.get("parent")?.sourceJson ?? "{}")).toMatchObject({
+    timeEstimate: 900001,
+    subTaskIds: ["first", "second"],
+  });
+  expect(byId.get("first")).toMatchObject({
+    parentSourceId: "parent",
+    childIndex: 0,
+    completedAt: new Date(1700000060000).toISOString(),
+    estimateMinutes: 10,
+  });
+  expect(byId.get("second")).toMatchObject({
+    parentSourceId: "parent",
+    childIndex: 1,
+    notes: "Second notes",
+    deadlineDate: "2026-10-02",
+    estimateMinutes: 15,
+  });
+});
+
+it("blocks hierarchies deeper than two levels instead of flattening them", () => {
+  const { report } = prepareSuperProductivityImport(
+    JSON.stringify({
+      task: state({
+        root: { id: "root", title: "Root", subTaskIds: ["mid"] },
+        mid: {
+          id: "mid",
+          title: "Mid",
+          parentId: "root",
+          subTaskIds: ["leaf"],
+        },
+        leaf: { id: "leaf", title: "Leaf", parentId: "mid" },
+      }),
+    }),
+  );
+  expect(report.canApply).toBe(false);
+  expect(report.issues.map(({ code }) => code)).toContain(
+    "hierarchy_depth_unsupported",
+  );
 });

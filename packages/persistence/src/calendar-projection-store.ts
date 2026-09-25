@@ -108,7 +108,7 @@ export class SqliteCalendarProjectionStore implements CalendarProjectionStore {
       }
       const taskRow = this.db
         .prepare(
-          `SELECT * FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL`,
+          `SELECT * FROM tasks WHERE owner_id = ? AND id = ? AND deleted_at IS NULL AND archived_at IS NULL`,
         )
         .get(input.ownerId, input.taskId) as unknown as
         Record<string, string | number | null> | undefined;

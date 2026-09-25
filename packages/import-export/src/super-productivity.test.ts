@@ -60,10 +60,13 @@ describe("Super Productivity migration preview", () => {
     expect(JSON.stringify(report)).not.toContain("must-not-appear");
     expect(report.issues.map((issue) => issue.code)).toEqual(
       expect.arrayContaining([
-        "hierarchy_parity_required",
         "recurrence_parity_required",
         "time_history_parity_required",
       ]),
+    );
+    // Children map to full child tasks (ADR 0018); hierarchy no longer blocks.
+    expect(report.issues.map((issue) => issue.code)).not.toContain(
+      "hierarchy_parity_required",
     );
   });
   it("reports duplicate IDs, broken references, invalid dates, and time mismatches", () => {
@@ -80,7 +83,8 @@ describe("Super Productivity migration preview", () => {
     const report = previewSuperProductivity(
       JSON.stringify({
         task: state({ t: task }),
-        archiveOld: { task: state({ t: task }) },
+        // Divergent copies block; identical copies would collapse (ADR 0022).
+        archiveOld: { task: state({ t: { ...task, isDone: true } }) },
       }),
     );
     expect(report.totals.tasks).toBe(1);

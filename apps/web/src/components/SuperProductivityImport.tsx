@@ -90,9 +90,10 @@ export const SuperProductivityImport = ({
       />
       <p>
         Preview a JSON backup before importing core tasks, projects, tags,
-        notes, exact scheduled times, deadlines, estimates, and completion
-        dates. Preview changes nothing. Unsupported workflows block the entire
-        import.
+        notes, exact scheduled times, planned days, deadlines, reminders that
+        match a supported offset, estimates, and completion dates. Archived
+        tasks import as History with their original dates. Preview changes
+        nothing. Unsupported workflows block the entire import.
       </p>
       <Field>
         <FieldLabel htmlFor="sp-import-file">
@@ -148,14 +149,37 @@ export const SuperProductivityImport = ({
               not imported. Keep the original backup.
             </p>
           )}
-          <ul>
-            {report.issues.map((issue, index) => (
-              <li key={`${issue.code}:${String(index)}`}>
-                {issue.sourceId === null ? "" : `${issue.sourceId}: `}
-                {issue.detail}
-              </li>
-            ))}
-          </ul>
+          {[
+            {
+              label: "Blocking findings",
+              issues: report.issues.filter(
+                ({ blocking }) => blocking !== false,
+              ),
+            },
+            {
+              label: "Reported, does not block",
+              issues: report.issues.filter(
+                ({ blocking }) => blocking === false,
+              ),
+            },
+          ].map(
+            ({ label, issues }) =>
+              issues.length > 0 && (
+                <div key={label}>
+                  <h5>
+                    {label} ({issues.length})
+                  </h5>
+                  <ul>
+                    {issues.map((issue, index) => (
+                      <li key={`${issue.code}:${String(index)}`}>
+                        {issue.sourceId === null ? "" : `${issue.sourceId}: `}
+                        {issue.detail}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ),
+          )}
           <Collapsible>
             <CollapsibleTrigger asChild>
               <Button type="button" variant="ghost">
@@ -168,11 +192,15 @@ export const SuperProductivityImport = ({
                   <li key={task.sourceId}>
                     {task.title} —{" "}
                     {task.archived
-                      ? "archived"
+                      ? `archived (${task.store ?? "archive"})`
                       : task.completed
                         ? "completed"
                         : "open"}
                     {task.parentId === null ? "" : " · child task"}
+                    {(task.review ?? []).length > 0 ? " · needs review" : ""}
+                    {(task.historicalReferences ?? []).length > 0
+                      ? ` · ${String(task.historicalReferences?.length)} historical reference${task.historicalReferences?.length === 1 ? "" : "s"}`
+                      : ""}
                   </li>
                 ))}
               </ul>

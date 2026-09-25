@@ -16,6 +16,7 @@ import type {
   AutomationTokenScope,
   Project,
   Tag,
+  Note,
   Subtask,
   TemplateInstantiationResponse,
   ActiveSession as ContractActiveSession,
@@ -24,6 +25,9 @@ import { automationCatalog } from "@suite/contracts";
 import type {
   SuiteDatabase,
   TaskRecord,
+  ProjectRecord,
+  TagRecord,
+  NoteRecord,
   TemplateInstantiationResult,
   PlanningPlaceholderResolutionResult,
   PlanningPlaceholderResolutionRecord,
@@ -136,6 +140,19 @@ export const taskResponse = (task: TaskRecord): Task => ({
   completedAt: task.completedAt,
   deletedAt: task.deletedAt,
   plannedStart: task.plannedStart,
+  plannedDay: task.plannedDay ?? null,
+  // The database CHECK limits stored offsets to the contract values.
+  startReminder: (task.startReminder ?? { kind: "default" }) as NonNullable<
+    Task["startReminder"]
+  >,
+  deadlineReminder:
+    task.deadlineReminderMinutes == null
+      ? null
+      : {
+          minutes: task.deadlineReminderMinutes as NonNullable<
+            Task["deadlineReminder"]
+          >["minutes"],
+        },
   deadline:
     task.deadlineDate == null
       ? task.deadlineAt == null
@@ -145,6 +162,10 @@ export const taskResponse = (task: TaskRecord): Task => ({
   estimateMinutes: task.estimateMinutes,
   projectId: task.projectId ?? null,
   tagIds: [...(task.tagIds ?? [])],
+  parentId: task.parentId ?? null,
+  childPosition: task.childPosition ?? null,
+  // ADR 0022: only archived history carries archivedAt.
+  ...(task.archivedAt == null ? {} : { archivedAt: task.archivedAt }),
 });
 
 export const calendarEventResponse = (
@@ -328,26 +349,24 @@ export const parseCursor = (
     : undefined;
 };
 
-export const projectResponse = (project: {
-  readonly id: string;
-  readonly ownerId: string;
-  readonly title: string;
-  readonly revision: number;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly archivedAt: string | null;
-}): Project => ({ ...project });
+export const projectResponse = (project: ProjectRecord): Project => ({
+  id: project.id,
+  ownerId: project.ownerId,
+  title: project.title,
+  revision: project.revision,
+  createdAt: project.createdAt,
+  updatedAt: project.updatedAt,
+  archivedAt: project.archivedAt,
+  color: project.color,
+  icon: project.icon,
+  position: project.position,
+  hiddenFromMenu: project.hiddenFromMenu,
+  completedAt: project.completedAt,
+  backlogEnabled: project.backlogEnabled,
+  backlogTaskIds: [...project.backlogTaskIds],
+});
 
-export const tagResponse = (tag: {
-  readonly id: string;
-  readonly ownerId: string;
-  readonly title: string;
-  readonly normalizedName: string;
-  readonly revision: number;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly archivedAt: string | null;
-}): Tag => ({
+export const tagResponse = (tag: TagRecord): Tag => ({
   id: tag.id,
   ownerId: tag.ownerId,
   displayName: tag.title,
@@ -356,7 +375,12 @@ export const tagResponse = (tag: {
   createdAt: tag.createdAt,
   updatedAt: tag.updatedAt,
   archivedAt: tag.archivedAt,
+  color: tag.color,
+  icon: tag.icon,
+  position: tag.position,
 });
+
+export const noteResponse = (note: NoteRecord): Note => ({ ...note });
 
 export const subtaskResponse = (subtask: {
   readonly id: string;

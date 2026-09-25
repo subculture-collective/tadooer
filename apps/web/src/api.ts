@@ -94,6 +94,31 @@ import {
   type NotificationTestResponse,
 } from "@suite/contracts";
 import { ApiRequestError } from "@suite/contracts";
+import {
+  noteCreateRequestSchema,
+  noteListResponseSchema,
+  notePatchRequestSchema,
+  noteResponseSchema,
+  organizationOrderRequestSchema,
+  projectBacklogRequestSchema,
+  projectPatchRequestSchema,
+  tagPatchRequestSchema,
+  type Note,
+  type NoteCreateRequest,
+  type NotePatchRequest,
+  type OrganizationOrderItem,
+} from "@suite/contracts";
+import {
+  taskAttachmentCreateRequestSchema,
+  taskAttachmentPatchRequestSchema,
+  taskLinksResponseSchema,
+  type TaskAttachmentPatchRequest,
+  type TaskLinksResponse,
+  taskArchiveMutationResponseSchema,
+  taskHistoryResponseSchema,
+  type TaskArchiveMutationResponse,
+  type TaskHistoryResponse,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -526,14 +551,6 @@ const subtaskResponseSchema = z.object({ subtask: subtaskSchema });
 const organizationCreateSchema = z.object({
   title: z.string().trim().min(1).max(240),
 });
-const organizationPatchSchema = z
-  .object({
-    title: z.string().trim().min(1).max(240).optional(),
-    archived: z.literal(true).optional(),
-  })
-  .refine(({ title, archived }) => title !== undefined || archived === true, {
-    message: "Provide an organization title or archive it",
-  });
 const taskProjectAssignmentSchema = z.object({
   projectId: z.uuid().nullable(),
 });
@@ -572,7 +589,8 @@ const subtaskOrderSchema = z.object({
     ),
 });
 
-export type OrganizationPatch = z.infer<typeof organizationPatchSchema>;
+export type OrganizationPatch = z.input<typeof projectPatchRequestSchema>;
+export type TagPatch = z.input<typeof tagPatchRequestSchema>;
 export type SubtaskCreate = z.infer<typeof subtaskCreateSchema>;
 export type SubtaskPatch = z.infer<typeof subtaskPatchSchema>;
 
@@ -605,13 +623,13 @@ const patchOrganization = <T>(
   path: string,
   schema: z.ZodType<T>,
   revision: number,
-  input: OrganizationPatch,
+  body: unknown,
   csrfToken: string,
 ): Promise<T> =>
   request(path, schema, {
     method: "PATCH",
     headers: conditionalHeaders(revision, csrfToken),
-    body: JSON.stringify(organizationPatchSchema.parse(input)),
+    body: JSON.stringify(body),
   });
 
 export const patchProject = (
@@ -624,23 +642,107 @@ export const patchProject = (
     `/api/projects/${projectId}`,
     projectResponseSchema,
     revision,
-    input,
+    projectPatchRequestSchema.parse(input),
     csrfToken,
   ).then(({ project }) => project);
 
 export const patchTag = (
   tagId: string,
   revision: number,
-  input: OrganizationPatch,
+  input: TagPatch,
   csrfToken: string,
 ): Promise<Tag> =>
   patchOrganization(
     `/api/tags/${tagId}`,
     tagResponseSchema,
     revision,
-    input,
+    tagPatchRequestSchema.parse(input),
     csrfToken,
   ).then(({ tag }) => tag);
+
+/** Sends the complete order with each record's current revision. */
+export const reorderProjects = (
+  items: readonly OrganizationOrderItem[],
+  csrfToken: string,
+): Promise<readonly Project[]> =>
+  request("/api/projects/order", projectListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(organizationOrderRequestSchema.parse({ items })),
+  }).then(({ projects }) => projects);
+
+export const reorderTags = (
+  items: readonly OrganizationOrderItem[],
+  csrfToken: string,
+): Promise<readonly Tag[]> =>
+  request("/api/tags/order", tagListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(organizationOrderRequestSchema.parse({ items })),
+  }).then(({ tags }) => tags);
+
+export const setProjectBacklog = (
+  projectId: string,
+  revision: number,
+  taskId: string,
+  inBacklog: boolean,
+  csrfToken: string,
+): Promise<Project> =>
+  request(`/api/projects/${projectId}/backlog`, projectResponseSchema, {
+    method: "PUT",
+    headers: conditionalHeaders(revision, csrfToken),
+    body: JSON.stringify(
+      projectBacklogRequestSchema.parse({ taskId, inBacklog }),
+    ),
+  }).then(({ project }) => project);
+
+/** Notes are online-only: they are not cached or queued offline (ADR 0019). */
+export const getNotes = (): Promise<readonly Note[]> =>
+  request("/api/notes", noteListResponseSchema).then(({ notes }) => notes);
+
+export const createNote = (
+  input: z.input<typeof noteCreateRequestSchema>,
+  csrfToken: string,
+): Promise<Note> =>
+  request("/api/notes", noteResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(
+      noteCreateRequestSchema.parse(input) satisfies NoteCreateRequest,
+    ),
+  }).then(({ note }) => note);
+
+export const patchNote = (
+  noteId: string,
+  revision: number,
+  input: NotePatchRequest,
+  csrfToken: string,
+): Promise<Note> =>
+  request(`/api/notes/${noteId}`, noteResponseSchema, {
+    method: "PATCH",
+    headers: conditionalHeaders(revision, csrfToken),
+    body: JSON.stringify(notePatchRequestSchema.parse(input)),
+  }).then(({ note }) => note);
+
+export const deleteNote = (
+  noteId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/notes/${noteId}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const reorderNotes = (
+  items: readonly OrganizationOrderItem[],
+  csrfToken: string,
+): Promise<readonly Note[]> =>
+  request("/api/notes/order", noteListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(organizationOrderRequestSchema.parse({ items })),
+  }).then(({ notes }) => notes);
 
 export const assignTaskProject = (
   taskId: string,
@@ -1022,3 +1124,108 @@ export const applyTaskImport = (
       body: rawJson,
     },
   );
+
+/**
+ * Task attachments and imported issue links are online-only (ADR 0021): they
+ * are not cached or queued offline, and no call contacts an issue provider.
+ */
+export const getTaskLinks = (taskId: string): Promise<TaskLinksResponse> =>
+  request(`/api/tasks/${taskId}/links`, taskLinksResponseSchema);
+
+export const createTaskAttachment = (
+  taskId: string,
+  input: z.input<typeof taskAttachmentCreateRequestSchema>,
+  csrfToken: string,
+): Promise<TaskLinksResponse> =>
+  request(`/api/tasks/${taskId}/attachments`, taskLinksResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(taskAttachmentCreateRequestSchema.parse(input)),
+  });
+
+export const patchTaskAttachment = (
+  taskId: string,
+  attachmentId: string,
+  revision: number,
+  input: TaskAttachmentPatchRequest,
+  csrfToken: string,
+): Promise<TaskLinksResponse> =>
+  request(
+    `/api/tasks/${taskId}/attachments/${attachmentId}`,
+    taskLinksResponseSchema,
+    {
+      method: "PATCH",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify(taskAttachmentPatchRequestSchema.parse(input)),
+    },
+  );
+
+export const deleteTaskAttachment = (
+  taskId: string,
+  attachmentId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/tasks/${taskId}/attachments/${attachmentId}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const deleteTaskIssueLink = (
+  taskId: string,
+  linkId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/tasks/${taskId}/issue-link/${linkId}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+// ADR 0022 archived history. Online-only: archive state is not a sync v2
+// operation, so the browser never queues archive or restore offline.
+export const getTaskHistory = (
+  input: { readonly query?: string; readonly cursor?: string | null } = {},
+): Promise<TaskHistoryResponse> => {
+  const params = new URLSearchParams();
+  if (input.query !== undefined && input.query.trim() !== "")
+    params.set("query", input.query.trim());
+  if (input.cursor != null) params.set("cursor", input.cursor);
+  const query = params.toString();
+  return request(
+    `/api/tasks/history${query === "" ? "" : `?${query}`}`,
+    taskHistoryResponseSchema,
+  );
+};
+
+const taskArchiveRequest = (
+  action: "archive" | "unarchive",
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<TaskArchiveMutationResponse> =>
+  request(
+    `/api/tasks/${encodeURIComponent(taskId)}/${action}`,
+    taskArchiveMutationResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"${String(revision)}"`,
+      },
+      body: "{}",
+    },
+  );
+
+export const archiveTask = (
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<TaskArchiveMutationResponse> =>
+  taskArchiveRequest("archive", taskId, revision, csrfToken);
+
+export const unarchiveTask = (
+  taskId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<TaskArchiveMutationResponse> =>
+  taskArchiveRequest("unarchive", taskId, revision, csrfToken);

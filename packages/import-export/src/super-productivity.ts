@@ -1,10 +1,20 @@
 import { superProductivityImportLimits as limits } from "@suite/contracts/import-limits";
 import { createHash } from "node:crypto";
 import {
+  untitledArchivedTaskTitle,
+  type HistoricalReference,
+  type TaskArchiveReviewReason,
+} from "@suite/contracts";
+import {
+  fieldsWith,
   populated,
+  superProductivityArchiveKeys,
   superProductivitySections,
+  superProductivitySystemTagIds,
   superProductivityTaskFields,
 } from "./super-productivity-schema.ts";
+
+const systemTagIds = new Set<string>(superProductivitySystemTagIds);
 
 type ObjectValue = Readonly<Record<string, unknown>>;
 const object = (value: unknown): ObjectValue | undefined =>
@@ -31,6 +41,12 @@ export interface SuperProductivityPreview {
     readonly title: string;
     readonly completed: boolean;
     readonly archived: boolean;
+    /** Source store holding the imported copy (ADR 0022). */
+    readonly store: SuperProductivityTaskStore;
+    /** Why the owner should review this historical record; empty when none. */
+    readonly review: readonly TaskArchiveReviewReason[];
+    /** Source references kept as read-only provenance, not live links. */
+    readonly historicalReferences: readonly HistoricalReference[];
     readonly parentId: string | null;
     readonly projectId: string | null;
     readonly repeatConfigId: string | null;
@@ -47,6 +63,32 @@ export interface SuperProductivityPreview {
     readonly detail: string;
   }[];
 }
+
+export type SuperProductivityTaskStore = "task" | "archiveYoung" | "archiveOld";
+
+/** Deterministic JSON with sorted object keys, for comparing source copies. */
+const stableJson = (value: unknown): string =>
+  JSON.stringify(value, (_key, nested: unknown) =>
+    nested !== null && typeof nested === "object" && !Array.isArray(nested)
+      ? Object.fromEntries(
+          Object.entries(nested as Record<string, unknown>).toSorted(
+            ([left], [right]) => (left < right ? -1 : left > right ? 1 : 0),
+          ),
+        )
+      : nested,
+  );
+
+/** Fields whose values differ between two copies of one task, ignoring view state. */
+const divergentFields = (left: ObjectValue, right: ObjectValue): string[] => {
+  const ignored = new Set(fieldsWith(superProductivityTaskFields, "ignored"));
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+    .filter(
+      (field) =>
+        !ignored.has(field) &&
+        stableJson(left[field]) !== stableJson(right[field]),
+    )
+    .toSorted();
+};
 
 /** Read-only inventory: never claims unsupported data has been migrated. */
 export const previewSuperProductivity = (
@@ -163,21 +205,56 @@ export const previewSuperProductivity = (
       );
       return {};
     }
+    for (const key of Object.keys(archive))
+      if (!Object.hasOwn(superProductivityArchiveKeys, key))
+        issue(
+          "unknown_section",
+          null,
+          `${name}.${key} is not a reviewed Super Productivity 19.1.0 archive field`,
+        );
+    // Archived daily time history needs work-history parity (#41).
+    if (
+      Object.values(object(archive.timeTracking) ?? {}).some((contexts) =>
+        Object.values(object(contexts) ?? {}).some(populated),
+      )
+    )
+      issue(
+        "unsupported_section",
+        null,
+        `${name}.timeTracking contains time history without Tadooer parity; keep the original export`,
+      );
     return entities(archive.task, `${name}.task`);
   };
-  const sources = [
-    { records: entities(data.task, "task"), archived: false },
+  const sources: {
+    readonly records: ObjectValue;
+    readonly archived: boolean;
+    readonly store: SuperProductivityTaskStore;
+  }[] = [
+    { records: entities(data.task, "task"), archived: false, store: "task" },
     {
       records: archiveTasks("archiveYoung"),
       archived: true,
+      store: "archiveYoung",
     },
     {
       records: archiveTasks("archiveOld"),
       archived: true,
+      store: "archiveOld",
     },
   ];
-  const tasks: SuperProductivityPreview["tasks"][number][] = [];
-  const seen = new Set<string>();
+  type InventoryTask = SuperProductivityPreview["tasks"][number] & {
+    review: TaskArchiveReviewReason[];
+    historicalReferences: HistoricalReference[];
+  };
+  const tasks: InventoryTask[] = [];
+  // First copy by store order (live, archiveYoung, archiveOld).
+  const seen = new Map<
+    string,
+    { store: SuperProductivityTaskStore; value: unknown }
+  >();
+  const historicalCounts = new Map<string, number>();
+  const countHistorical = (key: string) =>
+    historicalCounts.set(key, (historicalCounts.get(key) ?? 0) + 1);
   const children = new Map<string, Set<string>>();
   const number = (value: unknown, id: string, name: string): number => {
     if (value === undefined || value === null) return 0;
@@ -230,20 +307,39 @@ export const previewSuperProductivity = (
   };
   for (const source of sources)
     for (const [id, value] of Object.entries(source.records)) {
-      if (seen.has(id)) {
-        issue(
-          "duplicate_task",
-          id,
-          "Task appears in more than one live/archive store; resolve before importing",
+      // ADR 0022: identical copies collapse to the first store's copy and are
+      // reported; divergent copies block. The importer never picks silently.
+      const earlier = seen.get(id);
+      if (earlier !== undefined) {
+        const differences = divergentFields(
+          object(earlier.value) ?? {},
+          object(value) ?? {},
         );
+        if (differences.length === 0)
+          issue(
+            "duplicate_copy_collapsed",
+            id,
+            `Identical copies in ${earlier.store} and ${source.store}; the ${earlier.store} copy is imported once`,
+          );
+        else
+          issue(
+            "duplicate_task",
+            id,
+            `Task appears in ${earlier.store} and ${source.store} with different ${differences.join(", ")}; resolve it in Super Productivity before importing`,
+          );
         continue;
       }
-      seen.add(id);
+      seen.set(id, { store: source.store, value });
       const task = object(value);
+      const blankArchivedTitle =
+        source.archived &&
+        task?.id === id &&
+        typeof task.title === "string" &&
+        task.title.trim() === "";
       if (
         task?.id !== id ||
         typeof task.title !== "string" ||
-        task.title.trim() === ""
+        (task.title.trim() === "" && !blankArchivedTitle)
       ) {
         issue(
           "invalid_task",
@@ -251,6 +347,16 @@ export const previewSuperProductivity = (
           "Task requires a matching ID and nonempty title",
         );
         continue;
+      }
+      const review: TaskArchiveReviewReason[] = [];
+      const historicalReferences: HistoricalReference[] = [];
+      if (blankArchivedTitle) {
+        review.push("blank_title");
+        issue(
+          "history_review",
+          id,
+          `Archived task has a blank title; it is imported as "${untitledArchivedTaskTitle}" and flagged for review`,
+        );
       }
       for (const field of Object.keys(task))
         if (!Object.hasOwn(superProductivityTaskFields, field))
@@ -260,18 +366,40 @@ export const previewSuperProductivity = (
       const parentId = typeof task.parentId === "string" ? task.parentId : null;
       const repeatConfigId =
         typeof task.repeatCfgId === "string" ? task.repeatCfgId : null;
-      if (projectId !== null && !Object.hasOwn(projects, projectId))
-        issue(
-          "missing_project",
-          id,
-          "Referenced project is absent from the export",
-        );
-      if (repeatConfigId !== null && !Object.hasOwn(repeats, repeatConfigId))
-        issue(
-          "missing_repeat_config",
-          id,
-          "Referenced repeat configuration is absent",
-        );
+      // Archived history keeps unresolved references as provenance; a live
+      // task with a missing reference still blocks.
+      if (projectId !== null && !Object.hasOwn(projects, projectId)) {
+        if (source.archived) {
+          historicalReferences.push({
+            kind: "project",
+            sourceId: projectId,
+            reason: "missing_from_export",
+          });
+          countHistorical("project");
+        } else
+          issue(
+            "missing_project",
+            id,
+            "Referenced project is absent from the export",
+          );
+      }
+      if (repeatConfigId !== null && !Object.hasOwn(repeats, repeatConfigId)) {
+        if (source.archived) countHistorical("repeat_config");
+        else
+          issue(
+            "missing_repeat_config",
+            id,
+            "Referenced repeat configuration is absent",
+          );
+      }
+      if (source.archived && repeatConfigId !== null)
+        historicalReferences.push({
+          kind: "repeat_config",
+          sourceId: repeatConfigId,
+          reason: Object.hasOwn(repeats, repeatConfigId)
+            ? "recurrence_unsupported"
+            : "missing_from_export",
+        });
       for (const field of ["parentId", "projectId", "repeatCfgId"] as const)
         if (
           task[field] !== undefined &&
@@ -301,14 +429,33 @@ export const previewSuperProductivity = (
         if (unique.size !== refs.length)
           issue("duplicate_reference", id, `${field} repeats an ID`);
         if (field === "subTaskIds") children.set(id, unique);
-        else
+        else {
+          let missingTag = false;
           for (const tagId of unique)
-            if (!Object.hasOwn(tags, tagId))
-              issue(
-                "missing_tag",
-                id,
-                "Referenced tag is absent from the export",
-              );
+            if (source.archived && systemTagIds.has(tagId)) {
+              if (tagId !== "TODAY")
+                historicalReferences.push({
+                  kind: "tag",
+                  sourceId: tagId,
+                  reason: "system_tag",
+                });
+            } else if (!Object.hasOwn(tags, tagId)) {
+              if (source.archived) {
+                missingTag = true;
+                historicalReferences.push({
+                  kind: "tag",
+                  sourceId: tagId,
+                  reason: "missing_from_export",
+                });
+              } else
+                issue(
+                  "missing_tag",
+                  id,
+                  "Referenced tag is absent from the export",
+                );
+            }
+          if (missingTag) countHistorical("tag");
+        }
       }
       const trackedMilliseconds = number(task.timeSpent, id, "timeSpent");
       const daily = object(task.timeSpentOnDay);
@@ -345,9 +492,12 @@ export const previewSuperProductivity = (
       );
       tasks.push({
         sourceId: id,
-        title: task.title,
+        title: blankArchivedTitle ? untitledArchivedTaskTitle : task.title,
         completed: task.isDone === true,
         archived: source.archived,
+        store: source.store,
+        review,
+        historicalReferences,
         parentId,
         projectId,
         repeatConfigId,
@@ -367,26 +517,61 @@ export const previewSuperProductivity = (
       null,
       `${String(count)} task records contain unreviewed field ${field}`,
     );
-  const taskIds = new Set(tasks.map((task) => task.sourceId));
   const parentIds = new Set(tasks.map((task) => task.parentId));
-  for (const task of tasks)
-    if (task.parentId !== null && !taskIds.has(task.parentId))
-      issue(
-        "missing_parent",
-        task.sourceId,
-        "Parent task is absent from all task stores",
-      );
   const byId = new Map(tasks.map((task) => [task.sourceId, task]));
+  // A child shares its parent's lifecycle (ADR 0022). A child whose parent is
+  // absent, or in the other lifecycle, becomes top-level with the source
+  // parent kept as a historical reference. A live child with no parent blocks.
+  const detached = new Set<string>();
+  for (const task of tasks) {
+    if (task.parentId === null) continue;
+    const parent = byId.get(task.parentId);
+    if (parent === undefined) {
+      if (!task.archived) {
+        issue(
+          "missing_parent",
+          task.sourceId,
+          "Parent task is absent from all task stores",
+        );
+        continue;
+      }
+      task.historicalReferences.push({
+        kind: "parent",
+        sourceId: task.parentId,
+        reason: "missing_from_export",
+      });
+      countHistorical("parent");
+      detached.add(task.sourceId);
+    } else if (parent.archived !== task.archived) {
+      task.historicalReferences.push({
+        kind: "parent",
+        sourceId: task.parentId,
+        reason: "lifecycle_mismatch",
+      });
+      issue(
+        "historical_parent_detached",
+        task.sourceId,
+        task.archived
+          ? "Archived child of a live parent is imported as a top-level archived task; the parent ID is kept as a historical reference"
+          : "Live child of an archived parent is imported as a top-level task; the parent ID is kept as a historical reference",
+      );
+      detached.add(task.sourceId);
+    }
+  }
   for (const [parentId, refs] of children)
     for (const childId of refs) {
       const child = byId.get(childId);
-      if (child === undefined)
-        issue(
-          "missing_child",
-          parentId,
-          "Listed child is absent from all task stores",
-        );
-      else if (child.parentId !== parentId)
+      if (child === undefined) {
+        // An archived parent's missing child is history already lost from
+        // the export; the parent still imports. A live one blocks.
+        if (byId.get(parentId)?.archived === true) countHistorical("child");
+        else
+          issue(
+            "missing_child",
+            parentId,
+            "Listed child is absent from all task stores",
+          );
+      } else if (child.parentId !== parentId)
         issue(
           "hierarchy_mismatch",
           childId,
@@ -396,6 +581,7 @@ export const previewSuperProductivity = (
   for (const task of tasks)
     if (
       task.parentId !== null &&
+      !detached.has(task.sourceId) &&
       children.has(task.parentId) &&
       !children.get(task.parentId)?.has(task.sourceId)
     )
@@ -423,11 +609,44 @@ export const previewSuperProductivity = (
     }
     for (const id of path) checked.add(id);
   }
-  if (tasks.some((task) => task.parentId !== null))
+  // Tadooer supports exactly two levels (ADR 0018); a deeper source chain
+  // would need flattening, which the importer refuses to guess.
+  for (const task of tasks) {
+    if (detached.has(task.sourceId)) continue;
+    const parent = task.parentId === null ? undefined : byId.get(task.parentId);
+    if (
+      parent?.parentId != null &&
+      !detached.has(parent.sourceId) &&
+      parent.parentId !== task.sourceId &&
+      parent.parentId !== parent.sourceId
+    )
+      issue(
+        "hierarchy_depth_unsupported",
+        task.sourceId,
+        "Child tasks nest more than two levels; move them under a top-level task before importing",
+      );
+  }
+  // [plural, singular] predicates for one aggregated finding per kind.
+  const historicalSummary: Readonly<Record<string, readonly [string, string]>> =
+    {
+      project: ["reference", "references"],
+      tag: ["reference", "references"],
+      repeat_config: ["reference", "references"],
+      parent: ["reference", "references"],
+      child: ["list", "lists"],
+    };
+  const historicalObject: Readonly<Record<string, string>> = {
+    project: "projects absent from the export",
+    tag: "tags absent from the export",
+    repeat_config: "repeat configurations absent from the export",
+    parent: "parent tasks absent from the export and are imported at top level",
+    child: "child tasks absent from the export",
+  };
+  for (const [kind, count] of historicalCounts)
     issue(
-      "hierarchy_parity_required",
+      "historical_reference",
       null,
-      "Source subtasks are full tasks; do not flatten them into checklist items",
+      `${count.toLocaleString("en-US")} archived task${count === 1 ? "" : "s"} ${historicalSummary[kind]?.[count === 1 ? 1 : 0] ?? "reference"} ${historicalObject[kind] ?? kind}; source IDs are kept as read-only historical references`,
     );
   if (Object.keys(repeats).length > 0)
     issue(
