@@ -355,8 +355,11 @@ export const readWorkContexts = (
 };
 
 /** One non-blocking summary that reconciles the source and imported totals. */
+const count = (value: number, singular: string, plural: string): string =>
+  `${value.toLocaleString("en-US")} ${value === 1 ? singular : plural}`;
+
 export const reconciliationSummary = (totals: TimeReconciliation): string =>
   `Leaf tasks record ${ms(totals.sourceLeafMs)} as timeSpent and ${ms(totals.sourceLeafDailyMs)} as dated daily entries. ` +
-  `Importing ${totals.taskDayEntries.toLocaleString("en-US")} task-day entries (${ms(totals.taskDayMs)}) and ${totals.parentResidualEntries.toLocaleString("en-US")} parent-own entries (${ms(totals.parentResidualMs)}), ` +
-  `${ms(totals.taskDayMs + totals.parentResidualMs)} in total, plus ${totals.workContextDays.toLocaleString("en-US")} work start/end records. ` +
+  `Importing ${count(totals.taskDayEntries, "task-day entry", "task-day entries")} totalling ${ms(totals.taskDayMs)} and ${count(totals.parentResidualEntries, "parent-own entry", "parent-own entries")} totalling ${ms(totals.parentResidualMs)}: ` +
+  `${ms(totals.taskDayMs + totals.parentResidualMs)} in all, plus ${count(totals.workContextDays, "work start/end record", "work start/end records")}. ` +
   `${ms(totals.undatedMs)} of leaf timeSpent has no day and is not imported; ${ms(totals.datedExcessMs)} of daily entries exceed their task's timeSpent and are imported. Milliseconds are kept exactly.`;
