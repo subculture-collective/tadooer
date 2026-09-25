@@ -41,32 +41,32 @@ Missing means the workflow has no qualified equivalent. Decision-gated rows
 remain explicit platform/product decisions; they are never counted as delivered.
 Excluded rows record an owner decision not to pursue that source capability.
 
-| Workflow               | Current status | Source-data and behavior mapping                                                                                                                        | Issue                                                                     |
-| ---------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| core-tasks             | partial        | Core titles/notes/timestamps/dates/estimates map transactionally; unsupported metadata blocks apply. Source IDs remain provenance, not destination IDs. | [#47](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/47) |
-| hierarchy              | partial        | Children import as full two-level child tasks in source order; deeper chains block apply. Parent time totals wait for #41.                              | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
-| projects               | partial        | Colour, icon, order, hide-from-menu, completion, restore and backlog are stored, edited and imported (ADR 0019); menu folders (#63) and in-project task order remain. | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
-| tags                   | partial        | Colour, icon, order and archive/restore are stored and imported; Today and board system tags are never ordinary tags (#29, #63). | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
-| planning               | partial        | Today queue, timed blocks and date-only planned days exist (ADR 0020); persisted Today order, daily rituals, schedule hygiene and auto-planning remain. | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
-| history                | missing        | Both stores inventoried; archived task apply blocked. Preserve unknown historical project/tag/repeat identity and blank-title dispositions.             | [#38](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/38) |
-| time                   | partial        | Active interval tracking exists; source daily history, correction and reporting remain unqualified.                                                     | [#41](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/41) |
-| recurrence             | missing        | Source has daily/weekly/monthly/yearly, completion-based generation, inherited child templates and deleted instances; habits do not substitute.         | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
-| notes                  | partial        | Project, tag and standalone Markdown notes with pin and order are stored and imported; image notes, legacy notes text and checklist/space workflows remain. | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
+| Workflow               | Current status | Source-data and behavior mapping                                                                                                                                                                                                                                                                | Issue                                                                     |
+| ---------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| core-tasks             | partial        | Core titles/notes/timestamps/dates/estimates map transactionally; unsupported metadata blocks apply. Source IDs remain provenance, not destination IDs.                                                                                                                                         | [#47](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/47) |
+| hierarchy              | partial        | Children import as full two-level child tasks in source order; deeper chains block apply. Parent time totals wait for #41.                                                                                                                                                                      | [#27](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/27) |
+| projects               | partial        | Colour, icon, order, hide-from-menu, completion, restore and backlog are stored, edited and imported (ADR 0019); menu folders (#63) and in-project task order remain.                                                                                                                           | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
+| tags                   | partial        | Colour, icon, order and archive/restore are stored and imported; Today and board system tags are never ordinary tags (#29, #63).                                                                                                                                                                | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
+| planning               | partial        | Today queue, timed blocks and date-only planned days exist (ADR 0020); persisted Today order, daily rituals, schedule hygiene and auto-planning remain.                                                                                                                                         | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
+| history                | partial        | Both archive stores apply as read-only history with historical references, review flags and a collapse-or-block duplicate policy (ADR 0022).                                                                                                                                                    | [#38](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/38) |
+| time                   | partial        | Active interval tracking exists; source daily history, correction and reporting remain unqualified.                                                                                                                                                                                             | [#41](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/41) |
+| recurrence             | missing        | Source has daily/weekly/monthly/yearly, completion-based generation, inherited child templates and deleted instances; habits do not substitute.                                                                                                                                                 | [#42](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/42) |
+| notes                  | partial        | Project, tag and standalone Markdown notes with pin and order are stored and imported; image notes, legacy notes text and checklist/space workflows remain.                                                                                                                                     | [#28](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/28) |
 | linked-issues          | partial        | One issue link per task (provider key, provider instance ID, issue ID, last-synced provenance; Gitea address rebuilt) and attachments import and are edited online (ADR 0021). Local files and commands stay inert; credentials are never read; live provider access needs fresh authorization. | [#30](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/30) |
-| reminders              | partial        | Per-task and timed-deadline reminder offsets use the ntfy ledger (ADR 0020); exact source offsets import. Legacy reminders section stays blocked.       | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
-| boards                 | missing        | Source board/section/task-view state has no qualified Tadooer mapping.                                                                                  | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
-| counters               | missing        | Source counters and metric history are not equivalent to habit streaks.                                                                                 | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
-| focus                  | partial        | Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.                                          | [#65](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/65) |
-| plugins                | missing        | Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.                 | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
-| preferences            | partial        | Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.                | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
-| calendar               | partial        | Google/Baikal federation exists; plugin calendars and opt-in canonical bridge need qualification.                                                       | [#50](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/50) |
-| platforms              | decision-gated | PWA and Linux packaging exist; platform-specific native delivery requires explicit platform design.                                                     | [#24](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/24) |
-| presentation           | decision-gated | Store-rating prompts and engagement presentation are not migrated data; decide relevant product outcomes under post-parity discovery.                   | [#52](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/52) |
-| capture                | partial        | Structured capture resolves existing names only; estimate syntax, tag creation, URLs and markdown/email paste have no equivalent.                       | [#90](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/90) |
-| calendar-subscriptions | missing        | iCal URL subscriptions, event-to-task conversion, auto-import tombstones and hidden events.                                                             | [#91](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/91) |
-| offline-writes         | partial        | Only task core fields and habits queue offline; planned time/day, reminders, assignment, project/tag and checklist writes are online-only.              | [#92](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/92) |
-| data-export            | missing        | Source has self-service JSON export/restore and local backups; Tadooer has only operator SQLite backups.                                                | [#93](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/93) |
-| sync-providers         | excluded       | Owner decision September 24: third-party storage sync and client-side end-to-end encryption are not parity requirements.                                | [#94](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/94) |
+| reminders              | partial        | Per-task and timed-deadline reminder offsets use the ntfy ledger (ADR 0020); exact source offsets import. Legacy reminders section stays blocked.                                                                                                                                               | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
+| boards                 | missing        | Source board/section/task-view state has no qualified Tadooer mapping.                                                                                                                                                                                                                          | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
+| counters               | missing        | Source counters and metric history are not equivalent to habit streaks.                                                                                                                                                                                                                         | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
+| focus                  | partial        | Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.                                                                                                                                                                                  | [#65](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/65) |
+| plugins                | missing        | Preserve opaque plugin data; do not run imported code or credentials. Source API and plugin implementations are separately inventoried.                                                                                                                                                         | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
+| preferences            | partial        | Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.                                                                                                                                                        | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
+| calendar               | partial        | Google/Baikal federation exists; plugin calendars and opt-in canonical bridge need qualification.                                                                                                                                                                                               | [#50](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/50) |
+| platforms              | decision-gated | PWA and Linux packaging exist; platform-specific native delivery requires explicit platform design.                                                                                                                                                                                             | [#24](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/24) |
+| presentation           | decision-gated | Store-rating prompts and engagement presentation are not migrated data; decide relevant product outcomes under post-parity discovery.                                                                                                                                                           | [#52](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/52) |
+| capture                | partial        | Structured capture resolves existing names only; estimate syntax, tag creation, URLs and markdown/email paste have no equivalent.                                                                                                                                                               | [#90](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/90) |
+| calendar-subscriptions | missing        | iCal URL subscriptions, event-to-task conversion, auto-import tombstones and hidden events.                                                                                                                                                                                                     | [#91](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/91) |
+| offline-writes         | partial        | Only task core fields and habits queue offline; planned time/day, reminders, assignment, project/tag and checklist writes are online-only.                                                                                                                                                      | [#92](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/92) |
+| data-export            | missing        | Source has self-service JSON export/restore and local backups; Tadooer has only operator SQLite backups.                                                                                                                                                                                        | [#93](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/93) |
+| sync-providers         | excluded       | Owner decision September 24: third-party storage sync and client-side end-to-end encryption are not parity requirements.                                                                                                                                                                        | [#94](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/94) |
 
 ## Import dispositions
 
@@ -77,7 +77,8 @@ no section is dropped without a report:
 
 - **applied**: mapped into Tadooer records.
 - **parity**: inventoried; apply is blocked with a parity finding (recurrence,
-  time history, archives). Hierarchy fields apply since #27, and a chain deeper
+  time history). Archived tasks apply since #38; see "Archived history" below.
+  Hierarchy fields apply since #27, and a chain deeper
   than two levels blocks with `hierarchy_depth_unsupported`. Day-only plans
   (`dueDay`) and exact reminder offsets apply since #29; a reminder that is not
   an exact offset blocks.
@@ -112,6 +113,38 @@ credentials block apply.
 
 Unknown sections (`unknown_section`), task fields (`unknown_task_field`) and
 project/tag/note fields block apply until they are reviewed.
+
+Every finding carries `blocking`. Reported dispositions that do not block are
+`configuration_not_imported`, `duplicate_copy_collapsed`,
+`historical_reference`, `historical_parent_detached` and `history_review`; any
+other code blocks.
+
+### Archived history (#38)
+
+`archiveYoung` and `archiveOld` apply as archived tasks (ADR 0022). Their
+`task` stores keep original `created` and `doneOn` times and their hierarchy.
+On archived records only:
+
+- projects, tags, repeat configurations and parents absent from the export,
+  and priority markers, are kept as historical references instead of blocking;
+- a blank title imports as "Untitled archived task", notes over 20,000
+  characters import truncated, and an unrepresentable estimate is left empty;
+  each is flagged for review and the source value stays in provenance;
+- schedule and reminder fields, including legacy `plannedAt`, are kept in
+  provenance and never applied.
+
+Identical copies of one task in two stores collapse to the first store's copy
+(live, then young, then old). Divergent copies block and name the differing
+fields. A child whose parent is in the other lifecycle imports at top level
+with the parent kept as a historical reference. Populated archive
+`timeTracking` still blocks (#41), as do unknown archive keys.
+
+A read-only rerun on the September 24 backup maps 4,275 archived records
+(1,778 young after 95 duplicates, 2,497 old). It keeps 5,369 historical
+references: 1,100 projects and 2,930 tags missing from the export, 28 priority
+markers, and 1,311 repeat configuration IDs (657 missing, 654 existing). Six
+blank titles, one oversized note and two estimates are flagged for review.
+32 duplicate copies collapse; 63 differ in `isDone`/`doneOn` and block.
 
 ### September 24 backup (19.1.0)
 

@@ -79,6 +79,8 @@ export interface TasksPageProps extends TaskHierarchyActions {
   ) => Promise<boolean>;
   readonly onRemoveTask: (task: Task) => Promise<void>;
   readonly onRecoverTask: (task: Task) => Promise<void>;
+  /** Moves a top-level task and its children to History (ADR 0022); online only. */
+  readonly onArchiveTask?: (task: Task) => Promise<void>;
   /** Enables project/tag/note management when a session is available. */
   readonly organization?: {
     readonly csrfToken: string;
@@ -125,6 +127,7 @@ export const TasksPage = ({
   onChangeTaskStatus,
   onRemoveTask,
   onRecoverTask,
+  onArchiveTask,
   timeZone = "UTC",
   onSubmitTaskPlanning,
   onCreateChildTask,
@@ -352,6 +355,17 @@ export const TasksPage = ({
         >
           {task.status === "completed" ? "Reopen" : "Complete"}
         </Button>
+        {onArchiveTask !== undefined && task.parentId == null && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy || organization?.online === false}
+            title="Move this task and its children to History"
+            onClick={() => void onArchiveTask(task)}
+          >
+            Archive
+          </Button>
+        )}
         <Button
           variant="destructive"
           type="button"

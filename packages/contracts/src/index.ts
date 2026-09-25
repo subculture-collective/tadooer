@@ -2,6 +2,7 @@ export { superProductivityImportLimits } from "./import-limits.ts";
 export * from "./organization.ts";
 export * from "./task-planning.ts";
 export * from "./task-links.ts";
+export * from "./task-archive.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -26,6 +27,12 @@ import {
   plannedDayAndStartMessage,
   taskPlanningFieldsSchema,
 } from "./task-planning.ts";
+import {
+  historicalReferenceSchema,
+  taskArchiveReviewReasonSchema,
+  taskHistoryProvenanceSchema,
+  taskHistoryQuerySchema,
+} from "./task-archive.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -310,6 +317,8 @@ export const taskSchema = z.object({
   parentId: entityIdSchema.nullable().optional(),
   /** Sparse order key among the parent's children; null for top-level tasks. */
   childPosition: z.number().int().nullable().optional(),
+  /** ADR 0022: set only on archived history; active tasks omit it. */
+  archivedAt: z.iso.datetime().nullable().optional(),
 });
 
 export const createTaskRequestSchema = z.object({
@@ -371,6 +380,36 @@ export const taskChildOrderRequestSchema = z
   .strict();
 export const taskChildrenResponseSchema = z
   .object({ parent: taskSchema, children: z.array(taskSchema) })
+  .strict();
+
+// ADR 0022 archived history. A history entry is a top-level archived task with
+// the children archived with it; each carries read-only import provenance.
+export const archivedTaskSchema = z
+  .object({
+    task: taskSchema,
+    provenance: taskHistoryProvenanceSchema.nullable(),
+  })
+  .strict();
+export const taskHistoryEntrySchema = archivedTaskSchema
+  .extend({ children: z.array(archivedTaskSchema) })
+  .strict();
+export const taskHistoryResponseSchema = z
+  .object({
+    entries: z.array(taskHistoryEntrySchema),
+    total: z.number().int().nonnegative(),
+    nextCursor: z.string().nullable(),
+  })
+  .strict();
+export const taskArchiveMutationResponseSchema = z
+  .object({
+    archive: z
+      .object({
+        action: z.enum(["archived", "restored"]),
+        task: taskSchema,
+        children: z.array(taskSchema),
+      })
+      .strict(),
+  })
   .strict();
 
 export const conditionalRequestHeadersSchema = z.object({
@@ -1599,6 +1638,8 @@ export const automationOperationSchema = z.enum([
   "tasks.set_completed",
   "tasks.delete",
   "tasks.restore",
+  "tasks.archive",
+  "tasks.unarchive",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1858,6 +1899,14 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationTaskLifecycleInputSchema,
     }),
     z.object({
+      operation: z.literal("tasks.archive"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.unarchive"),
+      input: automationTaskLifecycleInputSchema,
+    }),
+    z.object({
       operation: z.literal("tasks.update"),
       input: automationTaskUpdateInputSchema,
     }),
@@ -1991,7 +2040,12 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: habitCommandSchema,
     });
-  if (operation === "tasks.delete" || operation === "tasks.restore")
+  if (
+    operation === "tasks.delete" ||
+    operation === "tasks.restore" ||
+    operation === "tasks.archive" ||
+    operation === "tasks.unarchive"
+  )
     return z.object({
       operation: z.literal(operation),
       input: automationTaskLifecycleInputSchema,
@@ -2155,6 +2209,7 @@ export const automationExecutionResultSchema = z.union([
     .strict(),
   checklistMutationResponseSchema,
   taskHierarchyMutationResponseSchema,
+  taskArchiveMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2315,6 +2370,17 @@ export const automationCatalog = [
     mcpUri: "suite://v1/tasks/deleted",
     inputSchema: z.object({}).strict(),
     outputSchema: automationTaskResourceSchema,
+  },
+  {
+    id: "tasks.history",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/tasks/history",
+    mcpName: "suite.tasks.history",
+    mcpUri: "suite://v1/tasks/history{?query,cursor,limit}",
+    inputSchema: taskHistoryQuerySchema,
+    outputSchema: taskHistoryResponseSchema,
   },
   {
     id: "schedule.get",
@@ -2609,6 +2675,12 @@ export type TaskChildCreateRequest = z.infer<
   typeof taskChildCreateRequestSchema
 >;
 export type TaskChildrenResponse = z.infer<typeof taskChildrenResponseSchema>;
+export type ArchivedTask = z.infer<typeof archivedTaskSchema>;
+export type TaskHistoryEntry = z.infer<typeof taskHistoryEntrySchema>;
+export type TaskHistoryResponse = z.infer<typeof taskHistoryResponseSchema>;
+export type TaskArchiveMutationResponse = z.infer<
+  typeof taskArchiveMutationResponseSchema
+>;
 export type TaskHierarchyMutationResponse = z.infer<
   typeof taskHierarchyMutationResponseSchema
 >;
@@ -2783,6 +2855,10 @@ export const superProductivityPreviewSchema = z.object({
       scheduledDay: z.string().nullable(),
       deadlineAt: z.iso.datetime().nullable(),
       deadlineDay: z.string().nullable(),
+      // ADR 0022: source store, review reasons and unresolved references.
+      store: z.enum(["task", "archiveYoung", "archiveOld"]).optional(),
+      review: z.array(taskArchiveReviewReasonSchema).optional(),
+      historicalReferences: z.array(historicalReferenceSchema).optional(),
     }),
   ),
   issues: z.array(
@@ -2790,6 +2866,8 @@ export const superProductivityPreviewSchema = z.object({
       code: z.string(),
       sourceId: z.string().nullable(),
       detail: z.string(),
+      /** False for a reported disposition that does not prevent apply. */
+      blocking: z.boolean().optional(),
     }),
   ),
 });

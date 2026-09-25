@@ -281,6 +281,16 @@
       "source": "packages/contracts/src/index.ts"
     },
     {
+      "id": "task-history",
+      "action": "Search archived task history, archive a top-level task with its children, restore an archived family",
+      "webApi": ["getTaskHistory", "archiveTask", "unarchiveTask"],
+      "catalog": ["tasks.history", "tasks.archive", "tasks.unarchive"],
+      "status": "covered",
+      "issue": 38,
+      "authority": "tasks:read for owner-scoped history search with read-only import provenance; tasks:write for archive and restore. The preview freezes the parent and every child it moves; a changed or added child makes confirmation stale. Online-only in the browser (ADR 0022).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "templates-read",
       "action": "Template and set libraries",
       "webApi": ["getTemplateLibrary", "getTemplateSets"],
@@ -423,12 +433,12 @@
     },
     {
       "id": "future-parity",
-      "action": "Archived history, recurrence and manual worklogs",
+      "action": "Recurrence and manual worklogs",
       "webApi": [],
       "catalog": [],
       "status": "future",
       "issue": 32,
-      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #38, #41, #42. Hierarchy (#27) is the task-hierarchy row.",
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #41, #42. Hierarchy (#27) and archived history (#38) have their own rows.",
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {

@@ -36,8 +36,25 @@ import {
   writeTaskPlanning,
   type StoredStartReminder,
 } from "./task-planning-columns.ts";
-import { scheduledReminders } from "@suite/domain";
+import {
+  scheduledReminders,
+  type HistoricalReference,
+  type TaskArchiveReviewReason,
+} from "@suite/domain";
 import { SqliteTaskHierarchyStore } from "./task-hierarchy-store.ts";
+import {
+  SqliteTaskArchiveStore,
+  taskArchiveMigration,
+} from "./task-archive-store.ts";
+export {
+  SqliteTaskArchiveStore,
+  TaskHistoryCursorError,
+  type ArchivedTaskRecord,
+  type TaskArchiveProvenanceRecord,
+  type TaskArchiveResult,
+  type TaskHistoryEntryRecord,
+  type TaskHistoryPage,
+} from "./task-archive-store.ts";
 export {
   SqliteTaskHierarchyStore,
   TaskHierarchyError,
@@ -170,6 +187,8 @@ export interface TaskRecord {
   readonly parentId?: string | null;
   /** Sparse sibling order key; null for a top-level task. */
   readonly childPosition?: number | null;
+  /** Set while the task is archived history (ADR 0022). */
+  readonly archivedAt?: string | null;
 }
 
 export interface TaskPatch {
@@ -1417,6 +1436,7 @@ const migrations: readonly Migration[] = [
     `,
   },
   taskLinksMigration,
+  taskArchiveMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1434,10 +1454,25 @@ export class SuiteDatabase {
   readonly notes: SqliteNoteStore;
   readonly taskHierarchy: SqliteTaskHierarchyStore;
   readonly taskLinks: SqliteTaskLinkStore;
+  readonly taskArchive: SqliteTaskArchiveStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.notes = new SqliteNoteStore(database);
+    this.taskArchive = new SqliteTaskArchiveStore(database, {
+      getTask: (ownerId, taskId, includeInactive) =>
+        this.getTask(ownerId, taskId, includeInactive),
+      appendChange: (ownerId, taskId, kind, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "task",
+          taskId,
+          kind,
+          revision,
+          now,
+        );
+      },
+    });
     this.taskHierarchy = new SqliteTaskHierarchyStore(database, {
       getTask: (ownerId, taskId, includeDeleted) =>
         this.getTask(ownerId, taskId, includeDeleted),
@@ -3034,6 +3069,14 @@ export class SuiteDatabase {
       // Linked issue and attachments (ADR 0021); tasks only.
       issueLink?: ImportedIssueLink | null;
       attachments?: readonly ImportedAttachment[];
+      /**
+       * ADR 0022: for a task, `archived` imports it as archived history.
+       * `archiveStore` names its source store; review reasons and unresolved
+       * source references are stored as read-only provenance.
+       */
+      archiveStore?: "task" | "archiveYoung" | "archiveOld";
+      review?: readonly TaskArchiveReviewReason[];
+      historicalReferences?: readonly HistoricalReference[];
     }[],
     now: string,
   ): { created: number; existing: number } {
@@ -3045,6 +3088,7 @@ export class SuiteDatabase {
         sourceTaskIds: readonly string[];
       }[] = [];
       const newChildren: (typeof records)[number][] = [];
+      const newTasks: { id: string; record: (typeof records)[number] }[] = [];
       let created = 0;
       let existing = 0;
       for (const record of records) {
@@ -3198,6 +3242,7 @@ export class SuiteDatabase {
           );
         if (record.kind === "task" && record.parentSourceId != null)
           newChildren.push(record);
+        if (record.kind === "task") newTasks.push({ id, record });
         created++;
       }
       const addToBacklog = this.#database.prepare(
@@ -3234,6 +3279,26 @@ export class SuiteDatabase {
           now,
         });
         if (moved.kind !== "moved") throw new Error("IMPORT_HIERARCHY_INVALID");
+      }
+      // Archive after the hierarchy exists: archived rows are read-only.
+      for (const { id, record } of newTasks) {
+        if (
+          (record.review ?? []).length > 0 ||
+          (record.historicalReferences ?? []).length > 0 ||
+          record.archived === true
+        )
+          this.taskArchive.recordImportProvenance(
+            ownerId,
+            id,
+            {
+              sourceStore: record.archiveStore ?? "task",
+              review: record.review ?? [],
+              historicalReferences: record.historicalReferences ?? [],
+            },
+            now,
+          );
+        if (record.archived === true)
+          this.taskArchive.markImportedArchived(ownerId, id, now);
       }
       this.#database.exec("COMMIT;");
       return { created, existing };
@@ -3414,7 +3479,7 @@ export class SuiteDatabase {
       .prepare(
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
                 completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
-         FROM tasks WHERE owner_id = ? AND deleted_at IS NULL
+         FROM tasks WHERE owner_id = ? AND deleted_at IS NULL AND archived_at IS NULL
          ORDER BY created_at DESC, id DESC`,
       )
       .all(ownerId) as unknown as readonly {
@@ -3522,6 +3587,10 @@ export class SuiteDatabase {
     return rows.map((row) => this.#withTaskTags(this.#taskFromRow(row)));
   }
 
+  /**
+   * An active task. `includeDeleted` also returns soft-deleted and archived
+   * tasks; callers that write must check `deletedAt` and `archivedAt`.
+   */
   getTask(
     ownerId: string,
     taskId: string,
@@ -3532,7 +3601,7 @@ export class SuiteDatabase {
         `SELECT id, owner_id, title, notes, status, revision, created_at, updated_at,
                 completed_at, deleted_at, planned_start, estimate_minutes, deadline_date, deadline_at
          FROM tasks WHERE owner_id = ? AND id = ?
-           AND (? = 1 OR deleted_at IS NULL)`,
+           AND (? = 1 OR (deleted_at IS NULL AND archived_at IS NULL))`,
       )
       .get(ownerId, taskId, includeDeleted ? 1 : 0) as unknown as
       TaskRow | undefined;
@@ -4747,7 +4816,7 @@ export class SuiteDatabase {
       }
       const changed = this.#database
         .prepare(
-          "UPDATE tasks SET project_id=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL",
+          "UPDATE tasks SET project_id=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=? AND deleted_at IS NULL AND archived_at IS NULL",
         )
         .run(projectId, now, ownerId, taskId, expectedRevision).changes;
       if (changed !== 1) {
@@ -5963,6 +6032,26 @@ export class SuiteDatabase {
         this.#database.exec("COMMIT;");
         return { kind: "conflict", fields: ["task"] };
       }
+      // Archived history is read-only (ADR 0022): an offline edit queued
+      // before the archive becomes a visible, replay-stable conflict.
+      if (task.archivedAt != null) {
+        this.#database
+          .prepare(
+            "INSERT INTO sync_operation_outcomes (owner_id,client_id,operation_id,request_hash,state,entity_id,revision,conflict_fields,created_at) VALUES (?,?,?,?, 'conflict',?,?,?,?)",
+          )
+          .run(
+            input.ownerId,
+            input.clientId,
+            input.operationId,
+            input.requestHash,
+            input.taskId,
+            task.revision,
+            JSON.stringify(["archivedAt"]),
+            input.now,
+          );
+        this.#database.exec("COMMIT;");
+        return { kind: "conflict", fields: ["archivedAt"], task };
+      }
       const fields = Object.keys(
         input.patch,
       ) as (keyof typeof input.baseVersions)[];
@@ -6277,6 +6366,7 @@ export class SuiteDatabase {
         : this.getActiveSession(input.ownerId);
       if (
         task?.revision !== input.baseRevision ||
+        task.archivedAt != null ||
         (input.restore ? task.deletedAt === null : task.deletedAt !== null) ||
         (activeSession?.endedAt === null &&
           activeSession.taskId === input.taskId) ||
@@ -6364,6 +6454,7 @@ export class SuiteDatabase {
       const current = this.getTask(ownerId, taskId, true);
       if (
         current === undefined ||
+        current.archivedAt != null ||
         (requireDeleted
           ? current.deletedAt === null
           : current.deletedAt !== null)
@@ -6545,13 +6636,14 @@ export class SuiteDatabase {
   #withTaskTags(task: TaskRecord): TaskRecord {
     const project = this.#database
       .prepare(
-        "SELECT project_id, parent_id, child_position FROM tasks WHERE owner_id = ? AND id = ?",
+        "SELECT project_id, parent_id, child_position, archived_at FROM tasks WHERE owner_id = ? AND id = ?",
       )
       .get(task.ownerId, task.id) as unknown as
       | {
           project_id: string | null;
           parent_id: string | null;
           child_position: number | null;
+          archived_at: string | null;
         }
       | undefined;
     const tags = this.#database
@@ -6564,6 +6656,7 @@ export class SuiteDatabase {
       ...readTaskPlanning(this.#database, task.ownerId, task.id),
       parentId: project?.parent_id ?? null,
       childPosition: project?.child_position ?? null,
+      archivedAt: project?.archived_at ?? null,
     };
   }
 
@@ -6585,7 +6678,8 @@ export class SuiteDatabase {
       .prepare(
         `SELECT b.project_id, b.task_id FROM project_backlog_tasks b
          JOIN tasks t ON t.id = b.task_id AND t.owner_id = b.owner_id
-         WHERE b.owner_id = ? AND t.deleted_at IS NULL AND t.project_id = b.project_id
+         WHERE b.owner_id = ? AND t.deleted_at IS NULL AND t.archived_at IS NULL
+           AND t.project_id = b.project_id
            ${projectId === undefined ? "" : "AND b.project_id = ?"}
          ORDER BY b.project_id, b.position, b.task_id`,
       )

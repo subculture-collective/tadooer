@@ -21,6 +21,7 @@ import {
   plannerWindowSchema,
   taskLinksResourceInputSchema,
   templateSearchRequestSchema,
+  taskHistoryQuerySchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -47,6 +48,11 @@ import {
   previewTaskLinks,
 } from "./automation-task-links.ts";
 import { taskLinksResponse } from "./task-links.ts";
+  confirmTaskArchive,
+  isTaskArchiveCommand,
+  previewTaskArchive,
+} from "./automation-task-archive.ts";
+import { taskHistoryBody } from "./task-archive.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -419,7 +425,23 @@ export const handleAutomation: RouteHandler = async (
       body = {
         tasks: database.listDeletedTasks(token.ownerId).map(taskResponse),
       };
-    else if (resource === "projects.list")
+    else if (resource === "tasks.history") {
+      const input = taskHistoryQuerySchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      body = input.success
+        ? taskHistoryBody(database, token.ownerId, input.data)
+        : undefined;
+      if (body === undefined) {
+        sendError(
+          response,
+          400,
+          "INVALID_HISTORY_QUERY",
+          "History search, cursor or limit is invalid",
+        );
+        return true;
+      }
+    } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
       };
@@ -843,6 +865,16 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
       );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isTaskArchiveCommand(command)) {
+      // ADR 0022: freezes the parent and every child the archive moves.
+      const planned = previewTaskArchive(database, token.ownerId, command);
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1753,6 +1785,23 @@ export const handleAutomation: RouteHandler = async (
         database,
         token.ownerId,
         command,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isTaskArchiveCommand(command)) {
+      const confirmation = confirmTaskArchive(
+        database,
+        token.ownerId,
+        command,
+        Object.keys(preview.baseRevisions),
       );
       if (!confirmation.ok) {
         sendError(

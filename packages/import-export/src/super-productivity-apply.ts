@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { organizationIconPattern } from "@suite/contracts";
-import { previewSuperProductivity } from "./super-productivity.ts";
+import {
+  untitledArchivedTaskTitle,
+  type HistoricalReference,
+  type TaskArchiveReviewReason,
+} from "@suite/contracts";
+import {
+  previewSuperProductivity,
+  type SuperProductivityTaskStore,
+} from "./super-productivity.ts";
 import {
   fieldsWith,
   populated,
@@ -67,13 +75,27 @@ export interface TaskImportRecord {
   // Linked issue and attachments (ADR 0021); tasks only.
   issueLink?: ImportedIssueLink | null;
   attachments?: ImportedAttachment[];
+  /** Task source store; archive stores import as archived history (ADR 0022). */
+  archiveStore?: SuperProductivityTaskStore;
+  review?: TaskArchiveReviewReason[];
+  historicalReferences?: HistoricalReference[];
 }
 
-/** Report codes that inform the owner without blocking apply. */
-const nonBlockingCodes: ReadonlySet<string> = new Set([
-  "configuration_not_imported",
-  "issue_provider_missing",
-]);
+/**
+ * Findings that are reported but do not block apply. Everything else blocks,
+ * so a new finding code is blocking until it is reviewed here.
+ */
+export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
+  new Set([
+    "configuration_not_imported",
+    // ADR 0021: a link to a provider absent from the export is kept.
+    "issue_provider_missing",
+    // ADR 0022 history dispositions: each is deterministic and visible.
+    "duplicate_copy_collapsed",
+    "historical_reference",
+    "historical_parent_detached",
+    "history_review",
+  ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
 const hexColor = (value: unknown): string | undefined => {
@@ -167,10 +189,15 @@ export const prepareSuperProductivityImport = (raw: string) => {
       parentId === null ? [] : [parentId],
     ),
   );
-  const taskEntities = object(object(data.task).entities);
+  const storeEntities = (store: SuperProductivityTaskStore): Source =>
+    store === "task"
+      ? object(object(data.task).entities)
+      : object(object(object(data[store]).task).entities);
   const childIndex = (parentId: string | null, sourceId: string) => {
     if (parentId === null) return null;
-    const siblings = object(taskEntities[parentId]).subTaskIds;
+    const parent = taskById.get(parentId);
+    if (parent === undefined) return null;
+    const siblings = object(storeEntities(parent.store)[parentId]).subTaskIds;
     const index = Array.isArray(siblings) ? siblings.indexOf(sourceId) : -1;
     return index === -1 ? null : index;
   };
@@ -187,10 +214,11 @@ export const prepareSuperProductivityImport = (raw: string) => {
     fields: Readonly<Record<string, FieldDisposition>>,
     source: Source,
     keep: (key: string) => boolean = () => true,
+    extra: readonly string[] = [],
   ) => {
     // Persist reviewed fields only, never provider configuration credentials.
     const preserved = Object.fromEntries(
-      fieldsWith(fields, "applied", "retained")
+      [...fieldsWith(fields, "applied", "retained"), ...extra]
         .filter((key) => source[key] !== undefined && keep(key))
         .map((key) => [key, source[key]]),
     );
@@ -223,13 +251,35 @@ export const prepareSuperProductivityImport = (raw: string) => {
   const noteEntities = object(noteState.entities);
   const liveTasks = object(object(data.task).entities);
   const systemTags = new Set<string>(superProductivitySystemTagIds);
+  const tagEntities = object(object(data.tag).entities);
+  const projectEntityIds = object(object(data.project).entities);
+  /** Review reasons found while mapping, merged into the preview inventory. */
+  const reviewById = new Map<string, TaskArchiveReviewReason[]>();
+  const flag = (
+    sourceId: string,
+    reason: TaskArchiveReviewReason,
+    detail: string,
+  ) => {
+    reviewById.set(sourceId, [...(reviewById.get(sourceId) ?? []), reason]);
+    issues.push({ code: "history_review", sourceId, detail });
+  };
   const referencedTags = new Set(
     Object.values(liveTasks).flatMap((task) => strings(object(task).tagIds)),
   );
   for (const kind of ["project", "tag", "task"] as const) {
-    const entities = object(object(data[kind]).entities);
-    for (const [sourceId, value] of Object.entries(entities)) {
+    // Tasks come from the inventory, which holds one copy per ID from the
+    // live store and both archive stores (ADR 0022).
+    const entries: [string, unknown][] =
+      kind === "task"
+        ? inventory.tasks.map(({ sourceId, store }) => [
+            sourceId,
+            storeEntities(store)[sourceId],
+          ])
+        : Object.entries(object(object(data[kind]).entities));
+    for (const [sourceId, value] of entries) {
       const source = object(value);
+      const inventoried = kind === "task" ? taskById.get(sourceId) : undefined;
+      const archived = inventoried?.archived === true;
       if (kind === "tag" && systemTags.has(sourceId)) {
         // Derived views and board markers are never ordinary imported tags.
         if (sourceId === "TODAY" && strings(source.taskIds).length > 0)
@@ -249,7 +299,12 @@ export const prepareSuperProductivityImport = (raw: string) => {
           );
         continue;
       }
-      const title = typeof source.title === "string" ? source.title.trim() : "";
+      const title =
+        inventoried?.review.includes("blank_title") === true
+          ? untitledArchivedTaskTitle
+          : typeof source.title === "string"
+            ? source.title.trim()
+            : "";
       if (
         source.id !== sourceId ||
         !title ||
@@ -259,8 +314,22 @@ export const prepareSuperProductivityImport = (raw: string) => {
           sourceId,
           "Title or entity identity cannot be represented without changes",
         );
-      const notes = typeof source.notes === "string" ? source.notes : "";
-      if (
+      let notes = typeof source.notes === "string" ? source.notes : "";
+      if (archived && notes.length > 20000) {
+        // History policy: import the first 20,000 characters, flag the task,
+        // and keep the full source text in import provenance.
+        // Never split a surrogate pair at the boundary.
+        const high = notes.charCodeAt(19999);
+        notes = notes.slice(
+          0,
+          high >= 0xd800 && high <= 0xdbff ? 19999 : 20000,
+        );
+        flag(
+          sourceId,
+          "notes_unrepresentable",
+          "Archived task notes exceed 20,000 characters; the first 20,000 are imported, the full text stays in import provenance and the task is flagged for review",
+        );
+      } else if (
         (source.notes !== undefined && typeof source.notes !== "string") ||
         notes.length > 20000
       )
@@ -272,8 +341,11 @@ export const prepareSuperProductivityImport = (raw: string) => {
       }[kind];
       if (kind !== "task") reviewFields(kind, sourceId, source, fields);
       else {
-        const blocked = fieldsWith(fields, "blocked").filter((field) =>
-          populated(source[field]),
+        // A legacy plannedAt on archived history has no live effect; it is
+        // kept in provenance rather than blocking (ADR 0022).
+        const blocked = fieldsWith(fields, "blocked").filter(
+          (field) =>
+            populated(source[field]) && !(archived && field === "plannedAt"),
         );
         if (blocked.length > 0)
           problem(
@@ -281,7 +353,7 @@ export const prepareSuperProductivityImport = (raw: string) => {
             `${blocked.join(", ")} need${blocked.length === 1 ? "s" : ""} parity support before import`,
           );
       }
-      const task = kind === "task" ? taskById.get(sourceId) : undefined;
+      const task = inventoried;
       // Source reminders are absolute; keep them only as exact offsets from
       // an exact start or deadline. A timed task without remindAt had no
       // reminder in the source, so it imports with reminders disabled.
@@ -289,7 +361,9 @@ export const prepareSuperProductivityImport = (raw: string) => {
         kind: "default",
       };
       let deadlineReminderMinutes: number | null = null;
-      if (task !== undefined) {
+      // Archived tasks never schedule or remind (Super Productivity clears
+      // these when archiving); legacy values stay in provenance.
+      if (task !== undefined && !archived) {
         if (task.scheduledAt !== null) {
           if (!populated(source.remindAt)) startReminder = { kind: "none" };
           else {
@@ -352,13 +426,25 @@ export const prepareSuperProductivityImport = (raw: string) => {
               problem(sourceId, detail);
             })
           : [];
+      const detachedParent =
+        task?.historicalReferences.some(({ kind }) => kind === "parent") ===
+        true;
       const derivedEstimate = parentsWithChildren.has(sourceId);
-      const estimate = derivedEstimate ? 0 : (task?.estimateMilliseconds ?? 0);
-      if (estimate % 60000 !== 0 || estimate > 720 * 60000)
-        problem(
-          sourceId,
-          "Estimate must fit whole minutes up to 720; no rounding is applied",
-        );
+      let estimate = derivedEstimate ? 0 : (task?.estimateMilliseconds ?? 0);
+      if (estimate % 60000 !== 0 || estimate > 720 * 60000) {
+        if (archived) {
+          estimate = 0;
+          flag(
+            sourceId,
+            "estimate_unrepresentable",
+            "Archived task estimate is not whole minutes up to 720; it is not applied, stays in import provenance and the task is flagged for review",
+          );
+        } else
+          problem(
+            sourceId,
+            "Estimate must fit whole minutes up to 720; no rounding is applied",
+          );
+      }
       for (const flag of [
         "isDone",
         "isArchived",
@@ -380,7 +466,7 @@ export const prepareSuperProductivityImport = (raw: string) => {
         problem(sourceId, "Creation timestamp is invalid");
       if (Array.isArray(source.tagIds) && source.tagIds.length > 25)
         problem(sourceId, "Task has more than 25 tags");
-      if (kind === "task")
+      if (kind === "task" && !archived)
         for (const tagId of strings(source.tagIds))
           if (systemTags.has(tagId) && tagId !== "TODAY")
             problem(
@@ -395,24 +481,39 @@ export const prepareSuperProductivityImport = (raw: string) => {
         // dueDay superseded by dueWithTime is not applied. Linked-issue and
         // attachment fields (#30) follow the same rule: empty defaults such as
         // attachments: [] stay out so earlier hashes do not change.
-        ...preserve(
-          fields,
-          source,
-          (key) =>
-            kind !== "task" ||
-            (superProductivityLinkFields.has(key)
-              ? populated(source[key])
-              : !reminderAndDayFields.has(key) ||
-                (populated(source[key]) &&
-                  (key !== "dueDay" || task?.scheduledDay != null))),
-        ),
+        ...(archived
+          ? // History keeps every reviewed field it had, including legacy
+            // schedule values that are not applied to an archived task.
+            preserve(fields, source, () => true, ["plannedAt"])
+          : preserve(
+              fields,
+              source,
+              (key) =>
+                kind !== "task" ||
+                (superProductivityLinkFields.has(key)
+                  ? populated(source[key])
+                  : !reminderAndDayFields.has(key) ||
+                    (populated(source[key]) &&
+                      (key !== "dueDay" || task?.scheduledDay != null))),
+            )),
         title,
         notes,
-        projectId: task?.projectId ?? null,
+        // Unresolved references on history are provenance, never links.
+        projectId:
+          archived &&
+          task?.projectId != null &&
+          !Object.hasOwn(projectEntityIds, task.projectId)
+            ? null
+            : (task?.projectId ?? null),
         // TODAY in tagIds is legacy view membership, not a tag assignment.
-        tagIds: strings(source.tagIds).filter((id) => id !== "TODAY"),
-        plannedStart: task?.scheduledAt ?? null,
-        plannedDay: task?.scheduledDay ?? null,
+        tagIds: strings(source.tagIds).filter(
+          (id) =>
+            id !== "TODAY" &&
+            (!archived ||
+              (!systemTags.has(id) && Object.hasOwn(tagEntities, id))),
+        ),
+        plannedStart: archived ? null : (task?.scheduledAt ?? null),
+        plannedDay: archived ? null : (task?.scheduledDay ?? null),
         startReminder,
         deadlineReminderMinutes,
         deadlineDate: task?.deadlineDay ?? null,
@@ -420,12 +521,20 @@ export const prepareSuperProductivityImport = (raw: string) => {
         estimateMinutes: estimate === 0 ? null : estimate / 60000,
         completedAt,
         createdAt,
-        parentSourceId: task?.parentId ?? null,
-        childIndex: childIndex(task?.parentId ?? null, sourceId),
+        parentSourceId: detachedParent ? null : (task?.parentId ?? null),
+        childIndex: detachedParent
+          ? null
+          : childIndex(task?.parentId ?? null, sourceId),
       };
       if (kind === "task" && (issueLink !== null || attachments.length > 0)) {
         record.issueLink = issueLink;
         record.attachments = attachments;
+      }
+      if (task !== undefined) {
+        record.archived = archived;
+        record.archiveStore = task.store;
+        record.review = [...task.review, ...(reviewById.get(sourceId) ?? [])];
+        record.historicalReferences = [...task.historicalReferences];
       }
       if (kind !== "task") {
         const icon = source.icon;
@@ -580,18 +689,20 @@ export const prepareSuperProductivityImport = (raw: string) => {
     ...records.filter(({ kind }) => kind === "task"),
     ...byOrder(noteRecords, noteOrder),
   ];
-  if (inventory.totals.archived > 0)
-    problem(
-      "archive",
-      "Archived task history is not supported by this initial apply path",
-    );
   if (ordered.length === 0) problem("export", "No supported records to import");
-  const notices = issues.filter(({ code }) => nonBlockingCodes.has(code));
+  const reported = issues.map((issue) => ({
+    ...issue,
+    blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
+  }));
   return {
     report: {
       ...inventory,
-      canApply: issues.length === notices.length,
-      issues,
+      tasks: inventory.tasks.map((task) => ({
+        ...task,
+        review: [...task.review, ...(reviewById.get(task.sourceId) ?? [])],
+      })),
+      canApply: reported.every(({ blocking }) => !blocking),
+      issues: reported,
     },
     records: ordered,
   };

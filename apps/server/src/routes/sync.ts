@@ -588,10 +588,15 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             snapshot,
           };
         }
-        const task =
+        const stored =
           change.entityType === "task"
             ? database.getTask(session.owner.id, change.entityId, true)
             : undefined;
+        // ADR 0022: archived history leaves the offline cache. Whatever the
+        // recorded change kind, a task that is archived now is sent as a
+        // removal without a snapshot; restoring it sends a fresh upsert.
+        const archived = stored?.archivedAt != null;
+        const task = archived ? undefined : stored;
         const versions =
           task === undefined
             ? undefined
@@ -650,7 +655,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             | "active_session",
           entityId: change.entityId,
           kind:
-            change.kind === "deleted"
+            change.kind === "deleted" || archived
               ? ("deleted" as const)
               : change.kind === "session_changed"
                 ? ("session_changed" as const)
