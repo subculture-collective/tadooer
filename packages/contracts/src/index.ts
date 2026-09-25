@@ -3,6 +3,7 @@ export * from "./organization.ts";
 export * from "./task-planning.ts";
 export * from "./task-links.ts";
 export * from "./task-archive.ts";
+export * from "./time-history.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -33,6 +34,12 @@ import {
   taskHistoryProvenanceSchema,
   taskHistoryQuerySchema,
 } from "./task-archive.ts";
+import {
+  automationTimeEntryMutationInputSchema,
+  timeEntryMutationResponseSchema,
+  timeReportQuerySchema,
+  timeReportResponseSchema,
+} from "./time-history.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -1640,6 +1647,7 @@ export const automationOperationSchema = z.enum([
   "tasks.restore",
   "tasks.archive",
   "tasks.unarchive",
+  "time_entries.mutate",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1847,6 +1855,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationChecklistInputSchema,
     }),
     z.object({
+      operation: z.literal("time_entries.mutate"),
+      input: automationTimeEntryMutationInputSchema,
+    }),
+    z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
     }),
@@ -2020,6 +2032,11 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationTaskLinkMutationInputSchema,
     });
+  if (operation === "time_entries.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTimeEntryMutationInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2126,6 +2143,7 @@ export const automationAffectedEntitySchema = z
       "note",
       "task_attachment",
       "task_issue_link",
+      "time_entry",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -2148,6 +2166,7 @@ const existingAutomationBaseRevisionSchema = z
       "note",
       "task_attachment",
       "task_issue_link",
+      "time_entry",
       "choice_pool",
       "planning_placeholder",
       "pool_item",
@@ -2210,6 +2229,7 @@ export const automationExecutionResultSchema = z.union([
   checklistMutationResponseSchema,
   taskHierarchyMutationResponseSchema,
   taskArchiveMutationResponseSchema,
+  timeEntryMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2383,6 +2403,17 @@ export const automationCatalog = [
     outputSchema: taskHistoryResponseSchema,
   },
   {
+    id: "time.report",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/time-report",
+    mcpName: "suite.time.report",
+    mcpUri: "suite://v1/time-report{?from,to}",
+    inputSchema: timeReportQuerySchema,
+    outputSchema: timeReportResponseSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2501,7 +2532,9 @@ export const automationCatalog = [
                     ? "task_links:write"
                     : id === "habits.mutate"
                       ? "habits:write"
-                      : id.startsWith("tasks.") || id === "subtasks.mutate"
+                      : id.startsWith("tasks.") ||
+                          id === "subtasks.mutate" ||
+                          id === "time_entries.mutate"
                         ? "tasks:write"
                         : id === "schedule.create_time_block"
                           ? "schedule:write"
@@ -2839,6 +2872,20 @@ export const superProductivityPreviewSchema = z.object({
     tags: z.number().int().nonnegative(),
     repeatConfigurations: z.number().int().nonnegative(),
     trackedMilliseconds: z.number().nonnegative(),
+    /** Work history reconciliation (ADR 0024), in milliseconds and counts. */
+    time: z
+      .object({
+        sourceLeafMs: z.number().int().nonnegative(),
+        sourceLeafDailyMs: z.number().int().nonnegative(),
+        taskDayEntries: z.number().int().nonnegative(),
+        taskDayMs: z.number().int().nonnegative(),
+        parentResidualEntries: z.number().int().nonnegative(),
+        parentResidualMs: z.number().int().nonnegative(),
+        undatedMs: z.number().int().nonnegative(),
+        datedExcessMs: z.number().int().nonnegative(),
+        workContextDays: z.number().int().nonnegative(),
+      })
+      .optional(),
   }),
   tasks: z.array(
     z.object({
