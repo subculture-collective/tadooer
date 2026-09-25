@@ -2467,6 +2467,8 @@ export const automationCatalog = [
     mcpUri: "suite://v1/recurrence",
     inputSchema: z.object({}).strict(),
     outputSchema: recurringSeriesListResponseSchema,
+  },
+  {
     id: "time.report",
     kind: "resource",
     scopes: ["tasks:read"],

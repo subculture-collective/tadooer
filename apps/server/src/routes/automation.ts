@@ -919,6 +919,13 @@ export const handleAutomation: RouteHandler = async (
     } else if (isRecurrenceCommand(command)) {
       // ADR 0023: freezes the series revision (and a deleted instance's).
       const planned = previewRecurrence(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
     } else if (isTimeEntryCommand(command)) {
       // ADR 0024: freezes the entry revision, or the task for an addition.
       const planned = previewTimeEntry(
