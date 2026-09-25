@@ -43,6 +43,23 @@ import {
 } from "@suite/domain";
 import { SqliteTaskHierarchyStore } from "./task-hierarchy-store.ts";
 import {
+  SqliteTimeEntryStore,
+  timeHistoryMigration,
+  type ImportedTimeEntry,
+  type ImportedWorkContextDay,
+} from "./time-entry-store.ts";
+export {
+  SqliteTimeEntryStore,
+  type FocusEntryRecord,
+  type ImportedTimeEntry,
+  type ImportedWorkContextDay,
+  type TimeEntryImportProvenance,
+  type TimeEntryRecord,
+  type TimeEntryWriteResult,
+  type TimeReportRecord,
+  type TimeReportTaskRecord,
+} from "./time-entry-store.ts";
+import {
   SqliteTaskArchiveStore,
   taskArchiveMigration,
 } from "./task-archive-store.ts";
@@ -1461,6 +1478,7 @@ const migrations: readonly Migration[] = [
   taskLinksMigration,
   taskArchiveMigration,
   recurrenceMigration,
+  timeHistoryMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1480,6 +1498,7 @@ export class SuiteDatabase {
   readonly taskLinks: SqliteTaskLinkStore;
   readonly taskArchive: SqliteTaskArchiveStore;
   readonly recurrence: SqliteRecurrenceStore;
+  readonly timeEntries: SqliteTimeEntryStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
@@ -1510,6 +1529,9 @@ export class SuiteDatabase {
           now,
         );
       },
+    this.timeEntries = new SqliteTimeEntryStore(database, {
+      getTask: (ownerId, taskId, includeInactive) =>
+        this.getTask(ownerId, taskId, includeInactive),
     });
     this.notes = new SqliteNoteStore(database);
     this.taskArchive = new SqliteTaskArchiveStore(database, {
@@ -3130,6 +3152,8 @@ export class SuiteDatabase {
       archiveStore?: "task" | "archiveYoung" | "archiveOld";
       review?: readonly TaskArchiveReviewReason[];
       historicalReferences?: readonly HistoricalReference[];
+      /** Daily work history of a task (ADR 0024); written for new tasks only. */
+      timeEntries?: readonly ImportedTimeEntry[];
     }[],
     now: string,
     /** ADR 0023: repeat configurations and the instances that link to them. */
@@ -3137,6 +3161,16 @@ export class SuiteDatabase {
       readonly series: readonly ImportedRecurringSeries[];
       readonly links: readonly ImportedOccurrenceLink[];
     },
+    options: {
+      /**
+       * Source work start/end and breaks by project, tag or Today context
+       * (ADR 0024). Context IDs are source IDs, mapped through this batch.
+       */
+      readonly workContexts?: readonly Omit<
+        ImportedWorkContextDay,
+        "projectId" | "tagId"
+      >[];
+    } = {},
   ): {
     created: number;
     existing: number;
@@ -3342,6 +3376,31 @@ export class SuiteDatabase {
         });
         if (moved.kind !== "moved") throw new Error("IMPORT_HIERARCHY_INVALID");
       }
+      // Work history is written before archiving: archived time is read-only.
+      for (const { id, record } of newTasks)
+        if ((record.timeEntries ?? []).length > 0)
+          this.timeEntries.insertImported(
+            ownerId,
+            id,
+            record.timeEntries ?? [],
+            randomUUID,
+            now,
+          );
+      this.timeEntries.importWorkContexts(
+        ownerId,
+        (options.workContexts ?? []).map((context) => ({
+          ...context,
+          projectId:
+            context.contextKind === "project"
+              ? (targets.get(`project:${context.sourceContextId}`) ?? null)
+              : null,
+          tagId:
+            context.contextKind === "tag"
+              ? (targets.get(`tag:${context.sourceContextId}`) ?? null)
+              : null,
+        })),
+        now,
+      );
       // Archive after the hierarchy exists: archived rows are read-only.
       for (const { id, record } of newTasks) {
         if (

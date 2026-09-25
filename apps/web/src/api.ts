@@ -129,6 +129,12 @@ import {
   type RecurringSeriesListResponse,
   type RecurringSeriesMutationResponse,
   type RecurringSeriesPatchRequest,
+  timeEntryMutationResponseSchema,
+  timeReportResponseSchema,
+  type TimeEntryCreateRequest,
+  type TimeEntryMutationResponse,
+  type TimeEntryPatchRequest,
+  type TimeReport,
 } from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
@@ -1303,5 +1309,55 @@ export const changeRecurrenceOccurrence = (
       method: "POST",
       headers: conditionalHeaders(revision, csrfToken),
       body: JSON.stringify(recurrenceOccurrenceRequestSchema.parse({ action })),
+// Work history (ADR 0024) is online-only: reads and writes go to the server.
+export const getTimeReport = (from: string, to: string): Promise<TimeReport> =>
+  request(
+    `/api/time/report?${new URLSearchParams({ from, to }).toString()}`,
+    timeReportResponseSchema,
+  );
+
+export const createTimeEntry = (
+  entry: TimeEntryCreateRequest,
+  csrfToken: string,
+): Promise<TimeEntryMutationResponse> =>
+  request("/api/time/entries", timeEntryMutationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(entry),
+  });
+
+export const updateTimeEntry = (
+  id: string,
+  revision: number,
+  patch: TimeEntryPatchRequest,
+  csrfToken: string,
+): Promise<TimeEntryMutationResponse> =>
+  request(
+    `/api/time/entries/${encodeURIComponent(id)}`,
+    timeEntryMutationResponseSchema,
+    {
+      method: "PATCH",
+      headers: {
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"${String(revision)}"`,
+      },
+      body: JSON.stringify(patch),
+    },
+  );
+
+export const deleteTimeEntry = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<TimeEntryMutationResponse> =>
+  request(
+    `/api/time/entries/${encodeURIComponent(id)}`,
+    timeEntryMutationResponseSchema,
+    {
+      method: "DELETE",
+      headers: {
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"${String(revision)}"`,
+      },
     },
   );

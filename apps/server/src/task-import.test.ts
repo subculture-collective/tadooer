@@ -166,7 +166,13 @@ it("requires owner authentication and CSRF for a non-mutating task import previe
         task: {
           ids: ["tracked"],
           entities: {
-            tracked: { id: "tracked", title: "Tracked", timeSpent: 60000 },
+            // A tracked day over 24 hours still blocks (ADR 0024).
+            tracked: {
+              id: "tracked",
+              title: "Tracked",
+              timeSpent: 86_400_001,
+              timeSpentOnDay: { "2026-09-20": 86_400_001 },
+            },
           },
         },
       });

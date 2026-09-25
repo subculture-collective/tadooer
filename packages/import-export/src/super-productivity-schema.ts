@@ -23,8 +23,8 @@ export const superProductivitySections = {
   // Repeat configurations apply as recurring series since #42 (ADR 0023);
   // their fields are classified in super-productivity-recurrence.ts.
   taskRepeatCfg: "applied",
-  // Archived tasks apply as read-only history since #38 (ADR 0022). Their
-  // timeTracking part still blocks until work history parity (#41).
+  // Archived tasks apply as read-only history since #38 (ADR 0022); their
+  // timeTracking part applies since #41 (ADR 0024).
   archiveYoung: "applied",
   archiveOld: "applied",
   // Notes and menu order apply since #28 (ADR 0019); menuTree folders do not.
@@ -33,7 +33,8 @@ export const superProductivitySections = {
   section: "blocked",
   reminders: "blocked",
   metric: "blocked",
-  timeTracking: "blocked",
+  // Work start/end and breaks per project, tag and day (ADR 0024).
+  timeTracking: "applied",
   pluginUserData: "blocked",
   // Counter definitions are configuration; recorded values block (see preview).
   simpleCounter: "blocked",
@@ -48,12 +49,12 @@ export const superProductivitySections = {
 } as const satisfies Record<string, SectionDisposition>;
 
 /**
- * Keys of an archiveYoung/archiveOld section (ArchiveModel). `task` applies;
- * populated `timeTracking` blocks (#41); flush timestamps are transient.
+ * Keys of an archiveYoung/archiveOld section (ArchiveModel). `task` and
+ * `timeTracking` apply (ADR 0022, ADR 0024); flush timestamps are transient.
  */
 export const superProductivityArchiveKeys = {
   task: "applied",
-  timeTracking: "parity",
+  timeTracking: "applied",
   lastTimeTrackingFlush: "ignored",
   lastFlush: "ignored",
 } as const satisfies Record<string, FieldDisposition>;
@@ -77,8 +78,10 @@ export const superProductivityTaskFields = {
   subTaskIds: "applied",
   // Links an instance to its series with its occurrence date (ADR 0023).
   repeatCfgId: "applied",
-  timeSpent: "parity",
-  timeSpentOnDay: "parity",
+  // Daily work history (ADR 0024). timeSpentOnDay imports as daily time
+  // entries; timeSpent is the reconciliation total and stays in provenance.
+  timeSpent: "applied",
+  timeSpentOnDay: "applied",
   modified: "ignored",
   hasPlannedTime: "ignored",
   _hideSubTasksMode: "ignored",

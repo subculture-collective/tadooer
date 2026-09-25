@@ -40,7 +40,8 @@ export const handleTaskImport: RouteHandler = async (
   }
   try {
     const input = await readJson(request, limits.bytes);
-    const { report, records, recurrence } = prepareSuperProductivityImport(
+    const { report, records, recurrence, workContexts } =
+      prepareSuperProductivityImport(
       JSON.stringify(input),
       { timeZone: stores.getPlanningPreferences(session.owner.id).timeZone },
     );
@@ -67,6 +68,7 @@ export const handleTaskImport: RouteHandler = async (
           records,
           new Date().toISOString(),
           recurrence,
+          { workContexts },
         );
         sendJson(response, 200, outcome);
       } catch {

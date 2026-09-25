@@ -313,6 +313,21 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "time-history",
+      "action": "Read the worklog by day, week, task and project; add, edit and delete manual time entries and imported daily totals",
+      "webApi": [
+        "getTimeReport",
+        "createTimeEntry",
+        "updateTimeEntry",
+        "deleteTimeEntry"
+      ],
+      "catalog": ["time.report", "time_entries.mutate"],
+      "status": "covered",
+      "issue": 41,
+      "authority": "tasks:read for the owner-zone worklog report (at most 366 days); tasks:write for corrections. The preview freezes the entry revision, or the task revision and new entry ID for an addition; confirmation rechecks the 0 to 24 hour task-day bound and running focus. Focus entries and archived history are read-only. Online-only in the browser (ADR 0024).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "templates-read",
       "action": "Template and set libraries",
       "webApi": ["getTemplateLibrary", "getTemplateSets"],
@@ -455,12 +470,12 @@
     },
     {
       "id": "future-parity",
-      "action": "Manual worklogs",
+      "action": "Remaining parity actions: boards and views, counters and metrics, focus preferences, plugins and application settings",
       "webApi": [],
       "catalog": [],
       "status": "future",
       "issue": 32,
-      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependency: #41. Hierarchy (#27), archived history (#38) and recurrence (#42) have their own rows.",
+      "authority": "Add each new user action to this inventory as its domain slice is implemented. Dependencies: #63, #64, #65, #66, #67. Hierarchy (#27), archived history (#38), work history (#41) and recurrence (#42) have their own rows.",
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {

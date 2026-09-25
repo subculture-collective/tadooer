@@ -15,6 +15,7 @@ import {
 } from "@suite/contracts";
 import { HabitsPage } from "./pages/HabitsPage.tsx";
 import { HistoryPage } from "./pages/HistoryPage.tsx";
+import { WorklogPage } from "./pages/WorklogPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
@@ -2474,6 +2475,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           timeZone={state.planningPreferences?.timeZone ?? "UTC"}
           projects={projects}
           onRestored={syncNow}
+        />
+      )}
+      {route === "worklog" && (
+        <WorklogPage
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
+          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+          tasks={state.tasks.filter((task) => task.deletedAt === null)}
+          projects={projects}
         />
       )}
       {route === "habits" && (

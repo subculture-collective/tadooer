@@ -22,6 +22,7 @@ import {
   taskLinksResourceInputSchema,
   templateSearchRequestSchema,
   taskHistoryQuerySchema,
+  timeReportQuerySchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -60,6 +61,12 @@ import {
   previewRecurrence,
 } from "./automation-recurrence.ts";
 import { ownerToday, recurringSeriesResponse } from "./recurrence.ts";
+import {
+  confirmTimeEntry,
+  isTimeEntryCommand,
+  previewTimeEntry,
+} from "./automation-time-entries.ts";
+import { timeReportBody } from "./time-history.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -455,6 +462,25 @@ export const handleAutomation: RouteHandler = async (
           .list(token.ownerId)
           .map((series) => recurringSeriesResponse(database, series, today)),
       };
+    } else if (resource === "time.report") {
+      const input = timeReportQuerySchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_TIME_REPORT",
+          "Provide from and to calendar dates at most 366 days apart",
+        );
+        return true;
+      }
+      body = timeReportBody(
+        database,
+        token.ownerId,
+        input.data,
+        ctx.sessionClock.now().toISOString(),
+      );
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -671,6 +697,7 @@ export const handleAutomation: RouteHandler = async (
         | "note"
         | "task_attachment"
         | "task_issue_link"
+        | "time_entry"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -692,6 +719,7 @@ export const handleAutomation: RouteHandler = async (
         | "note"
         | "task_attachment"
         | "task_issue_link"
+        | "time_entry"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -891,6 +919,14 @@ export const handleAutomation: RouteHandler = async (
     } else if (isRecurrenceCommand(command)) {
       // ADR 0023: freezes the series revision (and a deleted instance's).
       const planned = previewRecurrence(database, token.ownerId, command);
+    } else if (isTimeEntryCommand(command)) {
+      // ADR 0024: freezes the entry revision, or the task for an addition.
+      const planned = previewTimeEntry(
+        database,
+        token.ownerId,
+        command,
+        ctx.sessionClock.now().toISOString(),
+      );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1641,6 +1677,7 @@ export const handleAutomation: RouteHandler = async (
         database.notes.get(token.ownerId, entityId) ??
         database.taskLinks.getAttachment(token.ownerId, entityId) ??
         database.taskLinks.getIssueLink(token.ownerId, entityId) ??
+        database.timeEntries.get(token.ownerId, entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1829,6 +1866,12 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
         preview.id,
+    } else if (isTimeEntryCommand(command)) {
+      const confirmation = confirmTimeEntry(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
       );
       if (!confirmation.ok) {
         sendError(
