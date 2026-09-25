@@ -318,3 +318,80 @@ it("applies tag colour while retaining reviewed fields in provenance", () => {
   });
   expect(records[0]).toMatchObject({ color: "#abcdef", icon: null });
 });
+
+it("imports source children as ordered full tasks and keeps derived parent estimates in provenance", () => {
+  const { report, records } = prepareSuperProductivityImport(
+    JSON.stringify({
+      task: state({
+        second: {
+          id: "second",
+          title: "Second",
+          parentId: "parent",
+          notes: "Second notes",
+          timeEstimate: 900000,
+          deadlineDay: "2026-10-02",
+        },
+        parent: {
+          id: "parent",
+          title: "Parent",
+          subTaskIds: ["first", "second"],
+          // Derived by Super Productivity from open children, not whole minutes.
+          timeEstimate: 900001,
+        },
+        first: {
+          id: "first",
+          title: "First",
+          parentId: "parent",
+          isDone: true,
+          doneOn: 1700000060000,
+          timeEstimate: 600000,
+        },
+      }),
+    }),
+  );
+  expect(report.issues).toEqual([]);
+  expect(report.canApply).toBe(true);
+  const byId = new Map(records.map((record) => [record.sourceId, record]));
+  expect(byId.get("parent")).toMatchObject({
+    parentSourceId: null,
+    estimateMinutes: null,
+  });
+  expect(JSON.parse(byId.get("parent")?.sourceJson ?? "{}")).toMatchObject({
+    timeEstimate: 900001,
+    subTaskIds: ["first", "second"],
+  });
+  expect(byId.get("first")).toMatchObject({
+    parentSourceId: "parent",
+    childIndex: 0,
+    completedAt: new Date(1700000060000).toISOString(),
+    estimateMinutes: 10,
+  });
+  expect(byId.get("second")).toMatchObject({
+    parentSourceId: "parent",
+    childIndex: 1,
+    notes: "Second notes",
+    deadlineDate: "2026-10-02",
+    estimateMinutes: 15,
+  });
+});
+
+it("blocks hierarchies deeper than two levels instead of flattening them", () => {
+  const { report } = prepareSuperProductivityImport(
+    JSON.stringify({
+      task: state({
+        root: { id: "root", title: "Root", subTaskIds: ["mid"] },
+        mid: {
+          id: "mid",
+          title: "Mid",
+          parentId: "root",
+          subTaskIds: ["leaf"],
+        },
+        leaf: { id: "leaf", title: "Leaf", parentId: "mid" },
+      }),
+    }),
+  );
+  expect(report.canApply).toBe(false);
+  expect(report.issues.map(({ code }) => code)).toContain(
+    "hierarchy_depth_unsupported",
+  );
+});

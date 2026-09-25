@@ -11,12 +11,13 @@
 |---|---|
 | **Owner** | The single human account that deploys and uses the suite. All records scoped to a stable owner UUID. |
 | **Session (Auth)** | Server-side owner authentication session backed by an opaque cookie, stored as SHA-256 digest with independent CSRF token, idle/absolute expiry, and explicit revocation. Distinct from Active Session. |
-| **Task** | Suite-owned mutable resource with UUID identity, positive integer revision, per-field versions, soft-delete/recover lifecycle. |
+| **Task** | Suite-owned mutable resource with UUID identity, positive integer revision, per-field versions, soft-delete/recover lifecycle. Either top-level or a Child Task of one top-level task (ADR 0018). |
+| **Child Task** | A full Task whose `parentId` names a top-level task. Two levels only; ordered by a sparse `childPosition`; placement changes are revisioned through the `parent` field version. Deleting a parent soft-deletes its active children; restoring it restores the children deleted with it. Imported Super Productivity subtasks become Child Tasks. |
 | **Project** | Owner-scoped UUID record with title, revision, position, optional colour and icon, hide-from-menu flag, archive and completion. Completing archives it; reopening or restoring clears both. A task belongs to zero or one project (ADR 0019). |
 | **Tag** | Owner-scoped UUID record with display name, case-folded uniqueness key, revision, position, optional colour and icon, optional archive. Max 25 per task. Today, urgent, important and in-progress are derived views or board markers, never ordinary tags. |
 | **Backlog** | Ordered subset of a project's active tasks held back from its regular list. Owned by the project record and enabled per project; leaving the project leaves the backlog. |
 | **Note** | Owner-scoped Markdown text attached to one project, one tag or neither, with pinned-to-Today flag, order and revision. Rendered as a safe subset; online-only, outside the sync feed. |
-| **Subtask** | One-level checklist record. Not recursive; cannot own projects, calendar blocks, or focus sessions. |
+| **Subtask** | One-level checklist record (the "checklist"). Not a task and not recursive; cannot own projects, calendar blocks, or focus sessions. Distinct from a Child Task. |
 | **Choice Pool** | Owner-scoped record containing Pool Items with append-only selection/completion history and one of four policies (cooldown, cycle, one_shot, none). |
 | **Pool Item** | Candidate inside a Choice Pool. Eligibility evaluated at an explicit logical timestamp. |
 | **Planning Placeholder** | Attached to one task and one pool, storing pick count and revision. Resolution creates ordered subtasks. |
@@ -40,7 +41,7 @@
 | **Preview / Confirmation** | Two-phase mutation model: preview has no side effects and stores input hash; confirmation executes only if preview is unexpired and revisions match. |
 | **Idempotency Key** | 8–128 URL-safe characters for retriable creates. Same key + same request hash replays original outcome; different hash returns IDEMPOTENCY_CONFLICT. |
 | **Revision / ETag** | Positive integer revision. All mutations return current revision and quoted ETag. Update/delete require If-Match. |
-| **Field Version** | Per-field integer version (title, notes, status, estimateMinutes, projectId, tagIds) enabling disjoint merge during sync. Distinct from whole-resource revision. |
+| **Field Version** | Per-field integer version (title, notes, status, estimateMinutes, projectId, tagIds, deadline, parent) enabling disjoint merge during sync. `parent` is the base for an offline `task.move`. Distinct from whole-resource revision. |
 | **Operation (Sync)** | Immutable, client-sequenced sync message identified by UUID. Deduplicated by (owner, client, operation UUID) with a normalized request hash. |
 | **Outbox** | Client-side IndexedDB queue of immutable operations identified by UUID, awaiting sync-round transmission. |
 | **Sync Round** | Ordered change stream with persistent epoch + positive sequence. Client sends queued operations; server returns remote changes. Field-level merge with per-field versions. |
@@ -118,5 +119,6 @@
 | 0014 | Import once, preserve source evidence, publish read-only | ICS import preserves raw VEVENT and reconciliation analysis; capability URLs for read-only iCal publication (256-bit secret, GET/HEAD only, revocable); no Phase 7 mirror. |
 | 0015 | Package the stable web authority; do not fork it | Linux Electron desktop as constrained shell around deployed Suite origin; immutable release manifests promoted through candidate/stable channels; no Android/iOS/PostgreSQL without measured need. |
 | 0016 | Durable notification authority | Suite owns reminder intent and delivery history; ntfy is write-only private-network adapter; atomic claim before publish; calendar-suppression logic; detailed notifications limited to task title, time, and deep link. |
+| 0018 | Two-level task hierarchy with full child tasks | Child tasks are ordinary tasks with a parent reference and sparse order key; two levels, no completion propagation, derived rollups, cascading soft delete; offline `task.move` conflicts instead of orphaning or cycling; checklist subtasks remain separate. |
 | 0019 | Organization parity | Project colour/icon/order/completion/backlog, tag colour/icon/order, and online-only notes; menu folders deferred to #63; system tags stay derived views. |
 | 0020 | Date-only planning and per-task reminders | Planned day separate from planned start and deadlines, evaluated in the owner zone; per-task start and deadline reminder offsets resolved into the existing ledger identity; online-only edits outside sync v2; exact Super Productivity import or block; persisted Today order deferred. |

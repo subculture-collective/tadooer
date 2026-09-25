@@ -23,6 +23,13 @@ import {
   type StoredStartReminder,
 } from "./task-planning-columns.ts";
 import { scheduledReminders } from "@suite/domain";
+import { SqliteTaskHierarchyStore } from "./task-hierarchy-store.ts";
+export {
+  SqliteTaskHierarchyStore,
+  TaskHierarchyError,
+  type TaskHierarchyMoveResult,
+  type TaskHierarchyReorderResult,
+} from "./task-hierarchy-store.ts";
 
 interface Migration {
   readonly id: string;
@@ -145,6 +152,10 @@ export interface TaskRecord {
   readonly plannedDay?: string | null;
   readonly startReminder?: StoredStartReminder;
   readonly deadlineReminderMinutes?: number | null;
+  /** Top-level parent; null for a top-level task (ADR 0018). */
+  readonly parentId?: string | null;
+  /** Sparse sibling order key; null for a top-level task. */
+  readonly childPosition?: number | null;
 }
 
 export interface TaskPatch {
@@ -1356,6 +1367,41 @@ const migrations: readonly Migration[] = [
     `,
   },
   dateOnlyPlanningMigration,
+  {
+    // ADR 0018: two-level task hierarchy. Triggers keep the graph acyclic,
+    // owner-scoped and at most two levels deep even if application checks fail.
+    id: "0024_task_hierarchy",
+    sql: `
+      ALTER TABLE tasks ADD COLUMN parent_id TEXT REFERENCES tasks(id) ON DELETE CASCADE;
+      ALTER TABLE tasks ADD COLUMN child_position INTEGER;
+      ALTER TABLE tasks ADD COLUMN hierarchy_version INTEGER NOT NULL DEFAULT 1
+        CHECK (hierarchy_version > 0);
+      UPDATE tasks SET hierarchy_version = revision;
+      CREATE INDEX tasks_by_parent ON tasks(owner_id, parent_id, child_position, id)
+        WHERE parent_id IS NOT NULL;
+      CREATE TRIGGER tasks_hierarchy_insert_valid
+      BEFORE INSERT ON tasks
+      WHEN NEW.parent_id IS NOT NULL OR NEW.child_position IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'task hierarchy is invalid')
+        WHERE NEW.parent_id IS NULL OR NEW.child_position IS NULL
+          OR NEW.parent_id = NEW.id
+          OR NOT EXISTS (SELECT 1 FROM tasks p WHERE p.id = NEW.parent_id
+            AND p.owner_id = NEW.owner_id AND p.parent_id IS NULL);
+      END;
+      CREATE TRIGGER tasks_hierarchy_update_valid
+      BEFORE UPDATE OF parent_id, child_position ON tasks
+      WHEN NEW.parent_id IS NOT NULL OR NEW.child_position IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'task hierarchy is invalid')
+        WHERE NEW.parent_id IS NULL OR NEW.child_position IS NULL
+          OR NEW.parent_id = NEW.id
+          OR NOT EXISTS (SELECT 1 FROM tasks p WHERE p.id = NEW.parent_id
+            AND p.owner_id = NEW.owner_id AND p.parent_id IS NULL)
+          OR EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id = NEW.id);
+      END;
+    `,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -1371,10 +1417,25 @@ export class SuiteDatabase {
   readonly calendarProjections: SqliteCalendarProjectionStore;
   readonly planningPreferences: SqlitePlanningPreferencesStore;
   readonly notes: SqliteNoteStore;
+  readonly taskHierarchy: SqliteTaskHierarchyStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.notes = new SqliteNoteStore(database);
+    this.taskHierarchy = new SqliteTaskHierarchyStore(database, {
+      getTask: (ownerId, taskId, includeDeleted) =>
+        this.getTask(ownerId, taskId, includeDeleted),
+      appendChange: (ownerId, taskId, kind, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "task",
+          taskId,
+          kind,
+          revision,
+          now,
+        );
+      },
+    });
     this.habits = new SqliteHabitStore(
       database,
       (ownerId, kind, id, revision, now) => {
@@ -2949,6 +3010,10 @@ export class SuiteDatabase {
       plannedDay?: string | null;
       startReminder?: StoredStartReminder;
       deadlineReminderMinutes?: number | null;
+      /** Source parent task ID; the child is placed after all records exist. */
+      parentSourceId?: string | null;
+      /** Source order among the parent's children. */
+      childIndex?: number | null;
     }[],
     now: string,
   ): { created: number; existing: number } {
@@ -2959,6 +3024,7 @@ export class SuiteDatabase {
         projectId: string;
         sourceTaskIds: readonly string[];
       }[] = [];
+      const newChildren: (typeof records)[number][] = [];
       let created = 0;
       let existing = 0;
       for (const record of records) {
@@ -3098,6 +3164,8 @@ export class SuiteDatabase {
             record.sourceJson,
             now,
           );
+        if (record.kind === "task" && record.parentSourceId != null)
+          newChildren.push(record);
         created++;
       }
       const addToBacklog = this.#database.prepare(
@@ -3119,6 +3187,22 @@ export class SuiteDatabase {
           )
             throw new Error("IMPORT_REFERENCE_MISSING");
         });
+      for (const child of newChildren.toSorted(
+        (left, right) => (left.childIndex ?? 0) - (right.childIndex ?? 0),
+      )) {
+        const taskId = targets.get(`task:${child.sourceId}`);
+        const parentId = targets.get(`task:${child.parentSourceId ?? ""}`);
+        if (taskId === undefined || parentId === undefined)
+          throw new Error("IMPORT_REFERENCE_MISSING");
+        const moved = this.taskHierarchy.move({
+          ownerId,
+          taskId,
+          parentId,
+          expectedRevision: 1,
+          now,
+        });
+        if (moved.kind !== "moved") throw new Error("IMPORT_HIERARCHY_INVALID");
+      }
       this.#database.exec("COMMIT;");
       return { created, existing };
     } catch (error) {
@@ -4154,7 +4238,11 @@ export class SuiteDatabase {
     const rows = this.#database
       .prepare("SELECT field,version FROM task_field_versions WHERE task_id=?")
       .all(taskId) as unknown as readonly { field: string; version: number }[];
-    return Object.fromEntries(rows.map((row) => [row.field, row.version]));
+    const parent = this.taskHierarchy.parentVersion(ownerId, taskId);
+    return {
+      ...Object.fromEntries(rows.map((row) => [row.field, row.version])),
+      ...(parent === undefined ? {} : { parent }),
+    };
   }
 
   fullSyncSnapshot(ownerId: string): {
@@ -6159,7 +6247,10 @@ export class SuiteDatabase {
         task?.revision !== input.baseRevision ||
         (input.restore ? task.deletedAt === null : task.deletedAt !== null) ||
         (activeSession?.endedAt === null &&
-          activeSession.taskId === input.taskId)
+          activeSession.taskId === input.taskId) ||
+        (!input.restore &&
+          this.taskHierarchy.blockedChildIds(input.ownerId, input.taskId)
+            .length > 0)
       ) {
         this.#database
           .prepare(
@@ -6191,6 +6282,12 @@ export class SuiteDatabase {
           input.taskId,
           task.revision,
         );
+      this.#applyHierarchyLifecycle(
+        input.ownerId,
+        task,
+        input.restore ? null : input.now,
+        input.now,
+      );
       const next = this.getTask(input.ownerId, input.taskId, true);
       if (next === undefined) throw new Error("Deleted task disappeared");
       this.#database
@@ -6311,6 +6408,7 @@ export class SuiteDatabase {
         current.deadlineAt !== next.deadlineAt
       )
         fieldVersions.run(taskId, "deadline", next.revision);
+      this.#applyHierarchyLifecycle(ownerId, current, next.deletedAt, now);
       this.#appendSyncChangeInTransaction(
         ownerId,
         "task",
@@ -6320,13 +6418,34 @@ export class SuiteDatabase {
         now,
       );
       this.#database.exec("RELEASE SAVEPOINT conditional_task;");
-      return { kind: "updated", task: next };
+      return {
+        kind: "updated",
+        task: this.getTask(ownerId, taskId, true) ?? next,
+      };
     } catch (error: unknown) {
       this.#database.exec(
         "ROLLBACK TO SAVEPOINT conditional_task; RELEASE SAVEPOINT conditional_task;",
       );
       throw error;
     }
+  }
+
+  /** Soft-delete cascades to children; restore brings back co-deleted children. */
+  #applyHierarchyLifecycle(
+    ownerId: string,
+    before: TaskRecord,
+    deletedAt: string | null,
+    now: string,
+  ): void {
+    if (before.deletedAt === null && deletedAt !== null)
+      this.taskHierarchy.cascadeDelete(ownerId, before.id, deletedAt, now);
+    else if (before.deletedAt !== null && deletedAt === null)
+      this.taskHierarchy.afterRestore(
+        ownerId,
+        before.id,
+        before.deletedAt,
+        now,
+      );
   }
 
   #findTask(ownerId: string, taskId: string): TaskRecord | undefined {
@@ -6393,9 +6512,16 @@ export class SuiteDatabase {
 
   #withTaskTags(task: TaskRecord): TaskRecord {
     const project = this.#database
-      .prepare("SELECT project_id FROM tasks WHERE owner_id = ? AND id = ?")
+      .prepare(
+        "SELECT project_id, parent_id, child_position FROM tasks WHERE owner_id = ? AND id = ?",
+      )
       .get(task.ownerId, task.id) as unknown as
-      { project_id: string | null } | undefined;
+      | {
+          project_id: string | null;
+          parent_id: string | null;
+          child_position: number | null;
+        }
+      | undefined;
     const tags = this.#database
       .prepare("SELECT tag_id FROM task_tags WHERE task_id = ? ORDER BY tag_id")
       .all(task.id) as unknown as readonly { tag_id: string }[];
@@ -6404,6 +6530,8 @@ export class SuiteDatabase {
       projectId: project?.project_id ?? null,
       tagIds: tags.map((tag) => tag.tag_id),
       ...readTaskPlanning(this.#database, task.ownerId, task.id),
+      parentId: project?.parent_id ?? null,
+      childPosition: project?.child_position ?? null,
     };
   }
 

@@ -19,6 +19,7 @@ import {
   type PlanningPreferences,
   planningPreferencesSchema,
 } from "@suite/contracts";
+import { compareChildren, planChildPosition } from "@suite/domain";
 
 const databaseName = "suite-local-v1";
 const databaseVersion = 2;
@@ -183,6 +184,7 @@ const initialFieldVersions = (): TaskFieldVersions => ({
   projectId: 1,
   tagIds: 1,
   deadline: 1,
+  parent: 1,
 });
 
 const isTaskSnapshot = (value: unknown): value is SyncTaskSnapshot =>
@@ -724,6 +726,50 @@ export class LocalStore {
     return operation;
   }
 
+  /**
+   * Queue a structural move (ADR 0018). `parentId` null makes the task
+   * top-level. The server validates depth and cycles on replay; a rejected
+   * move becomes a visible conflict and the canonical placement returns.
+   */
+  async queueTaskMove(
+    taskId: string,
+    parentId: string | null,
+    index: number | null = null,
+  ): Promise<SyncOperation> {
+    const snapshot = await this.#requiredTask(taskId);
+    const metadata = await this.#requiredMetadata();
+    const siblings =
+      parentId === null
+        ? []
+        : (await this.loadCachedTasks())
+            .map(({ task }) => task)
+            .filter((task) => task.parentId === parentId && task.id !== taskId)
+            .toSorted(compareChildren);
+    const operation = await this.#operation(metadata, "task.move", {
+      taskId,
+      parentId,
+      index,
+      baseParentVersion:
+        snapshot.fieldVersions.parent ?? snapshot.task.revision,
+    });
+    await this.#queueAndWriteTask(operation, {
+      ...snapshot,
+      task: {
+        ...snapshot.task,
+        parentId,
+        childPosition:
+          parentId === null
+            ? null
+            : planChildPosition(
+                siblings.map(({ childPosition }) => childPosition ?? 0),
+                index,
+              ).position,
+        updatedAt: this.#now(),
+      },
+    });
+    return operation;
+  }
+
   async queueTaskDelete(taskId: string): Promise<SyncOperation> {
     return this.#queueStructuralTaskOperation(
       taskId,
@@ -949,22 +995,36 @@ export class LocalStore {
                   : { deadline: operation.fields.deadline }),
                 updatedAt: now,
               }
-            : operation.kind === "task.complete" ||
-                operation.kind === "task.reopen"
+            : operation.kind === "task.move"
               ? {
                   ...snapshot.task,
-                  status:
-                    operation.kind === "task.complete"
-                      ? ("completed" as const)
-                      : ("open" as const),
-                  completedAt: operation.kind === "task.complete" ? now : null,
+                  parentId: operation.parentId,
+                  // Pending until the server assigns the canonical key.
+                  childPosition:
+                    operation.parentId === null
+                      ? null
+                      : operation.parentId === snapshot.task.parentId
+                        ? (snapshot.task.childPosition ?? null)
+                        : Number.MAX_SAFE_INTEGER,
                   updatedAt: now,
                 }
-              : {
-                  ...snapshot.task,
-                  deletedAt: operation.kind === "task.delete" ? now : null,
-                  updatedAt: now,
-                };
+              : operation.kind === "task.complete" ||
+                  operation.kind === "task.reopen"
+                ? {
+                    ...snapshot.task,
+                    status:
+                      operation.kind === "task.complete"
+                        ? ("completed" as const)
+                        : ("open" as const),
+                    completedAt:
+                      operation.kind === "task.complete" ? now : null,
+                    updatedAt: now,
+                  }
+                : {
+                    ...snapshot.task,
+                    deletedAt: operation.kind === "task.delete" ? now : null,
+                    updatedAt: now,
+                  };
         snapshot = { ...snapshot, task };
       }
       if (snapshot !== undefined) {

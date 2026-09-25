@@ -237,6 +237,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                 projectId: versions.projectId ?? task.revision,
                 tagIds: versions.tagIds ?? task.revision,
                 deadline: versions.deadline ?? task.revision,
+                parent: versions.parent ?? task.revision,
               };
             })(),
             changeSequence: task.revision,
@@ -409,68 +410,80 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         };
       }
       const result =
-        operation.kind === "task.create"
-          ? database.applyTaskCreateSync({
+        operation.kind === "task.move"
+          ? database.taskHierarchy.applyMoveSync({
               ownerId: session.owner.id,
               clientId: client.id,
               operationId: operation.operationId,
               requestHash: operation.requestHash,
+              taskId: operation.taskId,
+              parentId: operation.parentId,
+              index: operation.index,
+              baseParentVersion: operation.baseParentVersion,
               now,
-              task: {
-                ...operation.task,
-                deadline: operation.task.deadline ?? null,
-                status: "open",
-                revision: 1,
-                createdAt: now,
-                updatedAt: now,
-              },
             })
-          : operation.kind === "task.patch"
-            ? database.applyTaskFieldSync({
+          : operation.kind === "task.create"
+            ? database.applyTaskCreateSync({
                 ownerId: session.owner.id,
                 clientId: client.id,
                 operationId: operation.operationId,
                 requestHash: operation.requestHash,
-                taskId: operation.taskId,
-                baseVersions: Object.fromEntries(
-                  Object.entries(operation.baseFieldVersions).filter(
-                    ([, value]) => value !== undefined,
-                  ),
-                ),
-                patch: Object.fromEntries(
-                  Object.entries(operation.fields).filter(
-                    ([, value]) => value !== undefined,
-                  ),
-                ),
                 now,
+                task: {
+                  ...operation.task,
+                  deadline: operation.task.deadline ?? null,
+                  status: "open",
+                  revision: 1,
+                  createdAt: now,
+                  updatedAt: now,
+                },
               })
-            : operation.kind === "task.complete" ||
-                operation.kind === "task.reopen"
-              ? database.applyTaskCompletionSync({
+            : operation.kind === "task.patch"
+              ? database.applyTaskFieldSync({
                   ownerId: session.owner.id,
                   clientId: client.id,
                   operationId: operation.operationId,
                   requestHash: operation.requestHash,
                   taskId: operation.taskId,
-                  baseStatusVersion: operation.baseStatusVersion,
-                  completed: operation.kind === "task.complete",
+                  baseVersions: Object.fromEntries(
+                    Object.entries(operation.baseFieldVersions).filter(
+                      ([, value]) => value !== undefined,
+                    ),
+                  ),
+                  patch: Object.fromEntries(
+                    Object.entries(operation.fields).filter(
+                      ([, value]) => value !== undefined,
+                    ),
+                  ),
                   now,
                 })
-              : database.applyTaskDeletionSync({
-                  ownerId: session.owner.id,
-                  clientId: client.id,
-                  operationId: operation.operationId,
-                  requestHash: operation.requestHash,
-                  taskId: operation.taskId,
-                  baseRevision: (
-                    operation as Extract<
-                      typeof operation,
-                      { readonly kind: "task.delete" | "task.restore" }
-                    >
-                  ).baseRevision,
-                  restore: operation.kind === "task.restore",
-                  now,
-                });
+              : operation.kind === "task.complete" ||
+                  operation.kind === "task.reopen"
+                ? database.applyTaskCompletionSync({
+                    ownerId: session.owner.id,
+                    clientId: client.id,
+                    operationId: operation.operationId,
+                    requestHash: operation.requestHash,
+                    taskId: operation.taskId,
+                    baseStatusVersion: operation.baseStatusVersion,
+                    completed: operation.kind === "task.complete",
+                    now,
+                  })
+                : database.applyTaskDeletionSync({
+                    ownerId: session.owner.id,
+                    clientId: client.id,
+                    operationId: operation.operationId,
+                    requestHash: operation.requestHash,
+                    taskId: operation.taskId,
+                    baseRevision: (
+                      operation as Extract<
+                        typeof operation,
+                        { readonly kind: "task.delete" | "task.restore" }
+                      >
+                    ).baseRevision,
+                    restore: operation.kind === "task.restore",
+                    now,
+                  });
       if (result.kind === "idempotency-conflict") {
         return {
           kind: "rejected" as const,
@@ -659,6 +672,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                       projectId: versions.projectId ?? task.revision,
                       tagIds: versions.tagIds ?? task.revision,
                       deadline: versions.deadline ?? task.revision,
+                      parent: versions.parent ?? task.revision,
                     },
                     changeSequence: change.sequence,
                   },

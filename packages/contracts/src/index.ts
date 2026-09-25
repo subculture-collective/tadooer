@@ -300,6 +300,10 @@ export const taskSchema = z.object({
       message: "Task tags must be unique",
     })
     .optional(),
+  /** ADR 0018: top-level parent; absent or null for a top-level task. */
+  parentId: entityIdSchema.nullable().optional(),
+  /** Sparse order key among the parent's children; null for top-level tasks. */
+  childPosition: z.number().int().nullable().optional(),
 });
 
 export const createTaskRequestSchema = z.object({
@@ -338,6 +342,30 @@ export const taskPatchRequestSchema = z
   .refine(plannedDayAndStartExclusive, {
     message: plannedDayAndStartMessage,
   });
+
+// ADR 0018 task hierarchy: two levels, full child tasks, revisioned moves.
+export const taskHierarchyIndexSchema = z.number().int().min(0).max(10_000);
+export const taskMoveRequestSchema = z
+  .object({
+    parentId: entityIdSchema.nullable(),
+    index: taskHierarchyIndexSchema.nullable().optional(),
+  })
+  .strict();
+export const taskChildCreateRequestSchema = createTaskRequestSchema.extend({
+  index: taskHierarchyIndexSchema.nullable().optional(),
+});
+const taskChildOrderItemsSchema = z
+  .array(z.object({ id: entityIdSchema, revision: revisionSchema }).strict())
+  .max(500)
+  .refine((items) => new Set(items.map(({ id }) => id)).size === items.length, {
+    message: "Child task ids must be unique",
+  });
+export const taskChildOrderRequestSchema = z
+  .object({ items: taskChildOrderItemsSchema })
+  .strict();
+export const taskChildrenResponseSchema = z
+  .object({ parent: taskSchema, children: z.array(taskSchema) })
+  .strict();
 
 export const conditionalRequestHeadersSchema = z.object({
   ifMatch: quotedRevisionEtagSchema,
@@ -1093,6 +1121,8 @@ export const taskFieldVersionsSchema = z.object({
   projectId: revisionSchema,
   tagIds: revisionSchema,
   deadline: revisionSchema,
+  /** Parent/order version; the base for an offline `task.move`. */
+  parent: revisionSchema.optional(),
 });
 
 export const syncTaskSnapshotSchema = z.object({
@@ -1177,6 +1207,15 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
     kind: z.enum(["task.delete", "task.restore"]),
     taskId: entityIdSchema,
     baseRevision: revisionSchema,
+  }),
+  // ADR 0018: structural move. A stale parent version or an invalid target is
+  // a resource conflict and changes nothing, so replay cannot orphan or cycle.
+  syncOperationBaseSchema.extend({
+    kind: z.literal("task.move"),
+    taskId: entityIdSchema,
+    parentId: entityIdSchema.nullable(),
+    index: taskHierarchyIndexSchema.nullable(),
+    baseParentVersion: revisionSchema,
   }),
 ]);
 
@@ -1426,6 +1465,7 @@ export const syncDiagnosticOperationSchema = z
       "task.reopen",
       "task.delete",
       "task.restore",
+      "task.move",
     ]),
     state: z.enum([
       "queued",
@@ -1544,6 +1584,7 @@ export const automationOperationSchema = z.enum([
   "notes.mutate",
   "tasks.assign_project",
   "tasks.set_tags",
+  "tasks.hierarchy",
   "tasks.create",
   "tasks.update",
   "tasks.set_completed",
@@ -1639,6 +1680,50 @@ export const automationSetTagsInputSchema = z
       .refine((ids) => new Set(ids).size === ids.length, {
         message: "Tag ids must be unique",
       }),
+  })
+  .strict();
+
+export const automationTaskHierarchyInputSchema = z.discriminatedUnion(
+  "action",
+  [
+    z
+      .object({
+        action: z.literal("create_child"),
+        parentId: entityIdSchema,
+        expectedParentRevision: revisionSchema,
+        index: taskHierarchyIndexSchema.nullable().optional(),
+        task: createTaskRequestSchema.omit({ structured: true }).strict(),
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal("move"),
+        taskId: entityIdSchema,
+        expectedRevision: revisionSchema,
+        parentId: entityIdSchema.nullable(),
+        index: taskHierarchyIndexSchema.nullable().optional(),
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal("reorder"),
+        parentId: entityIdSchema,
+        expectedParentRevision: revisionSchema,
+        items: taskChildOrderItemsSchema,
+      })
+      .strict(),
+  ],
+);
+export const taskHierarchyMutationResponseSchema = z
+  .object({
+    hierarchy: z
+      .object({
+        task: taskSchema.nullable(),
+        parent: taskSchema.nullable(),
+        children: z.array(taskSchema),
+      })
+      .strict(),
+    replayed: z.boolean(),
   })
   .strict();
 
@@ -1742,6 +1827,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     z.object({
       operation: z.literal("tasks.set_tags"),
       input: automationSetTagsInputSchema,
+    }),
+    z.object({
+      operation: z.literal("tasks.hierarchy"),
+      input: automationTaskHierarchyInputSchema,
     }),
     z.object({
       operation: z.literal("habits.mutate"),
@@ -1873,6 +1962,11 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: automationSetTagsInputSchema,
+    });
+  if (operation === "tasks.hierarchy")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationTaskHierarchyInputSchema,
     });
   if (operation === "habits.mutate")
     return z.object({
@@ -2038,6 +2132,7 @@ export const automationExecutionResultSchema = z.union([
     .object({ notificationPreferences: notificationPreferenceSnapshotSchema })
     .strict(),
   checklistMutationResponseSchema,
+  taskHierarchyMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2472,6 +2567,14 @@ export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
 export type HabitListResponse = z.infer<typeof habitListResponseSchema>;
 export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
+export type TaskMoveRequest = z.infer<typeof taskMoveRequestSchema>;
+export type TaskChildCreateRequest = z.infer<
+  typeof taskChildCreateRequestSchema
+>;
+export type TaskChildrenResponse = z.infer<typeof taskChildrenResponseSchema>;
+export type TaskHierarchyMutationResponse = z.infer<
+  typeof taskHierarchyMutationResponseSchema
+>;
 export type ConditionalRequestHeaders = z.infer<
   typeof conditionalRequestHeadersSchema
 >;

@@ -423,12 +423,21 @@ export const previewSuperProductivity = (
     }
     for (const id of path) checked.add(id);
   }
-  if (tasks.some((task) => task.parentId !== null))
-    issue(
-      "hierarchy_parity_required",
-      null,
-      "Source subtasks are full tasks; do not flatten them into checklist items",
-    );
+  // Tadooer supports exactly two levels (ADR 0018); a deeper source chain
+  // would need flattening, which the importer refuses to guess.
+  for (const task of tasks) {
+    const parent = task.parentId === null ? undefined : byId.get(task.parentId);
+    if (
+      parent?.parentId != null &&
+      parent.parentId !== task.sourceId &&
+      parent.parentId !== parent.sourceId
+    )
+      issue(
+        "hierarchy_depth_unsupported",
+        task.sourceId,
+        "Child tasks nest more than two levels; move them under a top-level task before importing",
+      );
+  }
   if (Object.keys(repeats).length > 0)
     issue(
       "recurrence_parity_required",

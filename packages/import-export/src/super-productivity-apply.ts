@@ -53,6 +53,10 @@ export interface TaskImportRecord {
     | { kind: "none" }
     | { kind: "before_start"; minutes: number };
   deadlineReminderMinutes: number | null;
+  /** Source parent task ID; imported as a full child task (ADR 0018). */
+  parentSourceId: string | null;
+  /** Position in the source parent's subTaskIds. */
+  childIndex: number | null;
 }
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -140,6 +144,20 @@ export const prepareSuperProductivityImport = (raw: string) => {
   const taskById = new Map(
     inventory.tasks.map((task) => [task.sourceId, task]),
   );
+  // Source parent estimates are derived from their children, so the
+  // importer keeps them only in provenance rather than double counting.
+  const parentsWithChildren = new Set(
+    inventory.tasks.flatMap(({ parentId }) =>
+      parentId === null ? [] : [parentId],
+    ),
+  );
+  const taskEntities = object(object(data.task).entities);
+  const childIndex = (parentId: string | null, sourceId: string) => {
+    if (parentId === null) return null;
+    const siblings = object(taskEntities[parentId]).subTaskIds;
+    const index = Array.isArray(siblings) ? siblings.indexOf(sourceId) : -1;
+    return index === -1 ? null : index;
+  };
   const problem = (sourceId: string, detail: string) =>
     issues.push({ code: "unsupported_import_data", sourceId, detail });
   const iso = (value: unknown): string | null =>
@@ -293,7 +311,8 @@ export const prepareSuperProductivityImport = (raw: string) => {
           sourceId,
           "Timestamp is outside the supported four-digit year range",
         );
-      const estimate = task?.estimateMilliseconds ?? 0;
+      const derivedEstimate = parentsWithChildren.has(sourceId);
+      const estimate = derivedEstimate ? 0 : (task?.estimateMilliseconds ?? 0);
       if (estimate % 60000 !== 0 || estimate > 720 * 60000)
         problem(
           sourceId,
@@ -356,6 +375,8 @@ export const prepareSuperProductivityImport = (raw: string) => {
         estimateMinutes: estimate === 0 ? null : estimate / 60000,
         completedAt,
         createdAt,
+        parentSourceId: task?.parentId ?? null,
+        childIndex: childIndex(task?.parentId ?? null, sourceId),
       };
       if (kind !== "task") {
         const icon = source.icon;
@@ -463,6 +484,8 @@ export const prepareSuperProductivityImport = (raw: string) => {
       plannedDay: null,
       startReminder: { kind: "default" },
       deadlineReminderMinutes: null,
+      parentSourceId: null,
+      childIndex: null,
       deadlineDate: null,
       deadlineAt: null,
       estimateMinutes: null,
