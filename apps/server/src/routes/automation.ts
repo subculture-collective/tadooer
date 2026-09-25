@@ -23,6 +23,8 @@ import {
   templateSearchRequestSchema,
   taskHistoryQuerySchema,
   timeReportQuerySchema,
+  counterHistoryQuerySchema,
+  evaluationListQuerySchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -67,6 +69,12 @@ import {
   previewTimeEntry,
 } from "./automation-time-entries.ts";
 import { timeReportBody } from "./time-history.ts";
+import {
+  confirmCounter,
+  isCounterCommand,
+  previewCounter,
+} from "./automation-counters.ts";
+import { counterHistoryBody, evaluationListBody } from "./counters.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -481,6 +489,30 @@ export const handleAutomation: RouteHandler = async (
         input.data,
         ctx.sessionClock.now().toISOString(),
       );
+    } else if (
+      resource === "counters.history" ||
+      resource === "evaluations.list"
+    ) {
+      // ADR 0025: counter values with derived streaks, or evaluations.
+      const input = (
+        resource === "counters.history"
+          ? counterHistoryQuerySchema
+          : evaluationListQuerySchema
+      ).safeParse(Object.fromEntries(url.searchParams.entries()));
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_RANGE",
+          "Provide from and to calendar dates at most 366 days apart",
+        );
+        return true;
+      }
+      const at = ctx.sessionClock.now().toISOString();
+      body =
+        resource === "counters.history"
+          ? counterHistoryBody(database, token.ownerId, input.data, at)
+          : evaluationListBody(database, token.ownerId, input.data, at);
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -702,6 +734,8 @@ export const handleAutomation: RouteHandler = async (
         | "planning_placeholder"
         | "pool_item"
         | "recurring_series"
+        | "counter"
+        | "daily_evaluation"
         | "habit";
       entityId: string;
     }[] = [];
@@ -724,6 +758,8 @@ export const handleAutomation: RouteHandler = async (
         | "planning_placeholder"
         | "pool_item"
         | "recurring_series"
+        | "counter"
+        | "daily_evaluation"
         | "habit";
       entityId: string;
       revision: number;
@@ -934,6 +970,16 @@ export const handleAutomation: RouteHandler = async (
         command,
         ctx.sessionClock.now().toISOString(),
       );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isCounterCommand(command)) {
+      // ADR 0025: freezes the counter, or checks the day/evaluation revision.
+      const planned = previewCounter(database, token.ownerId, command);
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1685,6 +1731,8 @@ export const handleAutomation: RouteHandler = async (
         database.taskLinks.getAttachment(token.ownerId, entityId) ??
         database.taskLinks.getIssueLink(token.ownerId, entityId) ??
         database.timeEntries.get(token.ownerId, entityId) ??
+        database.counters.get(token.ownerId, entityId) ??
+        database.counters.getEvaluationById(token.ownerId, entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1886,6 +1934,23 @@ export const handleAutomation: RouteHandler = async (
       applyLocalMutation = confirmation.apply;
     } else if (isTimeEntryCommand(command)) {
       const confirmation = confirmTimeEntry(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isCounterCommand(command)) {
+      const confirmation = confirmCounter(
         database,
         token.ownerId,
         command,
