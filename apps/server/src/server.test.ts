@@ -186,7 +186,7 @@ describe("Suite HTTP server", () => {
           database: "ok",
           migrations: "current",
         });
-        expect(readiness.migrationCount).toBe(22);
+        expect(readiness.migrationCount).toBe(23);
 
         const build = await fetch(`${server.baseUrl}/api/build`);
         expect(build.status).toBe(200);
