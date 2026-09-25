@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   createTaskRequestSchema,
+  plannedDayAndStartMessage,
   type CreateTaskRequest,
 } from "@suite/contracts";
+import { deadlineReminderRequiresTimeMessage } from "./task-planning.ts";
 import {
   parseStructuredCapture,
   resolveCaptureReferences,
@@ -10,7 +12,16 @@ import {
 } from "@suite/domain";
 import type { SuiteDatabase } from "@suite/persistence";
 
-export const resolveTaskCapture = (
+/** Date-only plans and reminders must stay consistent after capture (ADR 0020). */
+const validatePlanning = (input: CreateTaskRequest): CreateTaskRequest => {
+  if (input.plannedStart != null && input.plannedDay != null)
+    throw new StructuredCaptureError(plannedDayAndStartMessage);
+  if (input.deadlineReminder != null && input.deadline?.kind !== "instant")
+    throw new StructuredCaptureError(deadlineReminderRequiresTimeMessage);
+  return input;
+};
+
+const resolveCaptureFields = (
   database: SuiteDatabase,
   ownerId: string,
   input: CreateTaskRequest,
@@ -56,6 +67,14 @@ export const resolveTaskCapture = (
   return parsed.data;
 };
 
+export const resolveTaskCapture = (
+  database: SuiteDatabase,
+  ownerId: string,
+  input: CreateTaskRequest,
+  now: string,
+): CreateTaskRequest =>
+  validatePlanning(resolveCaptureFields(database, ownerId, input, now));
+
 export const createCapturedTask = (
   database: SuiteDatabase,
   ownerId: string,
@@ -77,6 +96,8 @@ export const createCapturedTask = (
       createdAt: now,
       updatedAt: now,
       estimateMinutes: input.estimateMinutes ?? null,
+      startReminder: input.startReminder ?? { kind: "default" },
+      deadlineReminderMinutes: input.deadlineReminder?.minutes ?? null,
     },
     () => {
       const resolved = resolveTaskCapture(database, ownerId, input, now);
@@ -85,6 +106,7 @@ export const createCapturedTask = (
         projectId: resolved.projectId ?? null,
         tagIds: resolved.tagIds ?? [],
         plannedStart: resolved.plannedStart ?? null,
+        plannedDay: resolved.plannedDay ?? null,
         deadlineDate:
           resolved.deadline?.kind === "date" ? resolved.deadline.value : null,
         deadlineAt:

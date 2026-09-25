@@ -147,9 +147,12 @@ export const startSuiteServer = async (
       const claimed = database.claimNotificationDelivery(due.id, now);
       if (claimed === undefined) continue;
       const task = database.getTask(ownerId, due.taskId);
+      // The occurrence is the planned start, or the timed deadline for a
+      // deadline reminder (ADR 0020).
       if (
         task?.deletedAt !== null ||
-        task.plannedStart !== due.occurrenceStart
+        (due.kind === "deadline" ? task.deadlineAt : task.plannedStart) !==
+          due.occurrenceStart
       ) {
         database.finishNotificationDelivery(
           due.id,
@@ -201,9 +204,14 @@ export const startSuiteServer = async (
         timeStyle: "short",
       }).format(new Date(due.occurrenceStart));
       const result = await notificationPublisher.publish({
-        message: preferences.detailedContentEnabled
-          ? `${task.title} · ${localTime}`
-          : `Planned task reminder · ${localTime}`,
+        message:
+          due.kind === "deadline"
+            ? preferences.detailedContentEnabled
+              ? `Deadline · ${task.title} · ${localTime}`
+              : `Task deadline reminder · ${localTime}`
+            : preferences.detailedContentEnabled
+              ? `${task.title} · ${localTime}`
+              : `Planned task reminder · ${localTime}`,
         click: `${config.publicOrigin ?? "http://localhost"}/tasks?task=${encodeURIComponent(task.id)}`,
       });
       if (result.kind === "delivered")

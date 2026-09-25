@@ -136,6 +136,19 @@ export const taskResponse = (task: TaskRecord): Task => ({
   completedAt: task.completedAt,
   deletedAt: task.deletedAt,
   plannedStart: task.plannedStart,
+  plannedDay: task.plannedDay ?? null,
+  // The database CHECK limits stored offsets to the contract values.
+  startReminder: (task.startReminder ?? { kind: "default" }) as NonNullable<
+    Task["startReminder"]
+  >,
+  deadlineReminder:
+    task.deadlineReminderMinutes == null
+      ? null
+      : {
+          minutes: task.deadlineReminderMinutes as NonNullable<
+            Task["deadlineReminder"]
+          >["minutes"],
+        },
   deadline:
     task.deadlineDate == null
       ? task.deadlineAt == null

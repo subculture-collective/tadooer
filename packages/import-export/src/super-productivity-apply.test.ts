@@ -51,7 +51,8 @@ it("prepares exact core fields without retaining integration secrets", () => {
 it("blocks unsupported workflows without rounding estimates or inventing dates", () => {
   for (const extra of [
     { timeEstimate: 1 },
-    { dueDay: "2026-09-20" },
+    // Reminders need an exact start; date-only plans have no reminder time.
+    { dueDay: "2026-09-20", remindAt: 1700000000000 },
     { isDone: true },
     { attachments: [{ path: "file" }] },
     { remindAt: 1700000000000 },

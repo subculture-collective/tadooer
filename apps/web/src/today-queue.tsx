@@ -70,7 +70,8 @@ export const TodayQueue = ({
             (task) =>
               task.status === "open" &&
               task.deletedAt == null &&
-              task.plannedStart == null,
+              task.plannedStart == null &&
+              task.plannedDay == null,
           )
           .toSorted((left, right) => left.id.localeCompare(right.id))
       : queue.unscheduledTaskIds.flatMap((id) => {
@@ -87,6 +88,11 @@ export const TodayQueue = ({
       const task = byId.get(id);
       return task === undefined ? [] : [task];
     }) ?? [];
+  const plannedToday =
+    queue?.plannedTodayTaskIds.flatMap((id) => {
+      const task = byId.get(id);
+      return task === undefined ? [] : [task];
+    }) ?? [];
   const completed = tasks.filter(
     (task) =>
       recentlyCompletedIds.has(task.id) &&
@@ -99,7 +105,7 @@ export const TodayQueue = ({
           (task) =>
             task.status === "open" &&
             task.deletedAt == null &&
-            task.plannedStart != null,
+            (task.plannedStart != null || task.plannedDay != null),
         ).length
       : 0;
 
@@ -138,7 +144,7 @@ export const TodayQueue = ({
     title: string,
     className: string,
     listed: readonly Task[],
-    state: "overdue" | "scheduled" | "planning",
+    state: "overdue" | "scheduled" | "planned-day" | "planning",
   ) => (
     <Card
       className={`today-section ${className}`}
@@ -171,7 +177,11 @@ export const TodayQueue = ({
           </Button>
         </p>
       ) : null}
-      {overdue.length + scheduled.length + planning.length === 0 ? (
+      {overdue.length +
+        scheduled.length +
+        plannedToday.length +
+        planning.length ===
+      0 ? (
         <EmptyState title="Nothing queued for today." />
       ) : (
         <>
@@ -182,6 +192,14 @@ export const TodayQueue = ({
             scheduled,
             "scheduled",
           )}
+          {plannedToday.length > 0
+            ? section(
+                "Planned for today",
+                "today-planned-day",
+                plannedToday,
+                "planned-day",
+              )
+            : null}
           {section("Planning", "today-planning", planning, "planning")}
         </>
       )}

@@ -4,7 +4,7 @@ import {
   type CalmPreferences,
 } from "./day-planning.ts";
 
-export type ReminderKind = "lead" | "at_start";
+export type ReminderKind = "lead" | "at_start" | "deadline";
 export type ReminderDecision =
   | { readonly action: "deliver"; readonly reason: "ready" }
   | {
@@ -45,6 +45,9 @@ export const evaluateReminder = (input: {
 }): ReminderDecision => {
   if (input.taskStatus === "completed")
     return { action: "suppress", reason: "task_completed" };
+  // A deadline passes regardless of calendar availability or working hours,
+  // so its reminder is not deferred by the calm-day rules (ADR 0020).
+  if (input.kind === "deadline") return { action: "deliver", reason: "ready" };
   if (input.kind === "at_start" && input.activeFocusTaskId === input.taskId)
     return { action: "suppress", reason: "focus_active" };
   const calm = buildCalmDay({

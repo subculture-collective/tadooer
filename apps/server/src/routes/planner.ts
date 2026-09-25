@@ -4,6 +4,7 @@ import {
   plannerWindowSchema,
   planningPreferencesSchema,
 } from "@suite/contracts";
+import { planSortInstant, plannedWithinWindow } from "@suite/domain";
 import { readDayPlan } from "../day-plan.ts";
 import { sendJson, sendError, sameOrigin, readJson } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
@@ -134,27 +135,19 @@ export const handlePlanner: RouteHandler = async (
           link.taskId,
         ]),
     );
+    const { timeZone } = database.getPlanningPreferences(session.owner.id);
     const body: PlannerResponse = {
       window: window.data,
+      // Date-only tasks appear on each owner-zone day overlapping the window.
       tasks: database
         .listTasks(session.owner.id)
-        .filter(
-          (task) =>
-            task.plannedStart !== null &&
-            Date.parse(task.plannedStart) >= Date.parse(window.data.from) &&
-            Date.parse(task.plannedStart) < Date.parse(window.data.to),
+        .filter((task) => plannedWithinWindow(task, window.data, timeZone))
+        .toSorted(
+          (left, right) =>
+            planSortInstant(left, timeZone) -
+              planSortInstant(right, timeZone) ||
+            left.id.localeCompare(right.id),
         )
-        .toSorted((left, right) => {
-          const leftTime =
-            left.plannedStart === null
-              ? Number.POSITIVE_INFINITY
-              : Date.parse(left.plannedStart);
-          const rightTime =
-            right.plannedStart === null
-              ? Number.POSITIVE_INFINITY
-              : Date.parse(right.plannedStart);
-          return leftTime - rightTime || left.id.localeCompare(right.id);
-        })
         .map(taskResponse),
       events: events.map((event) =>
         calendarEventResponse(

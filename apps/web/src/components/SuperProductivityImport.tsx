@@ -90,9 +90,9 @@ export const SuperProductivityImport = ({
       />
       <p>
         Preview a JSON backup before importing core tasks, projects, tags,
-        notes, exact scheduled times, deadlines, estimates, and completion
-        dates. Preview changes nothing. Unsupported workflows block the entire
-        import.
+        notes, exact scheduled times, planned days, deadlines, reminders that
+        match a supported offset, estimates, and completion dates. Preview
+        changes nothing. Unsupported workflows block the entire import.
       </p>
       <Field>
         <FieldLabel htmlFor="sp-import-file">

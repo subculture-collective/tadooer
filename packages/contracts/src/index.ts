@@ -1,5 +1,11 @@
 export { superProductivityImportLimits } from "./import-limits.ts";
+export * from "./task-planning.ts";
 import { z } from "zod";
+import {
+  plannedDayAndStartExclusive,
+  plannedDayAndStartMessage,
+  taskPlanningFieldsSchema,
+} from "./task-planning.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -269,6 +275,7 @@ export const taskSchema = z.object({
   completedAt: z.iso.datetime().nullable().optional(),
   deletedAt: z.iso.datetime().nullable().optional(),
   plannedStart: z.iso.datetime().nullable().optional(),
+  ...taskPlanningFieldsSchema.shape,
   deadline: taskDeadlineSchema.nullable().optional(),
   estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
@@ -287,6 +294,7 @@ export const createTaskRequestSchema = z.object({
   title: z.string().trim().min(1).max(240),
   notes: z.string().max(20_000).default(""),
   plannedStart: z.iso.datetime().nullable().optional(),
+  ...taskPlanningFieldsSchema.shape,
   deadline: taskDeadlineSchema.nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
   tagIds: z.array(entityIdSchema).max(25).optional(),
@@ -306,11 +314,15 @@ export const taskPatchRequestSchema = z
     title: z.string().trim().min(1).max(240).optional(),
     notes: z.string().max(20_000).optional(),
     plannedStart: z.iso.datetime().nullable().optional(),
+    ...taskPlanningFieldsSchema.shape,
     deadline: taskDeadlineSchema.nullable().optional(),
     estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
   })
   .refine((input) => Object.keys(input).length > 0, {
     message: "At least one mutable task field is required",
+  })
+  .refine(plannedDayAndStartExclusive, {
+    message: plannedDayAndStartMessage,
   });
 
 export const conditionalRequestHeadersSchema = z.object({
@@ -498,7 +510,7 @@ export const notificationStatusResponseSchema = z
     lastDelivery: z
       .object({
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "test"]),
+        kind: z.enum(["lead", "at_start", "deadline", "test"]),
         occurredAt: z.iso.datetime(),
         errorCode: apiErrorCodeSchema.nullable(),
       })
@@ -516,7 +528,7 @@ export const notificationDeliveryResponseSchema = z
       .object({
         id: entityIdSchema,
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "test"]),
+        kind: z.enum(["lead", "at_start", "deadline", "test"]),
         attemptCount: z.number().int().nonnegative(),
         updatedAt: z.iso.datetime(),
         deliveredAt: z.iso.datetime().nullable(),
