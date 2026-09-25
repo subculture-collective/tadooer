@@ -624,7 +624,7 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(60);
+    expect(automationCatalog).toHaveLength(61);
     expect(ids).toEqual(
       expect.arrayContaining([
         "tasks.update",
@@ -646,6 +646,7 @@ describe("Suite contracts", () => {
         "task_links.mutate",
         "time.report",
         "time_entries.mutate",
+        "plugin_data.list",
       ]),
     );
     for (const entry of automationCatalog) {

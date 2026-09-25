@@ -90,6 +90,20 @@ export {
   type RecurringSeriesFields,
   type RecurringSeriesRecord,
 } from "./recurrence-store.ts";
+import {
+  SqlitePluginDataStore,
+  pluginDataMigration,
+  type ImportedPluginDataEntry,
+  type ImportedPluginMetadata,
+} from "./plugin-data-store.ts";
+export {
+  SqlitePluginDataStore,
+  type ImportedPluginDataEntry,
+  type ImportedPluginMetadata,
+  type PluginDataDeleteResult,
+  type PluginDataEntryRecord,
+  type PluginMetadataRecord,
+} from "./plugin-data-store.ts";
 export {
   SqliteTaskHierarchyStore,
   TaskHierarchyError,
@@ -1479,6 +1493,7 @@ const migrations: readonly Migration[] = [
   taskArchiveMigration,
   recurrenceMigration,
   timeHistoryMigration,
+  pluginDataMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1499,6 +1514,7 @@ export class SuiteDatabase {
   readonly taskArchive: SqliteTaskArchiveStore;
   readonly recurrence: SqliteRecurrenceStore;
   readonly timeEntries: SqliteTimeEntryStore;
+  readonly pluginData: SqlitePluginDataStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
@@ -1535,6 +1551,7 @@ export class SuiteDatabase {
         this.getTask(ownerId, taskId, includeInactive),
     });
     this.notes = new SqliteNoteStore(database);
+    this.pluginData = new SqlitePluginDataStore(database);
     this.taskArchive = new SqliteTaskArchiveStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
         this.getTask(ownerId, taskId, includeInactive),
@@ -3171,11 +3188,17 @@ export class SuiteDatabase {
         ImportedWorkContextDay,
         "projectId" | "tagId"
       >[];
+      /** Opaque plugin data and inert plugin metadata (ADR 0026). */
+      readonly pluginData?: {
+        readonly entries: readonly ImportedPluginDataEntry[];
+        readonly plugins: readonly ImportedPluginMetadata[];
+      };
     } = {},
   ): {
     created: number;
     existing: number;
     recurringSeries?: { created: number; existing: number };
+    pluginData?: { created: number; existing: number };
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3438,11 +3461,25 @@ export class SuiteDatabase {
               randomUUID,
               now,
             );
+      // Only an export with plugin records reports plugin data counts.
+      const pluginData =
+        options.pluginData === undefined ||
+        options.pluginData.entries.length +
+          options.pluginData.plugins.length ===
+          0
+          ? undefined
+          : this.pluginData.importInTransaction(
+              ownerId,
+              options.pluginData,
+              randomUUID,
+              now,
+            );
       this.#database.exec("COMMIT;");
       return {
         created,
         existing,
         ...(recurringSeries === undefined ? {} : { recurringSeries }),
+        ...(pluginData === undefined ? {} : { pluginData }),
       };
     } catch (error) {
       this.#database.exec("ROLLBACK;");
