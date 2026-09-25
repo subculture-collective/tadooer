@@ -25,7 +25,6 @@ type FieldKey =
   | "noteFields"
   | "attachmentFields"
   | "repeatCfgFields"
-  | "repeatCfgFields"
   | "simpleCounterFields"
   | "metricFields"
   | "pluginUserDataFields"
