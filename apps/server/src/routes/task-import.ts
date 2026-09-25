@@ -40,7 +40,7 @@ export const handleTaskImport: RouteHandler = async (
   }
   try {
     const input = await readJson(request, limits.bytes);
-    const { report, records } = prepareSuperProductivityImport(
+    const { report, records, workContexts } = prepareSuperProductivityImport(
       JSON.stringify(input),
     );
     if (url.pathname.endsWith("/preview")) {
@@ -65,6 +65,7 @@ export const handleTaskImport: RouteHandler = async (
           session.owner.id,
           records,
           new Date().toISOString(),
+          { workContexts },
         );
         sendJson(response, 200, outcome);
       } catch {

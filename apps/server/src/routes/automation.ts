@@ -22,6 +22,7 @@ import {
   taskLinksResourceInputSchema,
   templateSearchRequestSchema,
   taskHistoryQuerySchema,
+  timeReportQuerySchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -54,6 +55,12 @@ import {
   previewTaskArchive,
 } from "./automation-task-archive.ts";
 import { taskHistoryBody } from "./task-archive.ts";
+import {
+  confirmTimeEntry,
+  isTimeEntryCommand,
+  previewTimeEntry,
+} from "./automation-time-entries.ts";
+import { timeReportBody } from "./time-history.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -442,6 +449,25 @@ export const handleAutomation: RouteHandler = async (
         );
         return true;
       }
+    } else if (resource === "time.report") {
+      const input = timeReportQuerySchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_TIME_REPORT",
+          "Provide from and to calendar dates at most 366 days apart",
+        );
+        return true;
+      }
+      body = timeReportBody(
+        database,
+        token.ownerId,
+        input.data,
+        ctx.sessionClock.now().toISOString(),
+      );
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -658,6 +684,7 @@ export const handleAutomation: RouteHandler = async (
         | "note"
         | "task_attachment"
         | "task_issue_link"
+        | "time_entry"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -678,6 +705,7 @@ export const handleAutomation: RouteHandler = async (
         | "note"
         | "task_attachment"
         | "task_issue_link"
+        | "time_entry"
         | "choice_pool"
         | "planning_placeholder"
         | "pool_item"
@@ -865,6 +893,21 @@ export const handleAutomation: RouteHandler = async (
         database,
         token.ownerId,
         command,
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isTimeEntryCommand(command)) {
+      // ADR 0024: freezes the entry revision, or the task for an addition.
+      const planned = previewTimeEntry(
+        database,
+        token.ownerId,
+        command,
+        ctx.sessionClock.now().toISOString(),
       );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
@@ -1616,6 +1659,7 @@ export const handleAutomation: RouteHandler = async (
         database.notes.get(token.ownerId, entityId) ??
         database.taskLinks.getAttachment(token.ownerId, entityId) ??
         database.taskLinks.getIssueLink(token.ownerId, entityId) ??
+        database.timeEntries.get(token.ownerId, entityId) ??
         database.getChoicePool(token.ownerId, entityId, true) ??
         database.getPlanningPlaceholder(token.ownerId, entityId) ??
         database
@@ -1786,6 +1830,23 @@ export const handleAutomation: RouteHandler = async (
         database,
         token.ownerId,
         command,
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isTimeEntryCommand(command)) {
+      const confirmation = confirmTimeEntry(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
       );
       if (!confirmation.ok) {
         sendError(
