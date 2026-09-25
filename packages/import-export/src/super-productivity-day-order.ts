@@ -47,7 +47,7 @@ export interface SourceDayOrder {
 export const mapSuperProductivityDayOrders = (input: {
   readonly todayTaskIds: unknown;
   readonly planner: unknown;
-  /** globalConfig.misc.startOfNextDayTime; reported, never applied. */
+  /** globalConfig.misc.startOfNextDayTime; reported here, applied by ADR 0030. */
   readonly startOfNextDayTime?: unknown;
   readonly today: string;
   readonly tasks: ReadonlyMap<string, DayOrderTask>;
@@ -63,7 +63,7 @@ export const mapSuperProductivityDayOrders = (input: {
   )
     input.notice(
       "globalConfig",
-      `Super Productivity starts a new day at ${dayStart}; this setting is not imported. Set "New day starts at" in the planning settings to match, before importing, so Today's order lands on the same day`,
+      `Super Productivity starts a new day at ${dayStart}. It is imported as the planning day start only while planning preferences were never saved; otherwise set "New day starts at" to match before importing, so Today's order lands on the same day`,
     );
   const add = (
     sourceId: string,

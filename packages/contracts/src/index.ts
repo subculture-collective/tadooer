@@ -8,6 +8,11 @@ export * from "./time-history.ts";
 export * from "./counters.ts";
 export * from "./plugin-data.ts";
 export * from "./day-order.ts";
+export * from "./application-preferences.ts";
+import {
+  applicationPreferenceMutationInputSchema,
+  applicationPreferenceSnapshotSchema,
+} from "./application-preferences.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -1596,6 +1601,9 @@ export const automationTokenScopeSchema = z.enum([
   "notifications:read",
   "notifications:write",
   "planning:write",
+  // Application preferences and shortcuts (ADR 0030).
+  "application:read",
+  "application:write",
   "tasks:read",
   "tasks:write",
   "schedule:read",
@@ -1672,6 +1680,7 @@ export const automationTokenListResponseSchema = z
 
 export const automationOperationSchema = z.enum([
   "planning.update_preferences",
+  "application.update_preferences",
   "notifications.send_test",
   "notifications.update_preferences",
   "subtasks.mutate",
@@ -1900,6 +1909,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: planningPreferenceMutationInputSchema,
     }),
     z.object({
+      operation: z.literal("application.update_preferences"),
+      input: applicationPreferenceMutationInputSchema,
+    }),
+    z.object({
       operation: z.literal("notifications.update_preferences"),
       input: notificationPreferenceMutationInputSchema,
     }),
@@ -2076,6 +2089,11 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: planningPreferenceMutationInputSchema,
+    });
+  if (operation === "application.update_preferences")
+    return z.object({
+      operation: z.literal(operation),
+      input: applicationPreferenceMutationInputSchema,
     });
   if (operation === "notifications.update_preferences")
     return z.object({
@@ -2256,6 +2274,7 @@ export const automationAffectedEntitySchema = z
     entityKind: z.enum([
       "planning_preferences",
       "notification_preferences",
+      "application_preferences",
       "habit",
       "task",
       "subtask",
@@ -2311,7 +2330,11 @@ export const automationBaseRevisionSchema = z.union([
   existingAutomationBaseRevisionSchema,
   z
     .object({
-      entityKind: z.enum(["planning_preferences", "notification_preferences"]),
+      entityKind: z.enum([
+        "planning_preferences",
+        "notification_preferences",
+        "application_preferences",
+      ]),
       entityId: entityIdSchema,
       revision: z.number().int().nonnegative(),
     })
@@ -2354,6 +2377,9 @@ export const habitMutationResponseSchema = z
 export const automationExecutionResultSchema = z.union([
   notificationTestQueuedSchema,
   z.object({ planningPreferences: planningPreferenceSnapshotSchema }).strict(),
+  z
+    .object({ applicationPreferences: applicationPreferenceSnapshotSchema })
+    .strict(),
   z
     .object({ notificationPreferences: notificationPreferenceSnapshotSchema })
     .strict(),
@@ -2446,6 +2472,17 @@ export const automationCatalog = [
     mcpUri: "suite://v1/planning-preferences",
     inputSchema: z.object({}).strict(),
     outputSchema: planningPreferenceSnapshotSchema,
+  },
+  {
+    id: "application.preferences",
+    kind: "resource",
+    scopes: ["application:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/application-preferences",
+    mcpName: "suite.application.preferences",
+    mcpUri: "suite://v1/application-preferences",
+    inputSchema: z.object({}).strict(),
+    outputSchema: applicationPreferenceSnapshotSchema,
   },
   {
     id: "notifications.preferences",
@@ -2710,34 +2747,37 @@ export const automationCatalog = [
         ? "notifications:test"
         : id === "planning.update_preferences"
           ? "planning:write"
-          : id === "notifications.update_preferences"
-            ? "notifications:write"
-            : id.startsWith("projects.")
-              ? "projects:write"
-              : id.startsWith("tags.")
-                ? "tags:write"
-                : id === "notes.mutate"
-                  ? "notes:write"
-                  : id === "task_links.mutate"
-                    ? "task_links:write"
-                    : id === "habits.mutate"
-                      ? "habits:write"
-                      : id.startsWith("counters.") || id === "evaluations.write"
-                        ? "metrics:write"
-                        : id.startsWith("tasks.") ||
-                            id.startsWith("recurrence.") ||
-                            id === "subtasks.mutate" ||
-                            id === "time_entries.mutate" ||
-                            id === "day_order.reorder"
-                          ? "tasks:write"
-                          : id === "schedule.create_time_block"
-                            ? "schedule:write"
-                            : id.startsWith("templates.") ||
-                                id.startsWith("template_sets.")
-                              ? "templates:write"
-                              : id === "placeholders.resolve"
-                                ? "pools:write"
-                                : "focus:write",
+          : id === "application.update_preferences"
+            ? "application:write"
+            : id === "notifications.update_preferences"
+              ? "notifications:write"
+              : id.startsWith("projects.")
+                ? "projects:write"
+                : id.startsWith("tags.")
+                  ? "tags:write"
+                  : id === "notes.mutate"
+                    ? "notes:write"
+                    : id === "task_links.mutate"
+                      ? "task_links:write"
+                      : id === "habits.mutate"
+                        ? "habits:write"
+                        : id.startsWith("counters.") ||
+                            id === "evaluations.write"
+                          ? "metrics:write"
+                          : id.startsWith("tasks.") ||
+                              id.startsWith("recurrence.") ||
+                              id === "subtasks.mutate" ||
+                              id === "time_entries.mutate" ||
+                              id === "day_order.reorder"
+                            ? "tasks:write"
+                            : id === "schedule.create_time_block"
+                              ? "schedule:write"
+                              : id.startsWith("templates.") ||
+                                  id.startsWith("template_sets.")
+                                ? "templates:write"
+                                : id === "placeholders.resolve"
+                                  ? "pools:write"
+                                  : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -2751,6 +2791,7 @@ export const automationCatalog = [
     scopes: [
       "notifications:test",
       "planning:write",
+      "application:write",
       "notifications:write",
       "tasks:write",
       "projects:write",
@@ -3165,5 +3206,7 @@ export const taskImportApplyResponseSchema = z
       .optional(),
     /** ADR 0027: dates whose Today or planner-day order was saved. */
     dayOrders: z.number().int().nonnegative().optional(),
+    /** ADR 0030: application and planning settings applied from globalConfig. */
+    applicationPreferences: z.number().int().nonnegative().optional(),
   })
   .strict();

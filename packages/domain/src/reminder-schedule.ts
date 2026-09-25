@@ -50,13 +50,19 @@ const minutesBefore = (instant: string, minutes: number): string =>
 export const scheduledReminders = (
   task: ReminderScheduleTask,
   preferences: ReminderSchedulePreferences,
+  /**
+   * ADR 0030: the owner's default reminder. A task that keeps `default`
+   * resolves to this setting first; `default` here keeps ADR 0016 behaviour.
+   */
+  ownerDefault: StartReminderSetting = { kind: "default" },
 ): readonly ScheduledReminder[] => {
   if (!preferences.enabled || task.status !== "open" || task.deletedAt !== null)
     return [];
   const reminders: ScheduledReminder[] = [];
   const start = task.plannedStart;
   if (start !== null) {
-    const setting = task.startReminder ?? { kind: "default" };
+    const own = task.startReminder ?? { kind: "default" };
+    const setting = own.kind === "default" ? ownerDefault : own;
     if (setting.kind === "default") {
       if (preferences.leadReminderEnabled)
         reminders.push({

@@ -33,6 +33,7 @@ import {
   type ImportedAttachment,
   type ImportedIssueLink,
 } from "./super-productivity-links.ts";
+import { mapSuperProductivityGlobalConfig } from "./super-productivity-config.ts";
 
 type Source = Record<string, unknown>;
 const object = (value: unknown): Source =>
@@ -122,6 +123,10 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "plugin_data_preserved",
     // ADR 0027: Today and planner-day order entries that are not applied.
     "day_order_notice",
+    // ADR 0030: globalConfig settings; configuration never blocks.
+    "config_applied",
+    "config_field_excluded",
+    "config_field_retained",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -791,6 +796,12 @@ export const prepareSuperProductivityImport = (
     notice: (sourceId, detail) =>
       issues.push({ code: "day_order_notice", sourceId, detail }),
   });
+  // ADR 0030: safe globalConfig settings become application and planning
+  // preferences; credentials and provider configuration are never read.
+  const applicationPreferences = mapSuperProductivityGlobalConfig(
+    data.globalConfig,
+    (found) => issues.push(found),
+  );
   const reported = issues.map((issue) => ({
     ...issue,
     blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
@@ -812,5 +823,13 @@ export const prepareSuperProductivityImport = (
     evaluations: sourceInventory.evaluations,
     plugins: sourceInventory.plugins,
     dayOrders,
+    ...(applicationPreferences === undefined
+      ? {}
+      : {
+          applicationPreferences: {
+            preferences: applicationPreferences.preferences,
+            planning: applicationPreferences.planning,
+          },
+        }),
   };
 };

@@ -278,3 +278,4 @@ export const serializeCalendarFeed = (rawEvents: readonly string[]): string => {
 export * from "./super-productivity-recurrence.ts";
 export * from "./super-productivity-counters.ts";
 export * from "./super-productivity-day-order.ts";
+export * from "./super-productivity-config.ts";
