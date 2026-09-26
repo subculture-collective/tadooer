@@ -27,6 +27,7 @@ import {
   counterHistoryQuerySchema,
   evaluationListQuerySchema,
   dayOrderResourceInputSchema,
+  calendarSubscriptionResourceInputSchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -84,6 +85,11 @@ import {
   previewDayOrder,
 } from "./automation-day-order.ts";
 import { readDayOrder } from "./day-order.ts";
+import {
+  confirmCalendarSubscription,
+  isCalendarSubscriptionCommand,
+  previewCalendarSubscription,
+} from "./automation-calendar-subscriptions.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -548,6 +554,32 @@ export const handleAutomation: RouteHandler = async (
           ),
         ),
       };
+    } else if (resource === "calendar_subscriptions.list") {
+      // ADR 0032: subscriptions by host, plus their events for a window.
+      const input = calendarSubscriptionResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_WINDOW",
+          "Give both from and to, at most 31 days apart, or neither",
+        );
+        return true;
+      }
+      const at = ctx.sessionClock.now().toISOString();
+      body = {
+        subscriptions: ctx.calendarSubscriptions.list(token.ownerId, at),
+        events:
+          input.data.from === undefined || input.data.to === undefined
+            ? []
+            : ctx.calendarSubscriptions.events(
+                token.ownerId,
+                input.data.from,
+                input.data.to,
+              ),
+      };
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -1004,6 +1036,20 @@ export const handleAutomation: RouteHandler = async (
       // ADR 0027: no entity revision to freeze; confirmation re-checks the
       // day order revision and exact membership.
       const planned = previewDayOrder(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      taskSummary = planned.summary;
+    } else if (isCalendarSubscriptionCommand(command)) {
+      // ADR 0032: names the subscription host and event; a refresh repeats
+      // its revision check at confirmation.
+      const planned = previewCalendarSubscription(
+        database,
+        token.ownerId,
+        command,
+      );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1997,6 +2043,25 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       applyLocalMutation = confirmation.apply;
+    } else if (isCalendarSubscriptionCommand(command)) {
+      const confirmation = await confirmCalendarSubscription(
+        database,
+        ctx.calendarSubscriptions,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      if ("result" in confirmation) result = confirmation.result;
+      else applyLocalMutation = confirmation.apply;
     } else if (isTimeEntryCommand(command)) {
       const confirmation = confirmTimeEntry(
         database,

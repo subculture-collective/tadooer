@@ -164,6 +164,24 @@ import {
   type DayOrderPlanRequest,
   type Task as DayOrderPlannedTask,
 } from "@suite/contracts";
+import {
+  calendarSubscriptionConversionResponseSchema,
+  calendarSubscriptionCreateRequestSchema,
+  calendarSubscriptionEventListResponseSchema,
+  calendarSubscriptionEventMutationResponseSchema,
+  calendarSubscriptionListResponseSchema,
+  calendarSubscriptionMutationResponseSchema,
+  calendarSubscriptionPatchRequestSchema,
+  calendarSubscriptionRefreshResponseSchema,
+  type CalendarSubscriptionConversionResponse,
+  type CalendarSubscriptionCreateRequest,
+  type CalendarSubscriptionEventListResponse,
+  type CalendarSubscriptionEventMutationResponse,
+  type CalendarSubscriptionListResponse,
+  type CalendarSubscriptionMutationResponse,
+  type CalendarSubscriptionPatchRequest,
+  type CalendarSubscriptionRefreshResponse,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -1570,5 +1588,121 @@ export const planTasksForDay = (
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken },
       body: JSON.stringify(dayOrderPlanRequestSchema.parse(plan)),
+    },
+  );
+
+// Read-only iCal subscriptions (ADR 0032). Online-only and owner-only: the
+// feed address is sent once on create or change and never read back.
+export const listCalendarSubscriptions =
+  (): Promise<CalendarSubscriptionListResponse> =>
+    request(
+      "/api/calendar-subscriptions",
+      calendarSubscriptionListResponseSchema,
+    );
+
+export const createCalendarSubscription = (
+  input: CalendarSubscriptionCreateRequest,
+  csrfToken: string,
+): Promise<CalendarSubscriptionRefreshResponse> =>
+  request(
+    "/api/calendar-subscriptions",
+    calendarSubscriptionRefreshResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(
+        calendarSubscriptionCreateRequestSchema.parse(input),
+      ),
+    },
+  );
+
+export const updateCalendarSubscription = (
+  id: string,
+  revision: number,
+  input: CalendarSubscriptionPatchRequest,
+  csrfToken: string,
+): Promise<CalendarSubscriptionMutationResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(id)}`,
+    calendarSubscriptionMutationResponseSchema,
+    {
+      method: "PATCH",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify(calendarSubscriptionPatchRequestSchema.parse(input)),
+    },
+  );
+
+export const deleteCalendarSubscription = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/calendar-subscriptions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const refreshCalendarSubscription = (
+  id: string,
+  csrfToken: string,
+): Promise<CalendarSubscriptionRefreshResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(id)}/refresh`,
+    calendarSubscriptionRefreshResponseSchema,
+    { method: "POST", headers: { "X-CSRF-Token": csrfToken } },
+  );
+
+export const listCalendarSubscriptionEvents = (
+  from: string,
+  to: string,
+): Promise<CalendarSubscriptionEventListResponse> =>
+  request(
+    `/api/calendar-subscriptions/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    calendarSubscriptionEventListResponseSchema,
+  );
+
+export const setCalendarSubscriptionEventHidden = (
+  subscriptionId: string,
+  event: { readonly uid: string; readonly occurrenceStart: string },
+  hidden: boolean,
+  csrfToken: string,
+): Promise<CalendarSubscriptionEventMutationResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(subscriptionId)}/events/hidden`,
+    calendarSubscriptionEventMutationResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ ...event, hidden }),
+    },
+  );
+
+export const convertCalendarSubscriptionEvent = (
+  subscriptionId: string,
+  event: { readonly uid: string; readonly occurrenceStart: string },
+  csrfToken: string,
+): Promise<CalendarSubscriptionConversionResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(subscriptionId)}/events/convert`,
+    calendarSubscriptionConversionResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(event),
+    },
+  );
+
+export const dismissCalendarSubscriptionEvent = (
+  subscriptionId: string,
+  event: { readonly uid: string; readonly occurrenceStart: string },
+  csrfToken: string,
+): Promise<CalendarSubscriptionEventMutationResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(subscriptionId)}/events/dismiss`,
+    calendarSubscriptionEventMutationResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(event),
     },
   );

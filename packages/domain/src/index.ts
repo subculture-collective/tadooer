@@ -50,3 +50,5 @@ export * from "./recurrence.ts";
 export * from "./time-history.ts";
 export * from "./counters.ts";
 export * from "./day-order.ts";
+
+export * from "./ical-subscription.ts";

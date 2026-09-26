@@ -63,7 +63,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | platforms              | decision-gated | PWA and Linux packaging exist; platform-specific native delivery requires explicit platform design.                                                                                                                                                                                             | [#24](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/24) |
 | presentation           | decision-gated | Store-rating prompts and engagement presentation are not migrated data; decide relevant product outcomes under post-parity discovery.                                                                                                                                                           | [#52](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/52) |
 | capture                | partial        | Structured capture resolves existing names only; estimate syntax, tag creation, URLs and markdown/email paste have no equivalent.                                                                                                                                                               | [#90](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/90) |
-| calendar-subscriptions | missing        | iCal URL subscriptions, event-to-task conversion, auto-import tombstones and hidden events.                                                                                                                                                                                                     | [#91](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/91) |
+| calendar-subscriptions | partial        | Read-only iCal subscriptions with scheduled refresh, planner projection, filters, one-task conversion, auto-import tombstones and hidden events (ADR 0032); exported ICAL providers are re-created by hand.                                                                                     | [#91](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/91) |
 | offline-writes         | partial        | Only task core fields and habits queue offline; planned time/day, reminders, assignment, project/tag and checklist writes are online-only.                                                                                                                                                      | [#92](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/92) |
 | data-export            | missing        | Source has self-service JSON export/restore and local backups; Tadooer has only operator SQLite backups.                                                                                                                                                                                        | [#93](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/93) |
 | sync-providers         | excluded       | Owner decision September 24: third-party storage sync and client-side end-to-end encryption are not parity requirements.                                                                                                                                                                        | [#94](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/94) |
@@ -114,6 +114,10 @@ provider absent from the export is kept and reported as
 `issue_provider_missing` without blocking. Attachment fields are reviewed
 separately (`attachmentFields` in the manifest); addresses with embedded
 credentials block apply.
+
+Since #91 (ADR 0032), the fields of `ICAL` issue providers are reviewed as
+`calendarProviderFields`; they stay configuration and are not imported. See
+"Calendar subscriptions" below.
 
 Since #66 (ADR 0026), `pluginUserData` and `pluginMetadata` apply as inert
 records: each value is kept as opaque text of at most 1 MiB, never decoded or
@@ -267,6 +271,22 @@ start first so Today's order lands on the same date.
 The newest local backup (`2026-09-24_230532.json`, counts only) has 27 Today
 entries: 20 completed and 7 open timed tasks, so none applies. Its six planner
 dates are empty and its day starts at 03:00.
+
+### Calendar subscriptions (#91)
+
+Super Productivity keeps iCal calendars as `issueProvider` entries with
+`issueProviderKey: "ICAL"`. That section is configuration: the importer reads
+only a provider's `id` and key for linked issues, and `icalUrl` routinely
+embeds a private token, so subscriptions are not imported. Their fields are
+reviewed as `calendarProviderFields` in the manifest
+(`super-productivity-calendar.ts`), each with the Tadooer subscription setting
+it corresponds to: `checkUpdatesEvery` (milliseconds) to
+`refreshIntervalMinutes`, `isAutoImportForCurrentDay` to `autoImport`,
+`isReferenceCalendar` to `referenceOnly`, `filterIncludeRegex` and
+`filterExcludeRegex` to the include and exclude patterns, `color` and `icon`
+to the same names. `showBannerBeforeThreshold`, `isDisabledForWebApp` and the
+generic issue-provider fields have no equivalent. The owner re-creates each
+subscription under Connections with the address entered once (ADR 0032).
 
 ### September 24 backup (19.1.0)
 

@@ -125,6 +125,23 @@ export {
   type PluginDataEntryRecord,
   type PluginMetadataRecord,
 } from "./plugin-data-store.ts";
+import {
+  SqliteCalendarSubscriptionStore,
+  calendarSubscriptionMigration,
+} from "./calendar-subscription-store.ts";
+export {
+  SqliteCalendarSubscriptionStore,
+  calendarSubscriptionHiddenEventLimit,
+  calendarSubscriptionLimit,
+  type CalendarSubscriptionDeleteResult,
+  type CalendarSubscriptionEventInput,
+  type CalendarSubscriptionEventRecord,
+  type CalendarSubscriptionFetchOutcome,
+  type CalendarSubscriptionRecord,
+  type CalendarSubscriptionSettings,
+  type CalendarSubscriptionUrlCipher,
+  type CalendarSubscriptionWriteResult,
+} from "./calendar-subscription-store.ts";
 import { SqliteDayOrderStore, dayOrderMigration } from "./day-order-store.ts";
 export {
   SqliteDayOrderStore,
@@ -224,7 +241,8 @@ export interface BaikalConnectorRecord {
 export interface CalendarProviderRecord {
   readonly id: string;
   readonly ownerId: string;
-  readonly kind: "baikal" | "caldav" | "google";
+  /** `ical` marks a read-only subscription (ADR 0032); it has no connector. */
+  readonly kind: "baikal" | "caldav" | "google" | "ical";
   readonly connectorId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -1526,6 +1544,7 @@ const migrations: readonly Migration[] = [
   countersMigration,
   pluginDataMigration,
   dayOrderMigration,
+  calendarSubscriptionMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1549,9 +1568,11 @@ export class SuiteDatabase {
   readonly counters: SqliteCounterStore;
   readonly pluginData: SqlitePluginDataStore;
   readonly dayOrders: SqliteDayOrderStore;
+  readonly calendarSubscriptions: SqliteCalendarSubscriptionStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.calendarSubscriptions = new SqliteCalendarSubscriptionStore(database);
     this.counters = new SqliteCounterStore(database);
     this.dayOrders = new SqliteDayOrderStore(database, {
       planTask: (ownerId, taskId, expectedRevision, date, now) => {
@@ -2741,7 +2762,11 @@ export class SuiteDatabase {
     from: string,
     to: string,
   ): readonly CalendarEventProjectionRecord[] {
-    return this.calendarProjections.listProjectedEvents(ownerId, from, to);
+    // ADR 0032: visible subscription occurrences join the provider projection.
+    return [
+      ...this.calendarProjections.listProjectedEvents(ownerId, from, to),
+      ...this.calendarSubscriptions.listProjectedEvents(ownerId, from, to),
+    ];
   }
 
   listActiveTaskCalendarEventLinks(
