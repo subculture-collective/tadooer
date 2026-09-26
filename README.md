@@ -92,8 +92,10 @@ Persistent data lives in three named volumes:
 - `baikal-specific`: authoritative Baïkal DAV database/resources
 - `baikal-config`: Baïkal configuration
 
-Create a Suite-only online SQLite and connector-key backup pair with
-`./deploy/backup.sh`. Restore one with
+Owners download their own data as one JSON file from Settings and restore it
+after a preview (ADR 0034); the file contains no secrets and is separate from
+the operator backups below. Create a Suite-only online SQLite and
+connector-key backup pair with `./deploy/backup.sh`. Restore one with
 `./deploy/restore.sh <database-backup-basename>`; restore stops only the Suite
 service and retains pre-restore database and key copies.
 
@@ -261,5 +263,3 @@ Implementation order is governed by the
 [Roadmap](docs/ROADMAP.md), not by feature parity with Super Productivity.
 
 https://www2.onnwee.me
-
-

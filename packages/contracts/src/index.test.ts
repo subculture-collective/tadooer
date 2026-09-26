@@ -74,7 +74,7 @@ describe("Habit protocol", () => {
 });
 
 describe("deadline sync contracts", () => {
-  it("accepts date, instant, and clearing deadlines but rejects planned-start writes", () => {
+  it("accepts date, instant, and clearing deadlines and planned-start patches but not planned-start creates", () => {
     const base = {
       operationId: "00000000-0000-4000-8000-000000000001",
       clientSequence: 1,
@@ -117,7 +117,7 @@ describe("deadline sync contracts", () => {
         fields: { plannedStart: base.createdAt },
         baseFieldVersions: { plannedStart: 1 },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       syncOperationSchema.safeParse({
         ...base,

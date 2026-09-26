@@ -46,13 +46,7 @@ import { ApiRequestError } from "@suite/contracts";
 import {
   commandActiveSession,
   connectBaikal,
-  createProject,
-  createSubtask,
-  deleteSubtask,
   createSyncTransport,
-  createTag,
-  assignTaskProject,
-  assignTaskTags,
   getBaikalStatus,
   getGoogleStatus,
   beginGoogleAuthorization,
@@ -90,8 +84,6 @@ import {
   patchChoicePool,
   createTemplatePoolSlot,
   recordChoicePoolCompletion,
-  patchSubtask,
-  reorderSubtasks,
   login,
   logout,
   putTaskTimeBlock,
@@ -107,6 +99,7 @@ import {
   type ResolveTaskConflictInput,
 } from "./local-store.ts";
 import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
+import type { OrganizationQueue } from "./components/organization/OrganizationPanel.tsx";
 import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
 import { Field } from "./field.tsx";
 import type { FocusPanelCommand } from "./focus-panel.tsx";
@@ -126,7 +119,6 @@ import { ConnectionsPage } from "./pages/ConnectionsPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { InboxPage } from "./pages/InboxPage.tsx";
 import { PlannerPage } from "./pages/PlannerPage.tsx";
-import { moveChecklistItem } from "./checklist-order.ts";
 import {
   routeFromPath,
   workspaceRoutes,
@@ -377,6 +369,24 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     };
   }, [localStore]);
 
+  // ADR 0033: projects, tags and checklists are read from the local cache so
+  // offline-created records are usable before they have synced.
+  const refreshCachedOrganization = useCallback(async () => {
+    const [cachedProjects, cachedTags, cachedSubtasks] = await Promise.all([
+      localStore.loadCachedProjects(),
+      localStore.loadCachedTags(),
+      localStore.loadCachedSubtasks(),
+    ]);
+    setProjects(cachedProjects);
+    setTags(cachedTags);
+    setSubtasks(
+      cachedSubtasks.reduce<Record<string, Subtask[]>>((grouped, subtask) => {
+        (grouped[subtask.taskId] ??= []).push(subtask);
+        return grouped;
+      }, {}),
+    );
+  }, [localStore]);
+
   const synchronize = useCallback(
     async (session: SessionResponse) => {
       const transport = createSyncTransport(session.csrfToken);
@@ -387,6 +397,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       }
       let round = await engine.sync();
       while (round.hasMore) round = await engine.sync();
+      await refreshCachedOrganization();
       setHabitLibrary(await localStore.loadCachedHabits());
       setHabitPending(
         (await localStore.loadOutbox()).some(
@@ -401,7 +412,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         activeSession: await getActiveSession(client),
       };
     },
-    [cachedTaskState, localStore],
+    [cachedTaskState, localStore, refreshCachedOrganization],
   );
 
   const loadAuthenticated = useCallback(
@@ -879,6 +890,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
 
   const publishLocalState = async (): Promise<void> => {
     const cached = await cachedTaskState();
+    if (state.kind === "authenticated") await refreshCachedOrganization();
     setState((current) =>
       current.kind === "authenticated"
         ? {
@@ -1283,16 +1295,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     event.preventDefault();
     if (state.kind !== "authenticated") return;
     const form = event.currentTarget;
-    const title = formValue(new FormData(form), "title");
+    const title = formValue(new FormData(form), "title").trim();
+    if (title === "") return;
     setBusy(true);
+    setFormError(null);
     try {
-      if (kind === "project")
-        setProjects([
-          ...projects,
-          await createProject(title, state.session.csrfToken),
-        ]);
-      else setTags([...tags, await createTag(title, state.session.csrfToken)]);
+      // ADR 0033: creation queues offline; the server assigns nothing.
+      await localStore.queueOrganizationCreate(kind, title);
       form.reset();
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       setFormError(messageFor(error));
     } finally {
@@ -1300,32 +1311,34 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  const organizationQueue: OrganizationQueue = {
+    patchProject: async (project, fields) => {
+      await localStore.queueOrganizationPatch("project", project.id, fields);
+      await syncAfterLocalMutation();
+    },
+    patchTag: async (tag, fields) => {
+      await localStore.queueOrganizationPatch("tag", tag.id, fields);
+      await syncAfterLocalMutation();
+    },
+  };
+
   const submitTaskOrganization = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
     task: Task,
   ): Promise<void> => {
     event.preventDefault();
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     const data = new FormData(event.currentTarget);
     const projectId = formValue(data, "projectId") || null;
     const tagIds = data
       .getAll("tagIds")
       .filter((value): value is string => typeof value === "string");
     setBusy(true);
+    setFormError(null);
     try {
-      const assignedProject = await assignTaskProject(
-        task.id,
-        task.revision,
-        projectId,
-        state.session.csrfToken,
-      );
-      const assignedTags = await assignTaskTags(
-        task.id,
-        assignedProject.task.revision,
-        tagIds,
-        state.session.csrfToken,
-      );
-      replaceTask(assignedTags.task);
+      // ADR 0033: assignment uses the projectId and tagIds field versions.
+      await localStore.queueTaskPatch(task.id, { projectId, tagIds });
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       handleTaskError(error);
     } finally {
@@ -1338,21 +1351,20 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     task: Task,
   ): Promise<void> => {
     event.preventDefault();
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     const form = event.currentTarget;
-    const title = formValue(new FormData(form), "title");
+    const title = formValue(new FormData(form), "title").trim();
+    if (title === "") return;
     setBusy(true);
+    setFormError(null);
     try {
-      const subtask = await createSubtask(
+      await localStore.queueSubtaskCreate(
         task.id,
-        { title, position: subtasks[task.id]?.length ?? 0 },
-        state.session.csrfToken,
+        title,
+        subtasks[task.id]?.length ?? 0,
       );
-      setSubtasks((current) => ({
-        ...current,
-        [task.id]: [...(current[task.id] ?? []), subtask],
-      }));
       form.reset();
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       setFormError(messageFor(error));
     } finally {
@@ -1360,57 +1372,37 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  // ADR 0033: checklist edits queue offline. Moving an item swaps two
+  // positions with two revisioned patches; the complete reorder stays online.
   const changeSubtask = async (
     subtask: Subtask,
     action: "toggle" | "up" | "down" | "delete",
   ): Promise<void> => {
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     setBusy(true);
+    setFormError(null);
     try {
-      if (action === "delete") {
-        await deleteSubtask(
-          subtask.id,
-          subtask.revision,
-          state.session.csrfToken,
-        );
-        setSubtasks((current) => ({
-          ...current,
-          [subtask.taskId]: (current[subtask.taskId] ?? []).filter(
-            ({ id }) => id !== subtask.id,
-          ),
-        }));
-      } else {
-        if (action === "toggle") {
-          const updated = await patchSubtask(
-            subtask.id,
-            subtask.revision,
-            { completed: !subtask.completed },
-            state.session.csrfToken,
-          );
-          setSubtasks((current) => ({
-            ...current,
-            [subtask.taskId]: (current[subtask.taskId] ?? []).map((item) =>
-              item.id === updated.id ? updated : item,
-            ),
-          }));
-        } else {
-          const reordered = moveChecklistItem(
-            subtasks[subtask.taskId] ?? [],
-            subtask.id,
-            action,
-          );
-          if (reordered === undefined) return;
-          const updated = await reorderSubtasks(
-            subtask.taskId,
-            reordered.map(({ id, revision }) => ({ id, revision })),
-            state.session.csrfToken,
-          );
-          setSubtasks((current) => ({
-            ...current,
-            [subtask.taskId]: updated,
-          }));
-        }
+      if (action === "delete") await localStore.queueSubtaskDelete(subtask.id);
+      else if (action === "toggle")
+        await localStore.queueSubtaskPatch(subtask.id, {
+          completed: !subtask.completed,
+        });
+      else {
+        const items = subtasks[subtask.taskId] ?? [];
+        const index = items.findIndex(({ id }) => id === subtask.id);
+        const other = items[action === "up" ? index - 1 : index + 1];
+        if (index < 0 || other === undefined) return;
+        const positions = [subtask.position, other.position];
+        const [mine, theirs] =
+          positions[0] === positions[1]
+            ? action === "up"
+              ? [index - 1, index]
+              : [index + 1, index]
+            : [other.position, subtask.position];
+        await localStore.queueSubtaskPatch(subtask.id, { position: mine });
+        await localStore.queueSubtaskPatch(other.id, { position: theirs });
       }
+      await syncAfterLocalMutation();
     } catch (error: unknown) {
       setFormError(messageFor(error));
     } finally {
@@ -1486,14 +1478,36 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
-  // Planned day and reminders are online-only edits (ADR 0020).
+  // Reminders are online-only (ADR 0020). Without a connection the planned
+  // day or time queues through the outbox instead (ADR 0033).
   const submitTaskPlanning = async (
     task: Task,
     patch: TaskPatchRequest,
   ): Promise<void> => {
-    if (state.kind !== "authenticated") return;
+    if (state.kind !== "authenticated" && state.kind !== "offline") return;
     setBusy(true);
     setFormError(null);
+    if (state.kind === "offline" || !navigator.onLine) {
+      try {
+        await localStore.queueTaskPatch(task.id, {
+          plannedDay: patch.plannedDay ?? null,
+          plannedStart: patch.plannedStart ?? null,
+        });
+        await syncAfterLocalMutation();
+        if (
+          patch.startReminder !== undefined ||
+          patch.deadlineReminder !== undefined
+        )
+          setFormError(
+            "Planned day or time saved locally. Reminder settings were not changed; connect to update them.",
+          );
+      } catch (error: unknown) {
+        handleTaskError(error);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     try {
       const result = await patchTask(
         task.id,
@@ -2620,6 +2634,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               online: networkOnline,
               onProjectsChange: setProjects,
               onTagsChange: setTags,
+              queue: organizationQueue,
             }}
             timeZone={state.planningPreferences?.timeZone ?? "UTC"}
             onSubmitTaskPlanning={submitTaskPlanning}
@@ -2742,6 +2757,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             focusBusy={focus.busy}
             applicationPreferences={appPreferences}
             projects={projects}
+            csrfToken={state.session.csrfToken}
+            onRestored={syncNow}
           />
         )}
       </AppShell>

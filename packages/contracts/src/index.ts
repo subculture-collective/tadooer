@@ -17,6 +17,7 @@ import {
 } from "./application-preferences.ts";
 export * from "./capture.ts";
 export * from "./calendar-subscriptions.ts";
+export * from "./data-export.ts";
 import { z } from "zod";
 import { captureBatchMaxTasks, captureCreateFields } from "./capture.ts";
 import {
@@ -1290,6 +1291,8 @@ export const coreTaskFieldSchema = z.enum([
   "projectId",
   "tagIds",
   "deadline",
+  /** ADR 0033: one version for the exclusive planned start / planned day slot. */
+  "plannedStart",
 ]);
 
 export const taskFieldVersionsSchema = z.object({
@@ -1302,7 +1305,13 @@ export const taskFieldVersionsSchema = z.object({
   deadline: revisionSchema,
   /** Parent/order version; the base for an offline `task.move`. */
   parent: revisionSchema.optional(),
+  /** Planning slot version (ADR 0033); absent only in pre-0037 snapshots. */
+  plannedStart: revisionSchema.optional(),
 });
+
+/** The version key that guards a syncable task field (ADR 0033). */
+export const syncFieldVersionKey = (field: string): string =>
+  field === "plannedDay" ? "plannedStart" : field;
 
 export const syncTaskSnapshotSchema = z.object({
   task: taskSchema,
@@ -1316,11 +1325,23 @@ const syncPatchFieldsSchema = z
     notes: z.string().max(20_000).optional(),
     estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
     deadline: taskDeadlineSchema.nullable().optional(),
+    // ADR 0033: planning slot, assignment.
+    plannedStart: z.iso.datetime().nullable().optional(),
+    plannedDay: taskPlanningFieldsSchema.shape.plannedDay,
+    projectId: entityIdSchema.nullable().optional(),
+    tagIds: z
+      .array(entityIdSchema)
+      .max(25)
+      .refine((tagIds) => new Set(tagIds).size === tagIds.length, {
+        message: "Task tags must be unique",
+      })
+      .optional(),
   })
   .strict()
   .refine((fields) => Object.keys(fields).length > 0, {
     message: "At least one syncable task field is required",
-  });
+  })
+  .refine(plannedDayAndStartExclusive, { message: plannedDayAndStartMessage });
 
 const syncPatchBaseVersionsSchema = z
   .object({
@@ -1328,8 +1349,32 @@ const syncPatchBaseVersionsSchema = z
     notes: revisionSchema.optional(),
     estimateMinutes: revisionSchema.optional(),
     deadline: revisionSchema.optional(),
+    plannedStart: revisionSchema.optional(),
+    projectId: revisionSchema.optional(),
+    tagIds: revisionSchema.optional(),
   })
   .strict();
+
+const syncEntityKindSchema = z.enum(["task", "project", "tag", "subtask"]);
+
+// ADR 0033: project and tag lifecycle. Records keep one revision, so a stale
+// patch is a resource conflict rather than a field conflict.
+const syncOrganizationPatchFieldsSchema = z
+  .object({
+    title: z.string().trim().min(1).max(240).optional(),
+    archived: z.boolean().optional(),
+    completed: z.boolean().optional(),
+    color: organizationColorSchema.nullable().optional(),
+    icon: organizationIconSchema.nullable().optional(),
+  })
+  .strict()
+  .refine((fields) => Object.keys(fields).length > 0, {
+    message: "An organization edit is required",
+  })
+  .refine(
+    (fields) => fields.archived === undefined || fields.completed === undefined,
+    { message: "Archive and completion cannot change together" },
+  );
 
 const syncOperationBaseSchema = z.object({
   operationId: entityIdSchema,
@@ -1368,7 +1413,9 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
     })
     .refine(
       ({ fields, baseFieldVersions }) => {
-        const fieldNames = Object.keys(fields).sort();
+        const fieldNames = [
+          ...new Set(Object.keys(fields).map(syncFieldVersionKey)),
+        ].sort();
         const versionNames = Object.keys(baseFieldVersions).sort();
         return (
           fieldNames.length === versionNames.length &&
@@ -1396,6 +1443,64 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
     index: taskHierarchyIndexSchema.nullable(),
     baseParentVersion: revisionSchema,
   }),
+  // ADR 0033: projects and tags.
+  syncOperationBaseSchema.extend({
+    kind: z.literal("project.create"),
+    project: z
+      .object({ id: entityIdSchema, title: z.string().trim().min(1).max(240) })
+      .strict(),
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("tag.create"),
+    tag: z
+      .object({ id: entityIdSchema, title: z.string().trim().min(1).max(100) })
+      .strict(),
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("project.patch"),
+    projectId: entityIdSchema,
+    fields: syncOrganizationPatchFieldsSchema,
+    baseRevision: revisionSchema,
+  }),
+  syncOperationBaseSchema
+    .extend({
+      kind: z.literal("tag.patch"),
+      tagId: entityIdSchema,
+      fields: syncOrganizationPatchFieldsSchema,
+      baseRevision: revisionSchema,
+    })
+    .refine(
+      ({ fields }) =>
+        fields.completed === undefined &&
+        (fields.title === undefined || fields.title.length <= 100),
+      {
+        message:
+          "Tags archive and restore only; names are at most 100 characters",
+      },
+    ),
+  // ADR 0033: checklist items keep one revision each.
+  syncOperationBaseSchema.extend({
+    kind: z.literal("subtask.create"),
+    subtask: z
+      .object({
+        id: entityIdSchema,
+        taskId: entityIdSchema,
+        title: z.string().trim().min(1).max(240),
+        position: z.number().int().nonnegative(),
+      })
+      .strict(),
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("subtask.patch"),
+    subtaskId: entityIdSchema,
+    fields: subtaskPatchRequestSchema,
+    baseRevision: revisionSchema,
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("subtask.delete"),
+    subtaskId: entityIdSchema,
+    baseRevision: revisionSchema,
+  }),
 ]);
 
 export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
@@ -1410,9 +1515,12 @@ export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("conflict"),
     operationId: entityIdSchema,
     code: z.enum(["SYNC_FIELD_CONFLICT", "SYNC_RESOURCE_CONFLICT"]),
+    /** ADR 0033: which record conflicted; absent means a task. */
+    entityKind: syncEntityKindSchema.optional(),
+    /** The conflicting entity's ID and revision for every entity kind. */
     taskId: entityIdSchema,
     taskRevision: revisionSchema,
-    conflictingFields: z.array(coreTaskFieldSchema).min(1).max(7).optional(),
+    conflictingFields: z.array(coreTaskFieldSchema).min(1).max(8).optional(),
   }),
   z.object({
     kind: z.literal("rejected"),
@@ -1659,6 +1767,13 @@ export const syncDiagnosticOperationSchema = z
       "task.delete",
       "task.restore",
       "task.move",
+      "project.create",
+      "project.patch",
+      "tag.create",
+      "tag.patch",
+      "subtask.create",
+      "subtask.patch",
+      "subtask.delete",
     ]),
     state: z.enum([
       "queued",
@@ -3398,6 +3513,43 @@ export type HabitSyncOperation = z.infer<typeof habitSyncOperationSchema>;
 export const isHabitSyncOperation = (
   operation: SyncOperation,
 ): operation is HabitSyncOperation => operation.kind.startsWith("habit.");
+
+export type SyncEntityKind = z.infer<typeof syncEntityKindSchema>;
+
+/** The cached record an operation writes (ADR 0033); habits are separate. */
+export const syncOperationEntity = (
+  operation: SyncOperation,
+): {
+  readonly entityKind: SyncEntityKind;
+  readonly entityId: string;
+} | null => {
+  switch (operation.kind) {
+    case "task.create":
+      return { entityKind: "task", entityId: operation.task.id };
+    case "task.patch":
+    case "task.complete":
+    case "task.reopen":
+    case "task.delete":
+    case "task.restore":
+    case "task.move":
+      return { entityKind: "task", entityId: operation.taskId };
+    case "project.create":
+      return { entityKind: "project", entityId: operation.project.id };
+    case "project.patch":
+      return { entityKind: "project", entityId: operation.projectId };
+    case "tag.create":
+      return { entityKind: "tag", entityId: operation.tag.id };
+    case "tag.patch":
+      return { entityKind: "tag", entityId: operation.tagId };
+    case "subtask.create":
+      return { entityKind: "subtask", entityId: operation.subtask.id };
+    case "subtask.patch":
+    case "subtask.delete":
+      return { entityKind: "subtask", entityId: operation.subtaskId };
+    default:
+      return null;
+  }
+};
 
 export type Habit = z.infer<typeof habitSchema>;
 export type HabitOccurrence = z.infer<typeof habitOccurrenceSchema>;

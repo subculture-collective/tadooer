@@ -14,6 +14,9 @@ import {
   createAutomationTokenResponseSchema,
   type CreateAutomationTokenRequest,
   superProductivityPreviewSchema,
+  dataRestoreApplyResponseSchema,
+  dataRestorePreviewSchema,
+  type DataRestoreMode,
 } from "@suite/contracts";
 import {
   apiErrorSchema,
@@ -2081,3 +2084,56 @@ export const dismissCalendarSubscriptionEvent = (
       body: JSON.stringify(event),
     },
   );
+
+/**
+ * Owner data export and restore (issue #93, ADR 0034). Owner session only;
+ * the export is returned as text so the browser saves the exact bytes.
+ */
+export const downloadDataExport = async (): Promise<{
+  readonly filename: string;
+  readonly text: string;
+}> => {
+  const response = await fetch("/api/data/export", {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => undefined);
+    const error = apiErrorSchema.safeParse(body);
+    const failure = new ApiRequestError(
+      response.status,
+      error.success ? error.data.code : "INVALID_RESPONSE",
+      error.success
+        ? error.data.message
+        : "The server returned an invalid response",
+    );
+    reportSessionFailure(failure);
+    throw failure;
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename =
+    /filename="([^"]+)"/.exec(disposition)?.[1] ?? "tadooer-export.json";
+  return { filename, text: await response.text() };
+};
+
+export const previewDataRestore = (rawJson: string, csrfToken: string) =>
+  request("/api/data/restore/preview", dataRestorePreviewSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: rawJson,
+  });
+
+export const applyDataRestore = (
+  rawJson: string,
+  inputHash: string,
+  mode: DataRestoreMode,
+  csrfToken: string,
+) =>
+  request("/api/data/restore/apply", dataRestoreApplyResponseSchema, {
+    method: "POST",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      "X-Restore-Hash": inputHash,
+      "X-Restore-Mode": mode,
+    },
+    body: rawJson,
+  });
