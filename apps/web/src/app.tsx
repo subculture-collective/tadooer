@@ -110,6 +110,9 @@ import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
 import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
 import { Field } from "./field.tsx";
 import type { FocusPanelCommand } from "./focus-panel.tsx";
+import { useFocusController } from "./focus-controller.ts";
+import { FocusReminders } from "./focus-reminders.tsx";
+import { IdleReturnDialog } from "./idle-return-dialog.tsx";
 import type {
   TemplateBlueprintView,
   TemplateSetView,
@@ -1213,6 +1216,32 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       setBusy(false);
     }
   };
+
+  // ADR 0029: focus presets, idle disposition and break reminders.
+  const focus = useFocusController({
+    authenticated: state.kind === "authenticated",
+    client: state.kind === "authenticated" ? state.client : undefined,
+    csrfToken:
+      state.kind === "authenticated" ? state.session.csrfToken : undefined,
+    activeSession:
+      state.kind === "authenticated" ? state.activeSession : undefined,
+    online: networkOnline,
+    tasks: state.kind === "authenticated" ? state.tasks : [],
+    onSessionChanged: (session) =>
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, activeSession: session }
+          : current,
+      ),
+    onSessionCommand: (command, session) =>
+      void handleFocusCommand({
+        command,
+        sessionId: session.id,
+        expectedRevision: session.revision,
+      }),
+    onNavigateToday: () => navigate("today"),
+    onError: (message) => setFormError(message),
+  });
 
   const submitOrganization = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
@@ -2373,6 +2402,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         busy={busy}
         onResolve={resolveConflict}
       />
+      <FocusReminders
+        {...focus.reminders}
+        busy={busy || focus.busy}
+        online={networkOnline && state.client !== undefined}
+      />
+      <IdleReturnDialog {...focus.idleDialog} busy={focus.busy} />
       {route === "today" && (
         <TodayPage
           dayPlan={dayPlanView}
@@ -2387,6 +2422,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           focusActionsAvailable={networkOnline && state.client !== undefined}
           busy={busy}
           onFocusCommand={(command) => void handleFocusCommand(command)}
+          focus={focus.panel}
           onSubmitTask={submitTask}
           onChangeTaskStatus={changeTaskStatus}
           onSubmitTimeBlock={submitTimeBlock}
@@ -2587,6 +2623,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onTestNotification={testNotification}
           onSyncNow={syncNow}
           onExportDiagnostics={exportDiagnostics}
+          focus={focus.settings}
+          focusBusy={focus.busy}
         />
       )}
     </AppShell>

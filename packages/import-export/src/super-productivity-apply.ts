@@ -37,6 +37,7 @@ import {
   type ImportedAttachment,
   type ImportedIssueLink,
 } from "./super-productivity-links.ts";
+import { mapSuperProductivityFocusPreferences } from "./super-productivity-focus.ts";
 
 type Source = Record<string, unknown>;
 const object = (value: unknown): Source =>
@@ -132,6 +133,8 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "day_order_notice",
     // ADR 0028: board, section and folder values without a mapping.
     "board_notice",
+    // ADR 0029: focus settings reported by name; nothing is dropped silently.
+    "focus_preference_notice",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -821,6 +824,14 @@ export const prepareSuperProductivityImport = (
     notice: (sourceId, detail) =>
       issues.push({ code: "board_notice", sourceId, detail }),
   });
+  // ADR 0029: focus, idle, break and tracking-reminder settings map to the
+  // owner's focus preferences on first import; other globalConfig sections
+  // stay configuration (#67).
+  const focusPreferences = mapSuperProductivityFocusPreferences(
+    data.globalConfig,
+    (sourceId, detail) =>
+      issues.push({ code: "focus_preference_notice", sourceId, detail }),
+  );
   const reported = issues.map((issue) => ({
     ...issue,
     blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
@@ -843,5 +854,6 @@ export const prepareSuperProductivityImport = (
     plugins: sourceInventory.plugins,
     dayOrders,
     boards,
+    focusPreferences,
   };
 };

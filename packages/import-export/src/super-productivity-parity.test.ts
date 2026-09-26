@@ -25,6 +25,7 @@ import {
   superProductivityMenuTreeFields,
   superProductivitySectionFields,
 } from "./super-productivity-boards.ts";
+import { superProductivityFocusConfigFields } from "./super-productivity-focus.ts";
 
 type FieldKey =
   | "taskFields"
@@ -42,7 +43,8 @@ type FieldKey =
   | "boardPanelFields"
   | "sectionFields"
   | "menuTreeFields"
-  | "menuFolderFields";
+  | "menuFolderFields"
+  | "focusConfigFields";
 const manifest = JSON.parse(
   readFileSync(
     new URL(
@@ -80,6 +82,7 @@ it("assigns every reviewed entity field to exactly one workflow row", () => {
     ["sectionFields", superProductivitySectionFields],
     ["menuTreeFields", superProductivityMenuTreeFields],
     ["menuFolderFields", superProductivityMenuFolderFields],
+    ["focusConfigFields", superProductivityFocusConfigFields],
   ] as const) {
     const mapped = manifest.rows.flatMap((row) => row[key] ?? []);
     expect(new Set(mapped).size, key).toBe(mapped.length);

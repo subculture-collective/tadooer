@@ -52,6 +52,7 @@ export const handleTaskImport: RouteHandler = async (
       plugins,
       dayOrders,
       boards,
+      focusPreferences,
     } = prepareSuperProductivityImport(JSON.stringify(input), {
       timeZone: preferences.timeZone,
       // ADR 0027: TODAY_TAG.taskIds is the order of the owner's current
@@ -92,6 +93,19 @@ export const handleTaskImport: RouteHandler = async (
             pluginData: plugins,
             dayOrders,
             boards,
+            ...(focusPreferences === undefined
+              ? {}
+              : {
+                  focusPreferences: {
+                    preferences: focusPreferences.preferences,
+                    provenance: {
+                      source: "super_productivity" as const,
+                      inputHash: report.inputHash,
+                      importedAt: new Date().toISOString(),
+                      fields: [...focusPreferences.fields],
+                    },
+                  },
+                }),
           },
         );
         sendJson(response, 200, outcome);

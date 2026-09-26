@@ -7,6 +7,7 @@ import type {
 } from "@suite/contracts";
 import { GooglePlanning } from "../google-planning.tsx";
 import { NotificationSettings } from "../notification-settings.tsx";
+import { FocusSettings, type FocusSettingsProps } from "../focus-settings.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
 import { PageHeader } from "../components/ui/page-header.tsx";
@@ -32,6 +33,9 @@ export interface SettingsPageProps {
   readonly onTestNotification: (() => Promise<void>) | undefined;
   readonly onSyncNow: () => Promise<void>;
   readonly onExportDiagnostics: () => Promise<void>;
+  /** ADR 0029: focus, idle and break preferences. */
+  readonly focus?: Omit<FocusSettingsProps, "busy" | "online"> | undefined;
+  readonly focusBusy?: boolean | undefined;
 }
 
 export const SettingsPage = ({
@@ -52,6 +56,8 @@ export const SettingsPage = ({
   onTestNotification,
   onSyncNow,
   onExportDiagnostics,
+  focus,
+  focusBusy = false,
 }: SettingsPageProps) => {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -91,6 +97,13 @@ export const SettingsPage = ({
             onTest={onTestNotification}
           />
         )}
+      {focus === undefined ? null : (
+        <FocusSettings
+          {...focus}
+          busy={busy || focusBusy}
+          online={syncStatus === "online"}
+        />
+      )}
       <Button
         type="button"
         variant="outline"

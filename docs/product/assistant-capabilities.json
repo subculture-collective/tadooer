@@ -185,6 +185,31 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "focus-preferences",
+      "action": "Read and update focus preferences (presets, idle, take-a-break, tracking reminder)",
+      "webApi": ["getFocusPreferences", "updateFocusPreferences"],
+      "catalog": ["focus.preferences", "focus.update_preferences"],
+      "status": "covered",
+      "issue": 65,
+      "authority": "focus:read returns the fields with their revision (0 for defaults); focus:write is revision-bound like planning.update_preferences, and browser writes advance the same revision. A running session keeps the plan it started with (ADR 0029).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "focus-timer",
+      "action": "Focus timer state, per-session preset, idle disposition and break-reminder snooze",
+      "webApi": [
+        "getFocusTimer",
+        "setFocusPlan",
+        "applyIdleDisposition",
+        "snoozeBreakReminder"
+      ],
+      "catalog": ["focus.idle_disposition"],
+      "status": "partial",
+      "issue": 65,
+      "authority": "focus:write. The preview binds the session revision and states the span, the disposition and the focus time removed; confirmation applies the correction for the owner with the controlling device as the interval actor. Timer reads, presets and snooze stay browser operations with client proof (ADR 0029).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "organization-read",
       "action": "Project and tag inventory",
       "webApi": ["getProjects", "getTags"],

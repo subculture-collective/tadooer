@@ -39,6 +39,8 @@ import { handlePluginData } from "./routes/plugin-data.ts";
 import { handleDayOrder } from "./routes/day-order.ts";
 import { handleBoards } from "./routes/boards.ts";
 import { handleBoardViews } from "./routes/board-views.ts";
+import { handleFocus } from "./routes/focus.ts";
+import { runFocusReminders } from "./focus-reminders.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
@@ -144,6 +146,19 @@ export const startSuiteServer = async (
       }
     }
     if (!preferences.enabled || notificationPublisher === undefined) return;
+    // ADR 0029: focus reminders share the ledger but not the task loop below.
+    try {
+      await runFocusReminders({
+        database,
+        sessionClock,
+        ownerId,
+        publisher: notificationPublisher,
+        detailedContentEnabled: preferences.detailedContentEnabled,
+        clickOrigin: config.publicOrigin ?? "http://localhost",
+      });
+    } catch {
+      console.error("focus.reminders_failed");
+    }
     const planning = database.getPlanningPreferences(ownerId);
     const window = zonedDayWindow(now, planning.timeZone);
     const events = database.listCalendarEvents(ownerId, window.from, window.to);
@@ -164,7 +179,13 @@ export const startSuiteServer = async (
         ? active.taskId
         : null;
     for (const due of database.listDueNotificationDeliveries(now)) {
-      if (due.ownerId !== ownerId || due.taskId === null || due.kind === "test")
+      if (
+        due.ownerId !== ownerId ||
+        due.taskId === null ||
+        (due.kind !== "lead" &&
+          due.kind !== "at_start" &&
+          due.kind !== "deadline")
+      )
         continue;
       const claimed = database.claimNotificationDelivery(due.id, now);
       if (claimed === undefined) continue;
@@ -308,6 +329,7 @@ export const startSuiteServer = async (
     handleDayOrder,
     handleBoards,
     handleBoardViews,
+    handleFocus,
     handleChoicePools,
     handleTemplates,
     handleStatic,

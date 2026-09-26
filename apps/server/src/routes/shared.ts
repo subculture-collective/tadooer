@@ -460,7 +460,7 @@ export const activeFromPersistence = (
     startedAt: interval.startedAt,
     endedAt: interval.endedAt,
     closedBy: interval.closedBy as
-      "pause" | "break" | "complete" | "takeover" | "expiry" | null,
+      "pause" | "break" | "complete" | "takeover" | "expiry" | "idle" | null,
   })),
   events: events.map((event) => ({
     revision: event.revision,

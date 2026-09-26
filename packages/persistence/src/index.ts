@@ -4,6 +4,8 @@ import {
   checklistCommandSchema,
   organizationIconPattern,
   type ChecklistCommand,
+  type FocusPreferenceProvenance,
+  type FocusPreferences,
 } from "@suite/contracts";
 import { StructuredCaptureError } from "@suite/domain";
 import { SqliteHabitStore } from "./habit-store.ts";
@@ -145,6 +147,13 @@ export {
   type SectionMutationResult,
   type TaskViewSetResult,
 } from "./board-store.ts";
+import { SqliteFocusStore, focusMigration } from "./focus-store.ts";
+export {
+  SqliteFocusStore,
+  type FocusPreferencesRecord,
+  type IdleDispositionRecord,
+  type OwnerIntervalRecord,
+} from "./focus-store.ts";
 export {
   SqliteDayOrderStore,
   type DayOrderPlanResult,
@@ -730,7 +739,15 @@ export interface NotificationDeliveryRecord {
   readonly ownerId: string;
   readonly taskId: string | null;
   readonly occurrenceStart: string;
-  readonly kind: "lead" | "at_start" | "deadline" | "test";
+  readonly kind:
+    | "lead"
+    | "at_start"
+    | "deadline"
+    | "test"
+    | "focus_countdown"
+    | "focus_break_end"
+    | "focus_break_reminder"
+    | "focus_tracking_reminder";
   readonly taskRevision: number | null;
   readonly state:
     | "pending"
@@ -1546,6 +1563,7 @@ const migrations: readonly Migration[] = [
   pluginDataMigration,
   dayOrderMigration,
   boardsMigration,
+  focusMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1570,6 +1588,7 @@ export class SuiteDatabase {
   readonly pluginData: SqlitePluginDataStore;
   readonly dayOrders: SqliteDayOrderStore;
   readonly boards: SqliteBoardStore;
+  readonly focus: SqliteFocusStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
@@ -1610,6 +1629,7 @@ export class SuiteDatabase {
       currentTaskRevision: (ownerId, taskId) =>
         this.getTask(ownerId, taskId)?.revision,
     });
+    this.focus = new SqliteFocusStore(database);
     this.dayOrders = new SqliteDayOrderStore(database, {
       planTask: (ownerId, taskId, expectedRevision, date, now) => {
         const task = this.getTask(ownerId, taskId);
@@ -3321,6 +3341,11 @@ export class SuiteDatabase {
       }[];
       /** ADR 0028: boards, sections, sidebar folders and task markers. */
       readonly boards?: ImportedBoardData;
+      /** ADR 0029: focus preferences mapped from globalConfig, applied once. */
+      readonly focusPreferences?: {
+        readonly preferences: FocusPreferences;
+        readonly provenance: FocusPreferenceProvenance;
+      };
     } = {},
   ): {
     created: number;
@@ -3330,6 +3355,7 @@ export class SuiteDatabase {
     pluginData?: { created: number; existing: number };
     dayOrders?: number;
     boards?: ReturnType<SqliteBoardStore["importInTransaction"]>;
+    focusPreferences?: "applied" | "skipped";
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3654,10 +3680,20 @@ export class SuiteDatabase {
               randomUUID,
               now,
             );
+      const focusPreferences =
+        options.focusPreferences === undefined
+          ? undefined
+          : this.focus.importInTransaction(
+              ownerId,
+              options.focusPreferences.preferences,
+              options.focusPreferences.provenance,
+              now,
+            );
       this.#database.exec("COMMIT;");
       return {
         created,
         existing,
+        ...(focusPreferences === undefined ? {} : { focusPreferences }),
         ...(recurringSeries === undefined ? {} : { recurringSeries }),
         ...(counters === undefined ? {} : { counters }),
         ...(pluginData === undefined ? {} : { pluginData }),
@@ -6147,6 +6183,8 @@ export class SuiteDatabase {
     readonly intervals: readonly ActiveSessionIntervalRecord[];
     readonly events: readonly ActiveSessionEventRecord[];
     readonly now: string;
+    /** ADR 0029: extra rows committed with the transition (idle provenance). */
+    readonly inTransaction?: () => void;
   }): {
     readonly kind: "applied" | "replayed" | "conflict" | "stale";
     readonly session?: ActiveSessionRecord;
@@ -6222,6 +6260,7 @@ export class SuiteDatabase {
           event.actorClientId,
           event.createdAt,
         );
+      input.inTransaction?.();
       this.#database
         .prepare(
           "INSERT INTO active_session_operation_outcomes (owner_id,client_id,idempotency_key,request_hash,session_id,revision,response_json,created_at) VALUES (?,?,?,?,?,?,?,?)",

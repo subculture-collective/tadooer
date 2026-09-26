@@ -56,7 +56,7 @@ Excluded rows record an owner decision not to pursue that source capability.
 | reminders              | partial        | Per-task and timed-deadline reminder offsets use the ntfy ledger (ADR 0020); exact source offsets import. Legacy reminders section stays blocked.                                                                                                                                               | [#29](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/29) |
 | boards                 | partial        | Boards with filtered panels and manual order, sections in a project or tag, saved sort/group/filter views and nested sidebar folders are stored, edited and imported (ADR 0028). Drag-and-drop and Today-view sections remain gaps; the qualification import waits on #47.                      | [#63](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/63) |
 | counters               | partial        | Counters and their day values import with provenance (counts, or stopwatch milliseconds); metric days import as daily evaluations, and their focus sessions stay evaluation history rather than time entries (ADR 0025). Streaks are derived, never imported. Not habits.                       | [#64](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/64) |
-| focus                  | partial        | Tadooer has server-authoritative focus/break/takeover; source preferences and idle disposition require parity.                                                                                                                                                                                  | [#65](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/65) |
+| focus                  | partial        | Focus preferences, Pomodoro/Flowtime/countdown presets with cycles, browser idle detection with an assign/break/discard correction, and countdown, break-end, take-a-break and tracking reminders through the notification ledger (ADR 0029). Focus globalConfig sections import once.          | [#65](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/65) |
 | plugins                | partial        | Plugin data entries (plugin ID, key, opaque value, size) and enabled flags import as inert records that the owner lists, downloads and deletes (ADR 0026). No plugin code is imported or run; a plugin runtime needs an owner decision.                                                         | [#66](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/66) |
 | preferences            | partial        | Planning/preferences exist; safe application config and shortcuts need mapping. Secret/provider configuration is intentionally excluded.                                                                                                                                                        | [#67](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/67) |
 | calendar               | partial        | Google/Baikal federation exists; plugin calendars and opt-in canonical bridge need qualification.                                                                                                                                                                                               | [#50](https://git.subcult.tv/PatrickFanella/productivity-suite/issues/50) |
@@ -135,8 +135,8 @@ Every finding carries `blocking`. Reported dispositions that do not block are
 findings `time_total_mismatch`, `time_parent_residual`, `time_parent_shortfall`,
 `time_reconciliation`, `work_context_merged` and `work_context_historical`, and
 the counter findings `counter_notice`, `counter_reconciliation` and
-`metric_field_retained`, and the plugin summary `plugin_data_preserved`; any
-other code blocks.
+`metric_field_retained`, the plugin summary `plugin_data_preserved`, and the
+focus setting report `focus_preference_notice`; any other code blocks.
 
 ### Archived history (#38)
 
@@ -300,6 +300,21 @@ The newest local backup (September 25, counts only) has 2 boards with 7
 panels, every panel filter built from system tags, 0 sections and project
 folders nested two levels deep. A read-only importer run on that backup has
 not been recorded; the qualification import remains #47.
+
+### Focus, idle and break settings (#65)
+
+The focus sections of `globalConfig` (`pomodoro`, `flowtime`, `focusMode`,
+`idle`, `takeABreak`, the tracking-reminder keys of `timeTracking` and
+`sound`) are classified in `super-productivity-focus.ts` (`focusConfigFields`
+in the manifest). Applied keys overlay the Tadooer defaults as the owner's
+focus preferences the first time an export is imported while the record has
+never been saved; the record keeps the export hash, the import instant and
+the applied key names, and a later import never overwrites an edit. Source
+milliseconds become whole minutes within the preference limits. Retained keys
+(preparation screen, sounds, keep-tracking-during-break, Pomodoro overtime,
+lock screen, full-screen blocker, motivational images, per-channel reminder
+switches) are reported by name with `focus_preference_notice` and stay in the
+export. The other `globalConfig` sections remain configuration (#67).
 
 ### September 24 backup (19.1.0)
 
