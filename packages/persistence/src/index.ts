@@ -2983,7 +2983,9 @@ export class SuiteDatabase {
     readonly expectedBlockRevision: number;
     readonly now: string;
   }): TaskRecord | undefined {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    // ADR 0037: a savepoint lets the automation confirmation release the
+    // block inside its own receipt transaction; outside one it commits alone.
+    this.#database.exec("SAVEPOINT release_task_block;");
     try {
       const task = this.getTask(input.ownerId, input.taskId);
       const block = this.getTaskCalendarBlock(input.ownerId, input.taskId);
@@ -2993,7 +2995,7 @@ export class SuiteDatabase {
         task.revision !== input.expectedTaskRevision ||
         block.revision !== input.expectedBlockRevision
       ) {
-        this.#database.exec("COMMIT;");
+        this.#database.exec("RELEASE SAVEPOINT release_task_block;");
         return undefined;
       }
       this.#database
@@ -3038,10 +3040,12 @@ export class SuiteDatabase {
         released.revision,
         input.now,
       );
-      this.#database.exec("COMMIT;");
+      this.#database.exec("RELEASE SAVEPOINT release_task_block;");
       return released;
     } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT release_task_block; RELEASE SAVEPOINT release_task_block;",
+      );
       throw error;
     }
   }

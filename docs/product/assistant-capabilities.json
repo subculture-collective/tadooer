@@ -224,11 +224,13 @@
         "removeTaskTimeBlock"
       ],
       "catalog": [
-        "schedule.create_time_block"
+        "schedule.create_time_block",
+        "schedule.move_time_block",
+        "schedule.remove_time_block"
       ],
-      "status": "partial",
+      "status": "covered",
       "issue": 58,
-      "authority": "Create tool exists; move/remove need provider conditional revisions, durable outcomes and explicit removal approval.",
+      "authority": "schedule:write; previews bind the task revision the assistant read; move and remove issue conditional CalDAV writes with the stored ETag, keep one event href and record provider conflicts; removal needs its own confirmation (ADR 0037).",
       "source": "apps/web/src/api.ts"
     },
     {

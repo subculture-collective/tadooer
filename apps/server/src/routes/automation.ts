@@ -36,8 +36,6 @@ import {
   dayOrderResourceInputSchema,
   calendarSubscriptionResourceInputSchema,
 } from "@suite/contracts";
-import type { CalendarEventResource } from "@suite/caldav";
-import type { CalendarOperationResult } from "../connector.ts";
 import {
   createActiveSession,
   transitionActiveSession,
@@ -67,6 +65,12 @@ import {
   previewTaskArchive,
 } from "./automation-task-archive.ts";
 import { taskHistoryBody } from "./task-archive.ts";
+import {
+  confirmTimeBlockRemove,
+  confirmTimeBlockWrite,
+  isTimeBlockCommand,
+  previewTimeBlock,
+} from "./automation-time-blocks.ts";
 import {
   confirmRecurrence,
   isRecurrenceCommand,
@@ -1557,28 +1561,16 @@ export const handleAutomation: RouteHandler = async (
           entityId: habitId,
           revision: habit.revision,
         });
-    } else if (command.operation === "schedule.create_time_block") {
-      const task = database.getTask(token.ownerId, command.input.taskId);
-      if (task === undefined) {
-        sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
+    } else if (isTimeBlockCommand(command)) {
+      // ADR 0037: freezes the task revision; the block follows it.
+      const planned = previewTimeBlock(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
         return true;
       }
-      if (
-        database.getOwnedCalendar(token.ownerId, command.input.calendarId)
-          ?.supportsEvents !== true
-      ) {
-        sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
-        return true;
-      }
-      affected.push(
-        { entityKind: "task", entityId: task.id },
-        { entityKind: "calendar", entityId: command.input.calendarId },
-      );
-      baseRevisions.push({
-        entityKind: "task",
-        entityId: task.id,
-        revision: task.revision,
-      });
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
     } else if (command.operation === "templates.instantiate") {
       const template = database.getTaskTemplate(
         token.ownerId,
@@ -2674,228 +2666,58 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       result = batch.result;
-    } else if (command.operation === "schedule.create_time_block") {
-      const input = command.input;
-      const taskRevision = preview.baseRevisions[input.taskId];
-      const task = database.getTask(token.ownerId, input.taskId);
-      const calendar = database.getOwnedCalendar(
-        token.ownerId,
-        input.calendarId,
-      );
-      if (task === undefined || taskRevision === undefined) {
+    } else if (isTimeBlockCommand(command)) {
+      const taskRevision = preview.baseRevisions[command.input.taskId];
+      if (taskRevision === undefined) {
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
         return true;
       }
-      if (calendar?.supportsEvents !== true) {
-        sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
-        return true;
-      }
-      const existingBlock = database.getTaskCalendarBlock(
-        token.ownerId,
-        input.taskId,
-      );
-      if (
-        existingBlock !== undefined &&
-        existingBlock.calendarId !== input.calendarId
-      ) {
-        sendError(
-          response,
-          409,
-          "TIME_BLOCK_CALENDAR_FIXED",
-          "Remove the existing block before changing calendars",
-        );
-        return true;
-      }
-      const uid = existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;
-      const href =
-        existingBlock?.eventHref ??
-        `${calendar.href.replace(/\/$/, "")}/${randomUUID()}.ics`;
-      const operationHash = createHash("sha256")
-        .update(JSON.stringify(input))
-        .digest("hex");
-      const reservation = database.reserveCalendarWrite({
-        ownerId: token.ownerId,
-        taskId: input.taskId,
-        expectedTaskRevision: taskRevision,
-        idempotencyKey: internalKey,
-        requestHash: operationHash,
-        calendarId: input.calendarId,
-        reservedHref: href,
-        reservedUid: uid,
-        now: new Date().toISOString(),
-      });
-      if (
-        reservation.kind === "conflict" ||
-        reservation.kind === "task-precondition-failed"
-      ) {
-        sendError(
-          response,
-          409,
-          reservation.kind === "conflict"
-            ? "IDEMPOTENCY_CONFLICT"
-            : "AUTOMATION_PREVIEW_STALE",
-          "Scheduling operation conflicted",
-        );
-        return true;
-      }
-      if (
-        reservation.kind === "task-not-found" ||
-        reservation.kind === "calendar-not-found"
-      ) {
-        sendError(
-          response,
-          404,
-          reservation.kind === "task-not-found"
-            ? "TASK_NOT_FOUND"
-            : "CALENDAR_NOT_FOUND",
-          "Scheduling resource not found",
-        );
-        return true;
-      }
-      if (
-        reservation.kind === "replayed" &&
-        reservation.operation.state === "completed"
-      ) {
-        const replayedTask = database.getTask(token.ownerId, input.taskId);
-        const block = database.getTaskCalendarBlock(
-          token.ownerId,
-          input.taskId,
-        );
-        if (replayedTask === undefined || block === undefined) {
-          sendError(
-            response,
-            409,
-            "CALENDAR_WRITE_RECONCILIATION_REQUIRED",
-            "Completed scheduling state could not be reconstructed",
-          );
-          return true;
-        }
-        result = {
-          task: taskResponse(replayedTask),
-          replayed: true,
-          mapping: {
-            id: block.id,
-            taskId: block.taskId,
-            event: {
-              providerId: block.providerId,
-              calendarId: block.calendarId,
-              eventId: block.eventHref,
-            },
-            href: block.eventHref,
-            uid: block.eventUid,
-            etag: block.remoteEtag,
-            state: "active",
-            createdBySuite: true,
-            createdAt: block.createdAt,
-            updatedAt: block.updatedAt,
-          },
-        };
-      } else {
-        const operation = reservation.operation;
-        const endsAt = new Date(
-          Date.parse(input.startsAt) + input.durationMinutes * 60 * 1000,
-        ).toISOString();
-        let remote: CalendarOperationResult<CalendarEventResource>;
-        if (reservation.kind === "replayed") {
-          const projection = await connector.projectEvents(
-            token.ownerId,
-            operation.calendarId,
-            new Date(Date.parse(input.startsAt) - 3_600_000).toISOString(),
-            new Date(Date.parse(endsAt) + 3_600_000).toISOString(),
-          );
-          if (!projection.ok) remote = projection;
-          else {
-            const reconciled = projection.value.find(
-              (candidate) =>
-                candidate.href === operation.reservedHref &&
-                candidate.event.uid === operation.reservedUid &&
-                candidate.event.summary === task.title &&
-                Date.parse(candidate.event.startsAt) ===
-                  Date.parse(input.startsAt) &&
-                Date.parse(candidate.event.endsAt) === Date.parse(endsAt) &&
-                !candidate.event.allDay,
+      const outcome =
+        command.operation === "schedule.remove_time_block"
+          ? await confirmTimeBlockRemove(
+              database,
+              connector,
+              token.ownerId,
+              command,
+              taskRevision,
+            )
+          : await confirmTimeBlockWrite(
+              database,
+              connector,
+              token.ownerId,
+              internalKey,
+              command,
+              taskRevision,
             );
-            remote =
-              reconciled === undefined
-                ? { ok: false, reason: "outcome-unknown" }
-                : { ok: true, value: reconciled };
-          }
-        } else {
-          remote = await connector.putTaskBlock({
-            ownerId: token.ownerId,
-            calendarId: operation.calendarId,
-            href: operation.reservedHref,
-            uid: operation.reservedUid,
-            summary: task.title,
-            startsAt: input.startsAt,
-            endsAt,
-            ...(existingBlock === undefined
-              ? {}
-              : { expectedEtag: existingBlock.remoteEtag }),
-          });
-        }
-        if (!remote.ok) {
-          database.markCalendarWriteConflict(
-            token.ownerId,
-            internalKey,
-            new Date().toISOString(),
-          );
-          sendError(
-            response,
-            409,
-            "CALENDAR_WRITE_RECONCILIATION_REQUIRED",
-            "Calendar write could not be safely reconciled",
-          );
-          return true;
-        }
-        const remoteEvent = remote.value;
-        const completed = database.completeCalendarWrite({
+      if (!outcome.ok) {
+        // Provider failures leave the preview open for another attempt and
+        // are recorded so the owner can see why the receipt is missing.
+        database.appendAutomationAudit({
+          id: randomUUID(),
           ownerId: token.ownerId,
-          idempotencyKey: internalKey,
-          event: {
-            id: randomUUID(),
-            providerId: operation.providerId,
-            calendarId: operation.calendarId,
-            href: remoteEvent.href,
-            uid: remoteEvent.event.uid,
-            etag: remoteEvent.etag,
-            rawIcs: remoteEvent.rawIcs,
-            summary: remoteEvent.event.summary,
-            startsAt: new Date(remoteEvent.event.startsAt).toISOString(),
-            endsAt: new Date(remoteEvent.event.endsAt).toISOString(),
-            allDay: false,
-            freshness: "current",
-            mutable: true,
-            revision: 1,
-            projectedAt: new Date().toISOString(),
-          },
-          plannedStart: input.startsAt,
-          estimateMinutes: input.durationMinutes,
-          now: new Date().toISOString(),
+          tokenId: token.id,
+          operation: preview.operation,
+          phase: "execute",
+          outcome: "failed",
+          errorCode: outcome.code,
+          previewId: preview.id,
+          affectedIds: preview.affectedIds,
+          requestHash,
+          createdAt: new Date().toISOString(),
         });
-        if (completed === undefined)
-          throw new Error("Automation scheduling could not be completed");
-        result = {
-          task: taskResponse(completed.task),
-          replayed: reservation.kind === "replayed",
-          mapping: {
-            id: completed.block.id,
-            taskId: completed.block.taskId,
-            event: {
-              providerId: completed.block.providerId,
-              calendarId: completed.block.calendarId,
-              eventId: completed.block.eventHref,
-            },
-            href: completed.block.eventHref,
-            uid: completed.block.eventUid,
-            etag: completed.block.remoteEtag,
-            state: "active",
-            createdBySuite: true,
-            createdAt: completed.block.createdAt,
-            updatedAt: completed.block.updatedAt,
-          },
-        };
+        if (outcome.body === undefined)
+          sendError(response, outcome.status, outcome.code, outcome.message);
+        else
+          sendJson(response, outcome.status, {
+            code: outcome.code,
+            message: outcome.message,
+            requestId: randomUUID(),
+            ...outcome.body,
+          });
+        return true;
       }
+      result = outcome.result;
+      applyLocalMutation = outcome.apply;
     } else if (
       command.operation === "templates.instantiate" ||
       command.operation === "template_sets.instantiate"
