@@ -121,6 +121,15 @@ import {
   previewCalendarSubscription,
 } from "./automation-calendar-subscriptions.ts";
 import {
+  confirmRecovery,
+  connectorStatusBody,
+  feedResourceBody,
+  importResourceBody,
+  isRecoveryCommand,
+  previewRecovery,
+} from "./automation-recovery.ts";
+import { automationCalendarImportResourceInputSchema } from "@suite/contracts";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -668,7 +677,50 @@ export const handleAutomation: RouteHandler = async (
                 input.data.to,
               ),
       };
-    } else if (resource === "projects.list")
+    } else if (resource === "connectors.status") {
+      // ADR 0038: Baikal verified with the stored credential, Google state
+      // and the recovery steps; never a credential.
+      body = await connectorStatusBody(
+        database,
+        ctx.baikal,
+        ctx.google,
+        token.ownerId,
+        ctx.sessionClock.now(),
+      );
+    } else if (resource === "imports.list") {
+      // ADR 0038: owner-previewed calendar imports without rawIcs, plus
+      // Super Productivity provenance counts.
+      const input = automationCalendarImportResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_IMPORT_ID",
+          "Provide an import job ID or omit it",
+        );
+        return true;
+      }
+      const imports = importResourceBody(
+        database,
+        token.ownerId,
+        input.data.jobId,
+      );
+      if (!imports.ok) {
+        sendError(
+          response,
+          404,
+          "IMPORT_NOT_FOUND",
+          "Calendar import not found",
+        );
+        return true;
+      }
+      body = imports.body;
+    } else if (resource === "calendar_feeds.list")
+      // ADR 0038: feed capabilities and publication counts; never the secret.
+      body = feedResourceBody(database, token.ownerId);
+    else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
       };
@@ -917,7 +969,10 @@ export const handleAutomation: RouteHandler = async (
         | "section"
         | "task_view"
         | "menu_folder"
-        | "habit";
+        | "habit"
+        | "calendar_import"
+        | "calendar_feed"
+        | "connector";
       entityId: string;
     }[] = [];
     const baseRevisions: {
@@ -1207,6 +1262,22 @@ export const handleAutomation: RouteHandler = async (
         database,
         token.ownerId,
         command,
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      taskSummary = planned.summary;
+    } else if (isRecoveryCommand(command)) {
+      // ADR 0038: binds the import fingerprint, the feed or the grant;
+      // confirmation repeats the state check since none is revisioned.
+      const planned = previewRecovery(
+        database,
+        ctx.google,
+        token.ownerId,
+        command,
+        ctx.sessionClock.now(),
       );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
@@ -2267,6 +2338,26 @@ export const handleAutomation: RouteHandler = async (
       const confirmation = await confirmCalendarSubscription(
         database,
         ctx.calendarSubscriptions,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      if ("result" in confirmation) result = confirmation.result;
+      else applyLocalMutation = confirmation.apply;
+    } else if (isRecoveryCommand(command)) {
+      const confirmation = await confirmRecovery(
+        database,
+        ctx.baikal,
+        ctx.google,
         token.ownerId,
         command,
         () => ctx.sessionClock.now().toISOString(),

@@ -28,21 +28,17 @@
       "catalog": [],
       "status": "owner-only",
       "issue": 60,
-      "authority": "Fresh provider consent and secret entry remain interactive. Future delegated disconnect needs explicit consequential approval.",
+      "authority": "Fresh provider consent, secret entry and grant disconnect remain interactive (ADR 0038); the assistant never receives or rotates a credential.",
       "source": "apps/web/src/api.ts"
     },
     {
       "id": "connector-status",
       "action": "Connector health and explicit Google sync/resync",
-      "webApi": [
-        "getBaikalStatus",
-        "getGoogleStatus",
-        "synchronizeGoogle"
-      ],
-      "catalog": [],
-      "status": "gap",
+      "webApi": ["getBaikalStatus", "getGoogleStatus", "synchronizeGoogle"],
+      "catalog": ["connectors.status", "connectors.resync"],
+      "status": "covered",
       "issue": 60,
-      "authority": "Proposed separate connector read/recovery scopes; existing grant permissions must not widen.",
+      "authority": "connectors:read returns Baikal verification with the stored credential, Google state, granted scopes and freshness plus recovery steps; never a credential. connectors:recover retries a Google sync with the stored grant only; scopes cannot widen and a rejected grant needs the owner (ADR 0038).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -66,14 +62,8 @@
     {
       "id": "application-preferences",
       "action": "Application preferences and keyboard shortcuts: read the record; change theme, locale, start page, capture defaults, completion and reminder defaults, daily note and shortcut bindings",
-      "webApi": [
-        "getApplicationPreferences",
-        "updateApplicationPreferences"
-      ],
-      "catalog": [
-        "application.preferences",
-        "application.update_preferences"
-      ],
+      "webApi": ["getApplicationPreferences", "updateApplicationPreferences"],
+      "catalog": ["application.preferences", "application.update_preferences"],
       "status": "covered",
       "issue": 67,
       "authority": "Dedicated application:read and application:write scopes; one persisted revision shared with browser saves, frozen in the preview and checked again at confirmation. Shortcut conflicts and inactive default projects are rejected at preview.",
@@ -103,14 +93,8 @@
     {
       "id": "tasks-read",
       "action": "Active and deleted task inventory",
-      "webApi": [
-        "getTasks",
-        "getRecoveryTasks"
-      ],
-      "catalog": [
-        "tasks.list",
-        "tasks.deleted"
-      ],
+      "webApi": ["getTasks", "getRecoveryTasks"],
+      "catalog": ["tasks.list", "tasks.deleted"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scopes; owner filtering and recovery visibility.",
@@ -119,12 +103,8 @@
     {
       "id": "tasks-create",
       "action": "Plain or structured task capture",
-      "webApi": [
-        "createTask"
-      ],
-      "catalog": [
-        "tasks.create"
-      ],
+      "webApi": ["createTask"],
+      "catalog": ["tasks.create"],
       "status": "covered",
       "issue": 39,
       "authority": "Preview resolves source input, including planned day, reminder settings, estimate words, links per the owner URL setting and an @every series; it rejects a planned day with an exact start and lists every tag it would create as an affected object, so confirmation is the consent (ADR 0031); caller idempotency key binds one creation.",
@@ -153,12 +133,8 @@
     {
       "id": "tasks-edit",
       "action": "Title, notes, dates, planned day, reminder and estimate edits",
-      "webApi": [
-        "patchTask"
-      ],
-      "catalog": [
-        "tasks.update"
-      ],
+      "webApi": ["patchTask"],
+      "catalog": ["tasks.update"],
       "status": "covered",
       "issue": 39,
       "authority": "Exact expected task revision; atomic mutation/audit/receipt. Calendar-linked scheduling restrictions still apply: preview rejects a planned day while a calendar block exists and a deadline reminder without a timed deadline (ADR 0020).",
@@ -167,12 +143,8 @@
     {
       "id": "tasks-complete",
       "action": "Complete and reopen tasks",
-      "webApi": [
-        "transitionTask"
-      ],
-      "catalog": [
-        "tasks.set_completed"
-      ],
+      "webApi": ["transitionTask"],
+      "catalog": ["tasks.set_completed"],
       "status": "covered",
       "issue": 39,
       "authority": "Expected revision and replay receipt; task completion is distinct from focus completion.",
@@ -181,14 +153,8 @@
     {
       "id": "tasks-delete",
       "action": "Delete and restore tasks",
-      "webApi": [
-        "deleteTask",
-        "restoreTask"
-      ],
-      "catalog": [
-        "tasks.delete",
-        "tasks.restore"
-      ],
+      "webApi": ["deleteTask", "restoreTask"],
+      "catalog": ["tasks.delete", "tasks.restore"],
       "status": "covered",
       "issue": 33,
       "authority": "Explicit consequential approval, expected revision and focus/calendar deletion guards.",
@@ -197,12 +163,8 @@
     {
       "id": "planner-read",
       "action": "Bounded planner and calendar projection",
-      "webApi": [
-        "getPlanner"
-      ],
-      "catalog": [
-        "schedule.get"
-      ],
+      "webApi": ["getPlanner"],
+      "catalog": ["schedule.get"],
       "status": "covered",
       "issue": 39,
       "authority": "Schedule read scope, requested range, provider-qualified identities and visible freshness.",
@@ -211,13 +173,8 @@
     {
       "id": "time-blocks",
       "action": "Create, move and remove a task time block",
-      "webApi": [
-        "putTaskTimeBlock",
-        "removeTaskTimeBlock"
-      ],
-      "catalog": [
-        "schedule.create_time_block"
-      ],
+      "webApi": ["putTaskTimeBlock", "removeTaskTimeBlock"],
+      "catalog": ["schedule.create_time_block"],
       "status": "partial",
       "issue": 58,
       "authority": "Create tool exists; move/remove need provider conditional revisions, durable outcomes and explicit removal approval.",
@@ -241,10 +198,7 @@
     {
       "id": "focus",
       "action": "Focus/break lifecycle and takeover",
-      "webApi": [
-        "getActiveSession",
-        "commandActiveSession"
-      ],
+      "webApi": ["getActiveSession", "commandActiveSession"],
       "catalog": [
         "active-session.get",
         "focus.start",
@@ -263,14 +217,8 @@
     {
       "id": "focus-preferences",
       "action": "Read and update focus preferences (presets, idle, take-a-break, tracking reminder)",
-      "webApi": [
-        "getFocusPreferences",
-        "updateFocusPreferences"
-      ],
-      "catalog": [
-        "focus.preferences",
-        "focus.update_preferences"
-      ],
+      "webApi": ["getFocusPreferences", "updateFocusPreferences"],
+      "catalog": ["focus.preferences", "focus.update_preferences"],
       "status": "covered",
       "issue": 65,
       "authority": "focus:read returns the fields with their revision (0 for defaults); focus:write is revision-bound like planning.update_preferences, and browser writes advance the same revision. A running session keeps the plan it started with (ADR 0029).",
@@ -285,9 +233,7 @@
         "applyIdleDisposition",
         "snoozeBreakReminder"
       ],
-      "catalog": [
-        "focus.idle_disposition"
-      ],
+      "catalog": ["focus.idle_disposition"],
       "status": "partial",
       "issue": 65,
       "authority": "focus:write. The preview binds the session revision and states the span, the disposition and the focus time removed; confirmation applies the correction for the owner with the controlling device as the interval actor. Timer reads, presets and snooze stay browser operations with client proof (ADR 0029).",
@@ -296,14 +242,8 @@
     {
       "id": "organization-read",
       "action": "Project and tag inventory",
-      "webApi": [
-        "getProjects",
-        "getTags"
-      ],
-      "catalog": [
-        "projects.list",
-        "tags.list"
-      ],
+      "webApi": ["getProjects", "getTags"],
+      "catalog": ["projects.list", "tags.list"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scopes with owner-scoped records.",
@@ -347,10 +287,7 @@
         "deleteNote",
         "reorderNotes"
       ],
-      "catalog": [
-        "notes.list",
-        "notes.mutate"
-      ],
+      "catalog": ["notes.list", "notes.mutate"],
       "status": "covered",
       "issue": 28,
       "authority": "Dedicated notes read/write scopes; owner-checked project/tag association, note revisions, complete-membership reorder and atomic audit/replay. Deletion is permanent and needs explicit approval. Notes are online-only.",
@@ -366,10 +303,7 @@
         "deleteTaskAttachment",
         "deleteTaskIssueLink"
       ],
-      "catalog": [
-        "task_links.get",
-        "task_links.mutate"
-      ],
+      "catalog": ["task_links.get", "task_links.mutate"],
       "status": "covered",
       "issue": 30,
       "authority": "Dedicated task_links read/write scopes; owner-checked task, attachment and issue-link revisions with atomic audit/replay. Only http(s) links without credentials are stored as openable. Previews name hosts, not full addresses. No operation contacts an issue provider; refresh or write-back needs a fresh provider authorization that does not exist yet. Online-only.",
@@ -409,9 +343,7 @@
         "deletePluginDataEntry",
         "deletePluginMetadata"
       ],
-      "catalog": [
-        "plugin_data.list"
-      ],
+      "catalog": ["plugin_data.list"],
       "status": "partial",
       "issue": 66,
       "authority": "Dedicated plugin_data:read scope lists identity, sizes and flags only; no assistant operation returns plugin data. Download and permanent deletion stay owner-only in the browser (session, CSRF and If-Match revisions). Nothing decodes or runs plugin data. Online-only (ADR 0026).",
@@ -427,10 +359,7 @@
         "reorderSubtasks",
         "deleteSubtask"
       ],
-      "catalog": [
-        "subtasks.list",
-        "subtasks.mutate"
-      ],
+      "catalog": ["subtasks.list", "subtasks.mutate"],
       "status": "covered",
       "issue": 56,
       "authority": "Task read/write scopes, owner-scoped checklist and parent revisions; exact reorder membership; atomic mutation, sync and confirmation receipt. Explicit approval for deletion/reorder.",
@@ -440,9 +369,7 @@
       "id": "task-hierarchy",
       "action": "Create child tasks, move tasks between parents or to top level, reorder children",
       "webApi": [],
-      "catalog": [
-        "tasks.hierarchy"
-      ],
+      "catalog": ["tasks.hierarchy"],
       "status": "covered",
       "issue": 27,
       "authority": "tasks:write; the preview freezes the task, target parent and every reordered child revision, and rejects depth, cycle and deleted-parent targets. The browser writes through the sync outbox (task.move), not api.ts. Hierarchy reads come from tasks.list parentId/childPosition.",
@@ -451,16 +378,8 @@
     {
       "id": "task-history",
       "action": "Search archived task history, archive a top-level task with its children, restore an archived family",
-      "webApi": [
-        "getTaskHistory",
-        "archiveTask",
-        "unarchiveTask"
-      ],
-      "catalog": [
-        "tasks.history",
-        "tasks.archive",
-        "tasks.unarchive"
-      ],
+      "webApi": ["getTaskHistory", "archiveTask", "unarchiveTask"],
+      "catalog": ["tasks.history", "tasks.archive", "tasks.unarchive"],
       "status": "covered",
       "issue": 38,
       "authority": "tasks:read for owner-scoped history search with read-only import provenance; tasks:write for archive and restore. The preview freezes the parent and every child it moves; a changed or added child makes confirmation stale. Online-only in the browser (ADR 0022).",
@@ -497,10 +416,7 @@
         "updateTimeEntry",
         "deleteTimeEntry"
       ],
-      "catalog": [
-        "time.report",
-        "time_entries.mutate"
-      ],
+      "catalog": ["time.report", "time_entries.mutate"],
       "status": "covered",
       "issue": 41,
       "authority": "tasks:read for the owner-zone worklog report (at most 366 days); tasks:write for corrections. The preview freezes the entry revision, or the task revision and new entry ID for an addition; confirmation rechecks the 0 to 24 hour task-day bound and running focus. Focus entries and archived history are read-only. Online-only in the browser (ADR 0024).",
@@ -517,11 +433,7 @@
         "recordCounterDay",
         "controlCounterStopwatch"
       ],
-      "catalog": [
-        "counters.history",
-        "counters.mutate",
-        "counters.record"
-      ],
+      "catalog": ["counters.history", "counters.mutate", "counters.record"],
       "status": "covered",
       "issue": 64,
       "authority": "metrics:read for owner-zone counter history (at most 366 days); metrics:write for writes. Day writes name the day revision read (0 when empty) and are rechecked at confirmation; definition edits, deletes and stopwatch start/stop freeze the counter revision. Deleting removes the counter's recorded days. Online-only in the browser (ADR 0025).",
@@ -530,14 +442,8 @@
     {
       "id": "evaluations",
       "action": "Read daily evaluations with Tadooer focus per day; create or edit a day's evaluation",
-      "webApi": [
-        "getEvaluations",
-        "saveEvaluation"
-      ],
-      "catalog": [
-        "evaluations.list",
-        "evaluations.write"
-      ],
+      "webApi": ["getEvaluations", "saveEvaluation"],
+      "catalog": ["evaluations.list", "evaluations.write"],
       "status": "covered",
       "issue": 64,
       "authority": "metrics:read for evaluations and derived focus over at most 366 days; metrics:write for writes, which name the evaluation revision read (0 for a new day). Imported focus session durations are read-only history (ADR 0025).",
@@ -546,15 +452,8 @@
     {
       "id": "day-order",
       "action": "Read and reorder the saved order of Today and each planned day; plan tasks for tomorrow",
-      "webApi": [
-        "getDayOrders",
-        "reorderDayOrder",
-        "planTasksForDay"
-      ],
-      "catalog": [
-        "day_order.get",
-        "day_order.reorder"
-      ],
+      "webApi": ["getDayOrders", "reorderDayOrder", "planTasksForDay"],
+      "catalog": ["day_order.get", "day_order.reorder"],
       "status": "partial",
       "issue": 98,
       "authority": "tasks:read for one date's order (the owner's planning date by default); tasks:write for a full-list reorder. A day order has no entity revision to freeze, so confirmation repeats the preview's day-order revision and exact-membership checks. Plan-for-tomorrow has no dedicated tool: the assistant sets planned days with tasks.update and then reorders. Online-only in the browser (ADR 0027).",
@@ -573,10 +472,7 @@
         "reorderBoardPanel",
         "moveTaskToPanel"
       ],
-      "catalog": [
-        "boards.list",
-        "boards.mutate"
-      ],
+      "catalog": ["boards.list", "boards.mutate"],
       "status": "covered",
       "issue": 63,
       "authority": "tasks:read for boards and their computed membership; tasks:write for every board mutation. The preview freezes the board revision (and the task revision for a move) and names the tag, marker, done, project, planned-day and backlog changes a move applies; confirmation repeats the checks inside its transaction. Online-only in the browser (ADR 0028).",
@@ -592,10 +488,7 @@
         "reorderSections",
         "deleteSection"
       ],
-      "catalog": [
-        "sections.list",
-        "sections.mutate"
-      ],
+      "catalog": ["sections.list", "sections.mutate"],
       "status": "covered",
       "issue": 63,
       "authority": "tasks:read for a context's sections; tasks:write for mutations, which freeze the section revisions they touch. Members must be active tasks of the context; a task leaves any sibling section when it is placed (ADR 0028).",
@@ -604,14 +497,8 @@
     {
       "id": "task-views",
       "action": "Saved task views per context (sort, group, filter, collapsed groups): list and set",
-      "webApi": [
-        "getTaskViews",
-        "setTaskView"
-      ],
-      "catalog": [
-        "task_views.list",
-        "task_views.set"
-      ],
+      "webApi": ["getTaskViews", "setTaskView"],
+      "catalog": ["task_views.list", "task_views.set"],
       "status": "covered",
       "issue": 63,
       "authority": "tasks:read to list; tasks:write to set one context's view with the revision read (0 before the first save). A view has no entity ID to freeze, so confirmation repeats the revision check (ADR 0028).",
@@ -627,10 +514,7 @@
         "reorderMenuFolders",
         "deleteMenuFolder"
       ],
-      "catalog": [
-        "menu_folders.list",
-        "menu_folders.mutate"
-      ],
+      "catalog": ["menu_folders.list", "menu_folders.mutate"],
       "status": "covered",
       "issue": 63,
       "authority": "tasks:read to list; tasks:write for mutations, which freeze the folder revisions they touch. An item sits in one folder; folders nest at most eight levels (ADR 0028).",
@@ -639,14 +523,8 @@
     {
       "id": "templates-read",
       "action": "Template and set libraries",
-      "webApi": [
-        "getTemplateLibrary",
-        "getTemplateSets"
-      ],
-      "catalog": [
-        "templates.list",
-        "template-sets.list"
-      ],
+      "webApi": ["getTemplateLibrary", "getTemplateSets"],
+      "catalog": ["templates.list", "template-sets.list"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scope and explicit library query semantics.",
@@ -671,14 +549,8 @@
     {
       "id": "templates-use",
       "action": "Instantiate a template or set",
-      "webApi": [
-        "instantiateTemplate",
-        "instantiateTemplateSet"
-      ],
-      "catalog": [
-        "templates.instantiate",
-        "template_sets.instantiate"
-      ],
+      "webApi": ["instantiateTemplate", "instantiateTemplateSet"],
+      "catalog": ["templates.instantiate", "template_sets.instantiate"],
       "status": "covered",
       "issue": 33,
       "authority": "Freeze source revisions and destination; multi-task creation uses consequential approval policy.",
@@ -687,12 +559,8 @@
     {
       "id": "pools-read",
       "action": "Choice pool library",
-      "webApi": [
-        "getChoicePools"
-      ],
-      "catalog": [
-        "pools.list"
-      ],
+      "webApi": ["getChoicePools"],
+      "catalog": ["pools.list"],
       "status": "covered",
       "issue": 39,
       "authority": "Catalog read scope; eligibility and policy data are not new task state.",
@@ -718,12 +586,8 @@
     {
       "id": "pools-resolve",
       "action": "Resolve a planning placeholder",
-      "webApi": [
-        "resolvePlanningPlaceholder"
-      ],
-      "catalog": [
-        "placeholders.resolve"
-      ],
+      "webApi": ["resolvePlanningPlaceholder"],
+      "catalog": ["placeholders.resolve"],
       "status": "covered",
       "issue": 33,
       "authority": "Expected placeholder/source revisions; atomic task creation, history and consumed preview.",
@@ -733,10 +597,7 @@
       "id": "habits",
       "action": "Habit lifecycle, canonical completion and metrics",
       "webApi": [],
-      "catalog": [
-        "habits.list",
-        "habits.mutate"
-      ],
+      "catalog": ["habits.list", "habits.mutate"],
       "status": "covered",
       "issue": 39,
       "authority": "UI uses immutable sync commands; assistant preview binds habit revision and period completion deduplicates.",
@@ -745,14 +606,11 @@
     {
       "id": "calendar-import",
       "action": "Calendar import preview/apply",
-      "webApi": [
-        "previewCalendarImport",
-        "applyCalendarImport"
-      ],
-      "catalog": [],
-      "status": "gap",
+      "webApi": ["previewCalendarImport", "applyCalendarImport"],
+      "catalog": ["imports.list", "imports.apply"],
+      "status": "covered",
       "issue": 60,
-      "authority": "Read-only preview; reviewed provenance, exact target, permissions and retry-safe apply.",
+      "authority": "imports:read lists the owner's previewed jobs and candidates without rawIcs. imports:write applies one job bound to its exact input fingerprint and destination calendar; preview writes nothing, an applied job replays without writes (ADR 0038). Uploading the file stays owner-only.",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -763,23 +621,20 @@
         "createCalendarFeed",
         "revokeCalendarFeed"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": ["calendar_feeds.list", "calendar_feeds.revoke"],
+      "status": "partial",
       "issue": 60,
-      "authority": "Capability creation/revocation is consequential; never expose capability secrets in logs or read resources.",
+      "authority": "publication:read lists capabilities and per-calendar publication counts; no response carries the secret, its hash or the address. publication:write revokes a feed after preview. Creation stays owner-only because the address is shown once at creation (ADR 0038).",
       "source": "apps/web/src/api.ts"
     },
     {
       "id": "task-import",
       "action": "Super Productivity preview and reviewed apply",
-      "webApi": [
-        "previewTaskImport",
-        "applyTaskImport"
-      ],
+      "webApi": ["previewTaskImport", "applyTaskImport"],
       "catalog": [],
-      "status": "gap",
+      "status": "owner-only",
       "issue": 60,
-      "authority": "Hash-bound reviewed export, all-or-nothing transaction; real source export must not be echoed in tools.",
+      "authority": "The Super Productivity preview is stateless and the export is never stored, so there is no owner-prepared preview for the assistant to bind to; imports.list reports recorded provenance counts only (ADR 0038).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -800,9 +655,7 @@
       "id": "confirm",
       "action": "Execute approved catalog preview",
       "webApi": [],
-      "catalog": [
-        "automation.confirm"
-      ],
+      "catalog": ["automation.confirm"],
       "status": "internal",
       "issue": 33,
       "authority": "Confirmation resolves the stored operation scope; advertised write scopes are alternatives, not a demand for every scope. Approval policy and stale/replay checks remain server enforced.",
@@ -833,9 +686,9 @@
       "action": "Authenticated calendar ICS export",
       "webApi": [],
       "catalog": [],
-      "status": "gap",
+      "status": "owner-only",
       "issue": 60,
-      "authority": "The UI downloads through an authenticated link outside api.ts; delegated export needs an explicit read scope and bounded content delivery.",
+      "authority": "The ICS download is a browser file outside api.ts. calendar_feeds.list reports each calendar's published event count instead of delivering the content (ADR 0038).",
       "source": "apps/web/src/calendar-migration.tsx"
     }
   ]
