@@ -380,6 +380,67 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "boards",
+      "action": "Boards: list configurations with computed panel membership and markers; create (blank or Eisenhower/Kanban template), edit, reorder and delete boards; order a panel manually; move a task into a panel with an explicit change list",
+      "webApi": [
+        "getBoards",
+        "getBoardView",
+        "createBoard",
+        "updateBoard",
+        "reorderBoards",
+        "deleteBoard",
+        "reorderBoardPanel",
+        "moveTaskToPanel"
+      ],
+      "catalog": ["boards.list", "boards.mutate"],
+      "status": "covered",
+      "issue": 63,
+      "authority": "tasks:read for boards and their computed membership; tasks:write for every board mutation. The preview freezes the board revision (and the task revision for a move) and names the tag, marker, done, project, planned-day and backlog changes a move applies; confirmation repeats the checks inside its transaction. Online-only in the browser (ADR 0028).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "sections",
+      "action": "Sections inside a project or tag: list, create, rename, collapse, set ordered members, reorder and delete",
+      "webApi": [
+        "getSections",
+        "createSection",
+        "updateSection",
+        "reorderSections",
+        "deleteSection"
+      ],
+      "catalog": ["sections.list", "sections.mutate"],
+      "status": "covered",
+      "issue": 63,
+      "authority": "tasks:read for a context's sections; tasks:write for mutations, which freeze the section revisions they touch. Members must be active tasks of the context; a task leaves any sibling section when it is placed (ADR 0028).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "task-views",
+      "action": "Saved task views per context (sort, group, filter, collapsed groups): list and set",
+      "webApi": ["getTaskViews", "setTaskView"],
+      "catalog": ["task_views.list", "task_views.set"],
+      "status": "covered",
+      "issue": 63,
+      "authority": "tasks:read to list; tasks:write to set one context's view with the revision read (0 before the first save). A view has no entity ID to freeze, so confirmation repeats the revision check (ADR 0028).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "menu-folders",
+      "action": "Sidebar folders for projects and tags: list, create, rename, collapse, nest, set items, reorder and delete",
+      "webApi": [
+        "getMenuFolders",
+        "createMenuFolder",
+        "updateMenuFolder",
+        "reorderMenuFolders",
+        "deleteMenuFolder"
+      ],
+      "catalog": ["menu_folders.list", "menu_folders.mutate"],
+      "status": "covered",
+      "issue": 63,
+      "authority": "tasks:read to list; tasks:write for mutations, which freeze the folder revisions they touch. An item sits in one folder; folders nest at most eight levels (ADR 0028).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "templates-read",
       "action": "Template and set libraries",
       "webApi": ["getTemplateLibrary", "getTemplateSets"],

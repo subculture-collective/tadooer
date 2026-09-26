@@ -18,6 +18,13 @@ import {
   superProductivityPluginUserDataFields,
 } from "./super-productivity-plugins.ts";
 import { superProductivityPlannerKeys } from "./super-productivity-day-order.ts";
+import {
+  superProductivityBoardFields,
+  superProductivityBoardPanelFields,
+  superProductivityMenuFolderFields,
+  superProductivityMenuTreeFields,
+  superProductivitySectionFields,
+} from "./super-productivity-boards.ts";
 
 type FieldKey =
   | "taskFields"
@@ -30,7 +37,12 @@ type FieldKey =
   | "metricFields"
   | "pluginUserDataFields"
   | "pluginMetadataFields"
-  | "plannerFields";
+  | "plannerFields"
+  | "boardFields"
+  | "boardPanelFields"
+  | "sectionFields"
+  | "menuTreeFields"
+  | "menuFolderFields";
 const manifest = JSON.parse(
   readFileSync(
     new URL(
@@ -63,6 +75,11 @@ it("assigns every reviewed entity field to exactly one workflow row", () => {
     ["pluginUserDataFields", superProductivityPluginUserDataFields],
     ["pluginMetadataFields", superProductivityPluginMetadataFields],
     ["plannerFields", superProductivityPlannerKeys],
+    ["boardFields", superProductivityBoardFields],
+    ["boardPanelFields", superProductivityBoardPanelFields],
+    ["sectionFields", superProductivitySectionFields],
+    ["menuTreeFields", superProductivityMenuTreeFields],
+    ["menuFolderFields", superProductivityMenuFolderFields],
   ] as const) {
     const mapped = manifest.rows.flatMap((row) => row[key] ?? []);
     expect(new Set(mapped).size, key).toBe(mapped.length);

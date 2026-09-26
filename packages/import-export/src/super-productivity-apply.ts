@@ -17,6 +17,10 @@ import {
 } from "./super-productivity-day-order.ts";
 import { localDate } from "./super-productivity-recurrence.ts";
 import {
+  mapSuperProductivityBoards,
+  type BoardSourceTask,
+} from "./super-productivity-boards.ts";
+import {
   fieldsWith,
   populated,
   superProductivityNoteFields,
@@ -122,6 +126,8 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "plugin_data_preserved",
     // ADR 0027: Today and planner-day order entries that are not applied.
     "day_order_notice",
+    // ADR 0028: board, section and folder values without a mapping.
+    "board_notice",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -334,22 +340,20 @@ export const prepareSuperProductivityImport = (
       const archived = inventoried?.archived === true;
       if (kind === "tag" && systemTags.has(sourceId)) {
         // Derived views and board markers are never ordinary imported tags.
-        // Today's task order applies as a saved day order (ADR 0027).
+        // Today's task order applies as a saved day order (ADR 0027); the
+        // priority and in-progress tags apply as board markers (ADR 0028).
         if (sourceId === "TODAY") {
           if (strings(source.taskIds).length === 0)
             notice(
               sourceId,
               "Super Productivity system tag is a derived view and is not imported",
             );
-        } else if (referencedTags.has(sourceId))
-          problem(
-            sourceId,
-            "Tasks use this Super Productivity system tag; priority and board markers need board parity (#63) and are not imported as ordinary tags",
-          );
-        else
+        } else
           notice(
             sourceId,
-            "Super Productivity system tag is a derived view and is not imported",
+            referencedTags.has(sourceId)
+              ? "Super Productivity system tag is applied as a board marker on its tasks, not as a tag"
+              : "Super Productivity system tag is a board marker and is not imported as a tag",
           );
         continue;
       }
@@ -520,13 +524,6 @@ export const prepareSuperProductivityImport = (
         problem(sourceId, "Creation timestamp is invalid");
       if (Array.isArray(source.tagIds) && source.tagIds.length > 25)
         problem(sourceId, "Task has more than 25 tags");
-      if (kind === "task" && !archived)
-        for (const tagId of strings(source.tagIds))
-          if (systemTags.has(tagId) && tagId !== "TODAY")
-            problem(
-              sourceId,
-              "Task uses a Super Productivity priority or board tag that is not imported as an ordinary tag",
-            );
       const record: TaskImportRecord = {
         kind,
         sourceId,
@@ -568,12 +565,11 @@ export const prepareSuperProductivityImport = (
           !Object.hasOwn(projectEntityIds, task.projectId)
             ? null
             : (task?.projectId ?? null),
-        // TODAY in tagIds is legacy view membership, not a tag assignment.
+        // System tags are view membership or board markers, never tags.
         tagIds: strings(source.tagIds).filter(
           (id) =>
-            id !== "TODAY" &&
-            (!archived ||
-              (!systemTags.has(id) && Object.hasOwn(tagEntities, id))),
+            !systemTags.has(id) &&
+            (!archived || Object.hasOwn(tagEntities, id)),
         ),
         plannedStart: archived ? null : (task?.scheduledAt ?? null),
         plannedDay: archived ? null : (task?.scheduledDay ?? null),
@@ -664,11 +660,6 @@ export const prepareSuperProductivityImport = (
   const tagMenu = menuOrder(menuTree.tagTree, "t");
   if (!projectMenu.valid || !tagMenu.valid)
     problem("menuTree", "menuTree nodes must be folders, projects or tags");
-  if (projectMenu.folders + tagMenu.folders > 0)
-    notice(
-      "menuTree",
-      "menuTree folders are not imported; project and tag order is applied without folders",
-    );
 
   const noteRecords: TaskImportRecord[] = [];
   const projectEntities = object(object(data.project).entities);
@@ -791,6 +782,35 @@ export const prepareSuperProductivityImport = (
     notice: (sourceId, detail) =>
       issues.push({ code: "day_order_notice", sourceId, detail }),
   });
+  // ADR 0028: boards, sections, menu folders and task markers.
+  const boards = mapSuperProductivityBoards({
+    boards: data.boards,
+    section: data.section,
+    menuTree: data.menuTree,
+    tasks: new Map<string, BoardSourceTask>(
+      records
+        .filter(({ kind }) => kind === "task")
+        .map((record) => [
+          record.sourceId,
+          {
+            sourceId: record.sourceId,
+            archived: record.archived === true,
+            tagIds: strings(
+              object(
+                storeEntities(record.archiveStore ?? "task")[record.sourceId],
+              ).tagIds,
+            ),
+          },
+        ]),
+    ),
+    projectIds: new Set(Object.keys(projectEntityIds)),
+    tagIds: new Set(
+      Object.keys(tagEntities).filter((id) => !systemTags.has(id)),
+    ),
+    problem,
+    notice: (sourceId, detail) =>
+      issues.push({ code: "board_notice", sourceId, detail }),
+  });
   const reported = issues.map((issue) => ({
     ...issue,
     blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
@@ -812,5 +832,6 @@ export const prepareSuperProductivityImport = (
     evaluations: sourceInventory.evaluations,
     plugins: sourceInventory.plugins,
     dayOrders,
+    boards,
   };
 };

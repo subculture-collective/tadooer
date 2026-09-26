@@ -8,6 +8,7 @@ export * from "./time-history.ts";
 export * from "./counters.ts";
 export * from "./plugin-data.ts";
 export * from "./day-order.ts";
+export * from "./boards.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -72,6 +73,22 @@ import {
   dayOrderSchema,
   dayStartsAtSchema,
 } from "./day-order.ts";
+import {
+  automationBoardMutationInputSchema,
+  automationBoardsResourceInputSchema,
+  automationBoardsResourceSchema,
+  automationMenuFolderMutationInputSchema,
+  automationSectionMutationInputSchema,
+  automationSectionsResourceInputSchema,
+  boardMutationResponseSchema,
+  menuFolderListResponseSchema,
+  menuFolderMutationResponseSchema,
+  sectionListResponseSchema,
+  sectionMutationResponseSchema,
+  taskViewListResponseSchema,
+  taskViewResponseSchema,
+  taskViewSetRequestSchema,
+} from "./boards.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -1701,6 +1718,10 @@ export const automationOperationSchema = z.enum([
   "counters.record",
   "evaluations.write",
   "day_order.reorder",
+  "boards.mutate",
+  "sections.mutate",
+  "task_views.set",
+  "menu_folders.mutate",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1928,6 +1949,22 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationDayOrderReorderInputSchema,
     }),
     z.object({
+      operation: z.literal("boards.mutate"),
+      input: automationBoardMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("sections.mutate"),
+      input: automationSectionMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("task_views.set"),
+      input: taskViewSetRequestSchema,
+    }),
+    z.object({
+      operation: z.literal("menu_folders.mutate"),
+      input: automationMenuFolderMutationInputSchema,
+    }),
+    z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
     }),
@@ -2142,6 +2179,26 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationDayOrderReorderInputSchema,
     });
+  if (operation === "boards.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationBoardMutationInputSchema,
+    });
+  if (operation === "sections.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationSectionMutationInputSchema,
+    });
+  if (operation === "task_views.set")
+    return z.object({
+      operation: z.literal(operation),
+      input: taskViewSetRequestSchema,
+    });
+  if (operation === "menu_folders.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationMenuFolderMutationInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2275,6 +2332,10 @@ export const automationAffectedEntitySchema = z
       "recurring_series",
       "counter",
       "daily_evaluation",
+      "board",
+      "section",
+      "task_view",
+      "menu_folder",
     ]),
     entityId: entityIdSchema,
   })
@@ -2301,6 +2362,9 @@ const existingAutomationBaseRevisionSchema = z
       "recurring_series",
       "counter",
       "daily_evaluation",
+      "board",
+      "section",
+      "menu_folder",
     ]),
     entityId: entityIdSchema,
     revision: revisionSchema,
@@ -2365,6 +2429,10 @@ export const automationExecutionResultSchema = z.union([
   counterMutationResponseSchema,
   evaluationMutationResponseSchema,
   dayOrderResponseSchema,
+  boardMutationResponseSchema,
+  sectionMutationResponseSchema,
+  taskViewResponseSchema,
+  menuFolderMutationResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2593,6 +2661,50 @@ export const automationCatalog = [
     outputSchema: dayOrderResponseSchema,
   },
   {
+    id: "boards.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/boards",
+    mcpName: "suite.boards.list",
+    mcpUri: "suite://v1/boards{?boardId}",
+    inputSchema: automationBoardsResourceInputSchema,
+    outputSchema: automationBoardsResourceSchema,
+  },
+  {
+    id: "sections.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/sections",
+    mcpName: "suite.sections.list",
+    mcpUri: "suite://v1/sections{?contextKind,contextId}",
+    inputSchema: automationSectionsResourceInputSchema,
+    outputSchema: sectionListResponseSchema,
+  },
+  {
+    id: "task_views.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/task-views",
+    mcpName: "suite.task_views.list",
+    mcpUri: "suite://v1/task-views",
+    inputSchema: z.object({}).strict(),
+    outputSchema: taskViewListResponseSchema,
+  },
+  {
+    id: "menu_folders.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/menu-folders",
+    mcpName: "suite.menu_folders.list",
+    mcpUri: "suite://v1/menu-folders",
+    inputSchema: z.object({}).strict(),
+    outputSchema: menuFolderListResponseSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2728,7 +2840,11 @@ export const automationCatalog = [
                             id.startsWith("recurrence.") ||
                             id === "subtasks.mutate" ||
                             id === "time_entries.mutate" ||
-                            id === "day_order.reorder"
+                            id === "day_order.reorder" ||
+                            id === "boards.mutate" ||
+                            id === "sections.mutate" ||
+                            id === "task_views.set" ||
+                            id === "menu_folders.mutate"
                           ? "tasks:write"
                           : id === "schedule.create_time_block"
                             ? "schedule:write"
@@ -3165,5 +3281,15 @@ export const taskImportApplyResponseSchema = z
       .optional(),
     /** ADR 0027: dates whose Today or planner-day order was saved. */
     dayOrders: z.number().int().nonnegative().optional(),
+    /** ADR 0028: boards, sections and sidebar folders. */
+    boards: z
+      .object({
+        boards: z.number().int().nonnegative(),
+        sections: z.number().int().nonnegative(),
+        folders: z.number().int().nonnegative(),
+        existing: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
