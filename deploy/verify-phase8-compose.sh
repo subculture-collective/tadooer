@@ -16,10 +16,16 @@ build="$(curl --fail --silent "$base_url/api/build")"
 test "$(node -e 'console.log(JSON.parse(process.argv[1]).version)' "$build")" = "$version"
 test "$(node -e 'console.log(JSON.parse(process.argv[1]).revision)' "$build")" = "$revision"
 ready="$(curl --fail --silent "$base_url/api/ready")"
-test "$(node -e 'console.log(JSON.parse(process.argv[1]).migrationCount)' "$ready")" = "19"
+# Readiness compares applied to expected migrations itself; the gate requires
+# that agreement and that metrics report the same applied count, instead of a
+# literal that goes stale with every additive migration.
+test "$(node -e 'console.log(JSON.parse(process.argv[1]).status)' "$ready")" = "ok"
+test "$(node -e 'console.log(JSON.parse(process.argv[1]).checks.migrations)' "$ready")" = "current"
+migration_count="$(node -e 'console.log(JSON.parse(process.argv[1]).migrationCount)' "$ready")"
+test "$migration_count" -ge "${SUITE_MINIMUM_MIGRATIONS:-19}"
 metrics="$(curl --fail --silent "$base_url/api/metrics")"
 printf '%s\n' "$metrics" | grep -q '^suite_uptime_seconds '
-printf '%s\n' "$metrics" | grep -q '^suite_database_migrations 19$'
+printf '%s\n' "$metrics" | grep -q "^suite_database_migrations ${migration_count}\$"
 task_state="$(node deploy/phase0-task-smoke.mjs create "$base_url")"
 compose restart suite >/dev/null
 compose up -d --wait suite >/dev/null
