@@ -1,10 +1,22 @@
-import { isHabitSyncOperation, habitCommandSchema } from "@suite/contracts";
+import {
+  coreTaskFieldSchema,
+  isHabitSyncOperation,
+  habitCommandSchema,
+  syncOperationEntity,
+} from "@suite/contracts";
 import { randomUUID, createHash, randomBytes } from "node:crypto";
 import type {
   ClientRegistrationResponse,
+  CoreTaskField,
   SyncRoundResponse,
   SyncSnapshotResponse,
 } from "@suite/contracts";
+import type {
+  ProjectRecord,
+  SubtaskRecord,
+  TagRecord,
+  TaskRecord,
+} from "@suite/persistence";
 import {
   clientRegistrationRequestSchema,
   clientAuthenticationHeadersSchema,
@@ -238,6 +250,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                 tagIds: versions.tagIds ?? task.revision,
                 deadline: versions.deadline ?? task.revision,
                 parent: versions.parent ?? task.revision,
+                plannedStart: versions.plannedStart ?? task.revision,
               };
             })(),
             changeSequence: task.revision,
@@ -409,26 +422,38 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
           ),
         };
       }
-      const result =
+      const entity = syncOperationEntity(operation);
+      if (entity === null)
+        return {
+          kind: "rejected" as const,
+          operationId: operation.operationId,
+          code: "INVALID_SYNC_OPERATION" as const,
+        };
+      const common = {
+        ownerId: session.owner.id,
+        clientId: client.id,
+        operationId: operation.operationId,
+        requestHash: operation.requestHash,
+        now,
+      };
+      const result: {
+        readonly kind:
+          "applied" | "replayed" | "conflict" | "idempotency-conflict";
+        readonly task?: TaskRecord;
+        readonly record?: ProjectRecord | TagRecord | SubtaskRecord;
+        readonly fields?: readonly string[];
+      } =
         operation.kind === "task.move"
           ? database.taskHierarchy.applyMoveSync({
-              ownerId: session.owner.id,
-              clientId: client.id,
-              operationId: operation.operationId,
-              requestHash: operation.requestHash,
+              ...common,
               taskId: operation.taskId,
               parentId: operation.parentId,
               index: operation.index,
               baseParentVersion: operation.baseParentVersion,
-              now,
             })
           : operation.kind === "task.create"
             ? database.applyTaskCreateSync({
-                ownerId: session.owner.id,
-                clientId: client.id,
-                operationId: operation.operationId,
-                requestHash: operation.requestHash,
-                now,
+                ...common,
                 task: {
                   ...operation.task,
                   deadline: operation.task.deadline ?? null,
@@ -440,10 +465,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
               })
             : operation.kind === "task.patch"
               ? database.applyTaskFieldSync({
-                  ownerId: session.owner.id,
-                  clientId: client.id,
-                  operationId: operation.operationId,
-                  requestHash: operation.requestHash,
+                  ...common,
                   taskId: operation.taskId,
                   baseVersions: Object.fromEntries(
                     Object.entries(operation.baseFieldVersions).filter(
@@ -455,35 +477,96 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                       ([, value]) => value !== undefined,
                     ),
                   ),
-                  now,
                 })
               : operation.kind === "task.complete" ||
                   operation.kind === "task.reopen"
                 ? database.applyTaskCompletionSync({
-                    ownerId: session.owner.id,
-                    clientId: client.id,
-                    operationId: operation.operationId,
-                    requestHash: operation.requestHash,
+                    ...common,
                     taskId: operation.taskId,
                     baseStatusVersion: operation.baseStatusVersion,
                     completed: operation.kind === "task.complete",
-                    now,
                   })
-                : database.applyTaskDeletionSync({
-                    ownerId: session.owner.id,
-                    clientId: client.id,
-                    operationId: operation.operationId,
-                    requestHash: operation.requestHash,
-                    taskId: operation.taskId,
-                    baseRevision: (
-                      operation as Extract<
-                        typeof operation,
-                        { readonly kind: "task.delete" | "task.restore" }
-                      >
-                    ).baseRevision,
-                    restore: operation.kind === "task.restore",
-                    now,
-                  });
+                : operation.kind === "task.delete" ||
+                    operation.kind === "task.restore"
+                  ? database.applyTaskDeletionSync({
+                      ...common,
+                      taskId: operation.taskId,
+                      baseRevision: operation.baseRevision,
+                      restore: operation.kind === "task.restore",
+                    })
+                  : // ADR 0033: projects, tags and checklist items.
+                    operation.kind === "project.create"
+                    ? database.applyOrganizationSync({
+                        ...common,
+                        kind: "project",
+                        id: operation.project.id,
+                        baseRevision: null,
+                        fields: { title: operation.project.title },
+                      })
+                    : operation.kind === "tag.create"
+                      ? database.applyOrganizationSync({
+                          ...common,
+                          kind: "tag",
+                          id: operation.tag.id,
+                          baseRevision: null,
+                          fields: { title: operation.tag.title },
+                        })
+                      : operation.kind === "project.patch"
+                        ? database.applyOrganizationSync({
+                            ...common,
+                            kind: "project",
+                            id: operation.projectId,
+                            baseRevision: operation.baseRevision,
+                            fields: operation.fields,
+                          })
+                        : operation.kind === "tag.patch"
+                          ? database.applyOrganizationSync({
+                              ...common,
+                              kind: "tag",
+                              id: operation.tagId,
+                              baseRevision: operation.baseRevision,
+                              fields: operation.fields,
+                            })
+                          : operation.kind === "subtask.create"
+                            ? database.applyChecklistSync({
+                                ...common,
+                                command: {
+                                  action: "create",
+                                  ...operation.subtask,
+                                },
+                              })
+                            : operation.kind === "subtask.patch"
+                              ? database.applyChecklistSync({
+                                  ...common,
+                                  command: {
+                                    action: "update",
+                                    id: operation.subtaskId,
+                                    baseRevision: operation.baseRevision,
+                                    patch: Object.fromEntries(
+                                      Object.entries(operation.fields).filter(
+                                        ([, value]) => value !== undefined,
+                                      ),
+                                    ),
+                                  },
+                                })
+                              : database.applyChecklistSync({
+                                  ...common,
+                                  command: {
+                                    action: "delete",
+                                    id: (
+                                      operation as Extract<
+                                        typeof operation,
+                                        { readonly kind: "subtask.delete" }
+                                      >
+                                    ).subtaskId,
+                                    baseRevision: (
+                                      operation as Extract<
+                                        typeof operation,
+                                        { readonly kind: "subtask.delete" }
+                                      >
+                                    ).baseRevision,
+                                  },
+                                });
       if (result.kind === "idempotency-conflict") {
         return {
           kind: "rejected" as const,
@@ -491,28 +574,12 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
           code: "IDEMPOTENCY_CONFLICT" as const,
         };
       }
+      const stored = result.task ?? result.record;
       if (result.kind === "conflict") {
         const conflictFields =
-          "fields" in result && Array.isArray(result.fields)
-            ? result.fields.filter(
-                (
-                  field,
-                ): field is
-                  | "title"
-                  | "notes"
-                  | "status"
-                  | "estimateMinutes"
-                  | "projectId"
-                  | "tagIds" =>
-                  [
-                    "title",
-                    "notes",
-                    "status",
-                    "estimateMinutes",
-                    "projectId",
-                    "tagIds",
-                    "deadline",
-                  ].includes(String(field)),
+          Array.isArray(result.fields) && entity.entityKind === "task"
+            ? result.fields.filter((field): field is CoreTaskField =>
+                coreTaskFieldSchema.options.includes(field as CoreTaskField),
               )
             : undefined;
         return {
@@ -522,18 +589,15 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             conflictFields === undefined || conflictFields.length === 0
               ? ("SYNC_RESOURCE_CONFLICT" as const)
               : ("SYNC_FIELD_CONFLICT" as const),
-          taskId:
-            operation.kind === "task.create"
-              ? operation.task.id
-              : operation.taskId,
-          taskRevision: result.task?.revision ?? 1,
+          entityKind: entity.entityKind,
+          taskId: entity.entityId,
+          taskRevision: stored?.revision ?? 1,
           ...(conflictFields === undefined || conflictFields.length === 0
             ? {}
             : { conflictingFields: conflictFields }),
         };
       }
-      const task = result.task;
-      if (task === undefined)
+      if (stored === undefined)
         return {
           kind: "rejected" as const,
           operationId: operation.operationId,
@@ -542,8 +606,8 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       return {
         kind: result.kind,
         operationId: operation.operationId,
-        entityId: task.id,
-        entityRevision: task.revision,
+        entityId: stored.id,
+        entityRevision: stored.revision,
         changeSequence: database.getSyncState(session.owner.id).cursor,
       };
     });
@@ -678,6 +742,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                       tagIds: versions.tagIds ?? task.revision,
                       deadline: versions.deadline ?? task.revision,
                       parent: versions.parent ?? task.revision,
+                      plannedStart: versions.plannedStart ?? task.revision,
                     },
                     changeSequence: change.sequence,
                   },

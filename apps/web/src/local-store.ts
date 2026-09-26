@@ -5,15 +5,24 @@ import {
   type HabitCommand,
   type HabitListResponse,
   syncEntitySnapshotSchema,
+  syncFieldVersionKey,
+  syncOperationEntity,
   syncOperationSchema,
+  projectSchema,
+  subtaskSchema,
+  tagSchema,
   type ClientRegistrationResponse,
   type CoreTaskField,
+  type Project,
+  type Subtask,
   type SyncChange,
   type SyncDiagnosticManifest,
+  type SyncEntityKind,
   type SyncOperation,
   type SyncRoundResponse,
   type SyncSnapshotResponse,
   type SyncTaskSnapshot,
+  type Tag,
   type Task,
   type TaskFieldVersions,
   type PlanningPreferences,
@@ -61,10 +70,34 @@ export interface LocalClientIdentity {
 
 export interface LocalConflict {
   readonly operationId: string;
+  /** The conflicting entity's ID; a task unless `entityKind` says otherwise. */
   readonly taskId: string;
   readonly taskRevision: number;
   readonly conflictingFields: readonly CoreTaskField[] | null;
   readonly code: "SYNC_FIELD_CONFLICT" | "SYNC_RESOURCE_CONFLICT";
+  /** ADR 0033: absent in conflicts recorded before structural writes. */
+  readonly entityKind?: SyncEntityKind;
+}
+
+/** Task fields the outbox can patch (ADR 0010, 0017, 0033). */
+export interface LocalTaskPatch {
+  readonly title?: string;
+  readonly notes?: string;
+  readonly estimateMinutes?: number | null;
+  readonly deadline?: Task["deadline"];
+  readonly plannedStart?: string | null;
+  readonly plannedDay?: string | null;
+  readonly projectId?: string | null;
+  readonly tagIds?: string[];
+}
+
+/** Project and tag fields the outbox can patch (ADR 0033). */
+export interface LocalOrganizationPatch {
+  readonly title?: string;
+  readonly archived?: boolean;
+  readonly completed?: boolean;
+  readonly color?: string | null;
+  readonly icon?: string | null;
 }
 
 export type LocalOutboxState =
@@ -185,7 +218,39 @@ const initialFieldVersions = (): TaskFieldVersions => ({
   tagIds: 1,
   deadline: 1,
   parent: 1,
+  plannedStart: 1,
 });
+
+/** The exclusive planned start / planned day slot (ADR 0020, 0033). */
+const planningSlot = (
+  task: Task,
+  fields: {
+    readonly plannedStart?: string | null | undefined;
+    readonly plannedDay?: string | null | undefined;
+  },
+): Pick<Task, "plannedStart" | "plannedDay"> => {
+  if (fields.plannedStart !== undefined)
+    return {
+      plannedStart: fields.plannedStart,
+      plannedDay:
+        fields.plannedStart === null
+          ? (fields.plannedDay ?? task.plannedDay ?? null)
+          : null,
+    };
+  if (fields.plannedDay !== undefined)
+    return {
+      plannedDay: fields.plannedDay,
+      plannedStart:
+        fields.plannedDay === null ? (task.plannedStart ?? null) : null,
+    };
+  return {
+    plannedStart: task.plannedStart ?? null,
+    plannedDay: task.plannedDay ?? null,
+  };
+};
+
+const conflictEntityKind = (conflict: LocalConflict): SyncEntityKind =>
+  conflict.entityKind ?? "task";
 
 const isTaskSnapshot = (value: unknown): value is SyncTaskSnapshot =>
   value !== null &&
@@ -211,6 +276,13 @@ const hasNewerActiveTaskMutation = (
       (entry.state === "queued" || entry.state === "sending") &&
       taskIdForOperation(entry.operation) === taskId,
   );
+
+const compareOrganization = (
+  left: { readonly archivedAt: string | null; readonly position: number },
+  right: { readonly archivedAt: string | null; readonly position: number },
+): number =>
+  Number(left.archivedAt !== null) - Number(right.archivedAt !== null) ||
+  left.position - right.position;
 
 const safeOutcomeCode = (value: unknown): string => {
   if (
@@ -406,6 +478,30 @@ export class LocalStore {
     );
   }
 
+  async loadCachedProjects(): Promise<readonly Project[]> {
+    return (await this.loadCachedEntities())
+      .filter(({ entityKind }) => entityKind === "project")
+      .map(({ value }) => projectSchema.parse(value))
+      .sort(compareOrganization);
+  }
+
+  async loadCachedTags(): Promise<readonly Tag[]> {
+    return (await this.loadCachedEntities())
+      .filter(({ entityKind }) => entityKind === "tag")
+      .map(({ value }) => tagSchema.parse(value))
+      .sort(compareOrganization);
+  }
+
+  async loadCachedSubtasks(): Promise<readonly Subtask[]> {
+    return (await this.loadCachedEntities())
+      .filter(({ entityKind }) => entityKind === "subtask")
+      .map(({ value }) => subtaskSchema.parse(value))
+      .sort(
+        (left, right) =>
+          left.position - right.position || left.id.localeCompare(right.id),
+      );
+  }
+
   /** Cache an acknowledged initial create without moving the sync cursor. */
   async cacheCreatedTask(task: Task): Promise<void> {
     if (task.revision !== 1) return;
@@ -460,9 +556,12 @@ export class LocalStore {
         const entry = (await requestResult(
           outbox.get(conflict.operationId),
         )) as LocalOutboxEntry | undefined;
-        const cached = (await requestResult(
-          entities.get(entityKey("task", conflict.taskId)),
-        )) as CachedEntity | undefined;
+        const cached =
+          conflictEntityKind(conflict) === "task"
+            ? ((await requestResult(
+                entities.get(entityKey("task", conflict.taskId)),
+              )) as CachedEntity | undefined)
+            : undefined;
         const canonical =
           cached !== undefined && isTaskSnapshot(cached.value)
             ? cached.value
@@ -510,6 +609,16 @@ export class LocalStore {
     );
     if (review === undefined)
       throw new Error("Sync conflict is no longer available");
+    if (conflictEntityKind(review.conflict) !== "task") {
+      // ADR 0033: project, tag and checklist conflicts are dismissed once the
+      // canonical record has been re-sent; nothing is retried locally.
+      if (input.choice !== "keep-current")
+        throw new Error("This sync conflict cannot be retried locally");
+      if (input.reviewedTaskRevision !== review.conflict.taskRevision)
+        throw new Error("The record changed; review the latest values");
+      await this.#dismissConflict(input.operationId);
+      return null;
+    }
     if (review.canonical === null)
       throw new Error("The canonical task is no longer available for review");
     this.#assertConflictPreview(review, input);
@@ -604,6 +713,7 @@ export class LocalStore {
       const task = {
         ...cached.value.task,
         ...retry.fields,
+        ...planningSlot(cached.value.task, retry.fields),
         updatedAt: this.#now(),
       };
       entities.put({
@@ -671,17 +781,18 @@ export class LocalStore {
 
   async queueTaskPatch(
     taskId: string,
-    fields: {
-      readonly title?: string;
-      readonly notes?: string;
-      readonly estimateMinutes?: number | null;
-      readonly deadline?: Task["deadline"];
-    },
+    fields: LocalTaskPatch,
   ): Promise<SyncOperation> {
     const snapshot = await this.#requiredTask(taskId);
-    const changed = Object.keys(fields) as (
-      "title" | "notes" | "estimateMinutes" | "deadline"
-    )[];
+    const changed = [
+      ...new Set(
+        Object.keys(fields)
+          .filter(
+            (field) => fields[field as keyof LocalTaskPatch] !== undefined,
+          )
+          .map(syncFieldVersionKey),
+      ),
+    ] as CoreTaskField[];
     if (changed.length === 0)
       throw new Error("At least one task field is required");
     const metadata = await this.#requiredMetadata();
@@ -697,8 +808,185 @@ export class LocalStore {
       fields,
       baseFieldVersions,
     });
-    const task = { ...snapshot.task, ...fields, updatedAt: this.#now() };
+    const task = {
+      ...snapshot.task,
+      ...fields,
+      ...planningSlot(snapshot.task, fields),
+      updatedAt: this.#now(),
+    };
     await this.#queueAndWriteTask(operation, { ...snapshot, task });
+    return operation;
+  }
+
+  /** ADR 0033: create a project or tag offline with a client-generated ID. */
+  async queueOrganizationCreate(
+    kind: "project" | "tag",
+    title: string,
+  ): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const id = this.#uuid();
+    const now = this.#now();
+    const operation = await this.#operation(
+      metadata,
+      kind === "project" ? "project.create" : "tag.create",
+      kind === "project" ? { project: { id, title } } : { tag: { id, title } },
+    );
+    const position = (
+      kind === "project"
+        ? await this.loadCachedProjects()
+        : await this.loadCachedTags()
+    ).reduce((max, record) => Math.max(max, record.position + 1), 0);
+    const base = {
+      id,
+      ownerId: metadata.clientId,
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      color: null,
+      icon: null,
+      position,
+    };
+    await this.#queueAndWriteEntity(operation, {
+      entityKind: kind,
+      id,
+      revision: 1,
+      changeSequence: 0,
+      value:
+        kind === "project"
+          ? projectSchema.parse({ ...base, title })
+          : tagSchema.parse({
+              ...base,
+              displayName: title,
+              normalizedName: title.normalize("NFKC").toLocaleLowerCase(),
+            }),
+    });
+    return operation;
+  }
+
+  /** ADR 0033: rename, archive, restore or recolour a cached project or tag. */
+  async queueOrganizationPatch(
+    kind: "project" | "tag",
+    id: string,
+    fields: LocalOrganizationPatch,
+  ): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const cached = await this.#requiredEntity(kind, id);
+    const current =
+      kind === "project"
+        ? projectSchema.parse(cached.value)
+        : tagSchema.parse(cached.value);
+    const operation = await this.#operation(
+      metadata,
+      kind === "project" ? "project.patch" : "tag.patch",
+      {
+        ...(kind === "project" ? { projectId: id } : { tagId: id }),
+        fields,
+        baseRevision: current.revision,
+      },
+    );
+    const now = this.#now();
+    const archivedAt =
+      fields.archived === false || fields.completed === false
+        ? null
+        : fields.archived === true || fields.completed === true
+          ? (current.archivedAt ?? now)
+          : current.archivedAt;
+    const next = {
+      ...current,
+      ...(fields.title === undefined
+        ? {}
+        : kind === "project"
+          ? { title: fields.title }
+          : {
+              displayName: fields.title,
+              normalizedName: fields.title
+                .normalize("NFKC")
+                .toLocaleLowerCase(),
+            }),
+      ...(fields.color === undefined ? {} : { color: fields.color }),
+      ...(fields.icon === undefined ? {} : { icon: fields.icon }),
+      archivedAt,
+      ...("completedAt" in current
+        ? {
+            completedAt:
+              fields.completed === true
+                ? (current.completedAt ?? now)
+                : fields.completed === false || fields.archived === false
+                  ? null
+                  : current.completedAt,
+          }
+        : {}),
+      updatedAt: now,
+    };
+    await this.#queueAndWriteEntity(operation, { ...cached, value: next });
+    return operation;
+  }
+
+  /** ADR 0033: add a checklist item to a cached task. */
+  async queueSubtaskCreate(
+    taskId: string,
+    title: string,
+    position: number,
+  ): Promise<SyncOperation> {
+    await this.#requiredTask(taskId);
+    const metadata = await this.#requiredMetadata();
+    const id = this.#uuid();
+    const now = this.#now();
+    const operation = await this.#operation(metadata, "subtask.create", {
+      subtask: { id, taskId, title, position },
+    });
+    await this.#queueAndWriteEntity(operation, {
+      entityKind: "subtask",
+      id,
+      revision: 1,
+      changeSequence: 0,
+      value: subtaskSchema.parse({
+        id,
+        taskId,
+        title,
+        completed: false,
+        revision: 1,
+        position,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    });
+    return operation;
+  }
+
+  async queueSubtaskPatch(
+    subtaskId: string,
+    fields: {
+      readonly title?: string;
+      readonly completed?: boolean;
+      readonly position?: number;
+    },
+  ): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const cached = await this.#requiredEntity("subtask", subtaskId);
+    const current = subtaskSchema.parse(cached.value);
+    const operation = await this.#operation(metadata, "subtask.patch", {
+      subtaskId,
+      fields,
+      baseRevision: current.revision,
+    });
+    await this.#queueAndWriteEntity(operation, {
+      ...cached,
+      value: { ...current, ...fields, updatedAt: this.#now() },
+    });
+    return operation;
+  }
+
+  async queueSubtaskDelete(subtaskId: string): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const cached = await this.#requiredEntity("subtask", subtaskId);
+    const current = subtaskSchema.parse(cached.value);
+    const operation = await this.#operation(metadata, "subtask.delete", {
+      subtaskId,
+      baseRevision: current.revision,
+    });
+    await this.#queueAndWriteEntity(operation, null, ["subtask", subtaskId]);
     return operation;
   }
 
@@ -824,6 +1112,7 @@ export class LocalStore {
           taskRevision: outcome.taskRevision,
           conflictingFields: outcome.conflictingFields ?? null,
           code: outcome.code,
+          entityKind: outcome.entityKind ?? "task",
         } satisfies LocalConflict);
       } else {
         outbox.put({
@@ -887,8 +1176,21 @@ export class LocalStore {
       transaction.objectStore(outboxStore).getAll(),
     )) as LocalOutboxEntry[];
     const taskSnapshots = new Map<string, SyncTaskSnapshot>();
+    const structural = new Map<string, CachedEntity>();
     entities.clear();
     for (const snapshot of response.snapshots) {
+      if (
+        snapshot.entityKind === "project" ||
+        snapshot.entityKind === "tag" ||
+        snapshot.entityKind === "subtask"
+      )
+        structural.set(`${snapshot.entityKind}:${snapshot.value.id}`, {
+          entityKind: snapshot.entityKind,
+          id: snapshot.value.id,
+          value: snapshot.value,
+          revision: snapshot.value.revision,
+          changeSequence: 0,
+        });
       if (snapshot.entityKind === "task") {
         const value = snapshot.value;
         taskSnapshots.set(value.task.id, value);
@@ -954,8 +1256,14 @@ export class LocalStore {
           left.operation.clientSequence - right.operation.clientSequence,
       )) {
       if (isHabitSyncOperation(operation)) continue;
-      const taskId =
-        operation.kind === "task.create" ? operation.task.id : operation.taskId;
+      const target = syncOperationEntity(operation);
+      if (target === null) continue;
+      if (target.entityKind !== "task") {
+        // ADR 0033: structural writes replay over the canonical records.
+        this.#replayStructuralOperation(entities, structural, operation);
+        continue;
+      }
+      const taskId = target.entityId;
       let snapshot = taskSnapshots.get(taskId);
       if (operation.kind === "task.create") {
         const task: Task = {
@@ -993,6 +1301,13 @@ export class LocalStore {
                 ...(operation.fields.deadline === undefined
                   ? {}
                   : { deadline: operation.fields.deadline }),
+                ...(operation.fields.projectId === undefined
+                  ? {}
+                  : { projectId: operation.fields.projectId }),
+                ...(operation.fields.tagIds === undefined
+                  ? {}
+                  : { tagIds: operation.fields.tagIds }),
+                ...planningSlot(snapshot.task, operation.fields),
                 updatedAt: now,
               }
             : operation.kind === "task.move"
@@ -1078,9 +1393,7 @@ export class LocalStore {
           ? operation.kind === "habit.create"
             ? operation.habit.id
             : operation.habitId
-          : "taskId" in operation
-            ? operation.taskId
-            : operation.task.id,
+          : (syncOperationEntity(operation)?.entityId ?? null),
         kind: operation.kind,
         state,
         requestHash: operation.requestHash,
@@ -1095,6 +1408,26 @@ export class LocalStore {
     this.#database?.close();
     this.#database = undefined;
     return Promise.resolve();
+  }
+
+  async #dismissConflict(operationId: string): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [outboxStore, conflictStore],
+      "readwrite",
+    );
+    const outbox = transaction.objectStore(outboxStore);
+    const original = (await requestResult(outbox.get(operationId))) as
+      LocalOutboxEntry | undefined;
+    if (original !== undefined)
+      outbox.put({
+        ...original,
+        state: "resolved",
+        resolvedAt: this.#now(),
+        resolutionChoice: "keep-current",
+      } satisfies LocalOutboxEntry);
+    transaction.objectStore(conflictStore).delete(operationId);
+    await transactionDone(transaction);
   }
 
   async #queueStructuralTaskOperation(
@@ -1145,7 +1478,9 @@ export class LocalStore {
       throw new Error("The canonical task is no longer available for review");
     if (review.canonical.task.revision !== input.reviewedTaskRevision)
       throw new Error("The task changed; review the latest canonical values");
-    const fields = Object.keys(review.attemptedFields ?? {}) as CoreTaskField[];
+    const fields = Object.keys(review.attemptedFields ?? {}).map(
+      syncFieldVersionKey,
+    ) as CoreTaskField[];
     for (const field of fields) {
       if (
         input.reviewedFieldVersions[field] !==
@@ -1168,10 +1503,12 @@ export class LocalStore {
     if (fields === null)
       throw new Error("The original task patch is unavailable");
     const baseFieldVersions = Object.fromEntries(
-      (Object.keys(fields) as CoreTaskField[]).map((field) => [
-        field,
-        canonical.fieldVersions[field],
-      ]),
+      (Object.keys(fields).map(syncFieldVersionKey) as CoreTaskField[]).map(
+        (field) => [
+          field,
+          canonical.fieldVersions[field] ?? canonical.task.revision,
+        ],
+      ),
     );
     const operation = await this.#operation(metadata, "task.patch", {
       taskId: review.conflict.taskId,
@@ -1219,6 +1556,200 @@ export class LocalStore {
       safeErrorCode: null,
     } satisfies LocalOutboxEntry);
     await transactionDone(transaction);
+  }
+
+  /** Queue one structural operation and apply it to the cache atomically. */
+  async #queueAndWriteEntity(
+    operation: SyncOperation,
+    entity: CachedEntity | null,
+    remove?: [CachedEntityKind, string],
+  ): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [metadataStore, entityStore, outboxStore],
+      "readwrite",
+    );
+    const metadataHandle = transaction.objectStore(metadataStore);
+    const metadata = (await requestResult(metadataHandle.get(metadataKey))) as
+      LocalMetadata | undefined;
+    if (metadata === undefined) {
+      transaction.abort();
+      throw new Error("A registered client is required before queueing");
+    }
+    metadataHandle.put(
+      { ...metadata, nextClientSequence: metadata.nextClientSequence + 1 },
+      metadataKey,
+    );
+    const entities = transaction.objectStore(entityStore);
+    if (entity !== null) entities.put(entity);
+    if (remove !== undefined) entities.delete(entityKey(...remove));
+    transaction.objectStore(outboxStore).put({
+      operation,
+      state: "queued",
+      safeErrorCode: null,
+    } satisfies LocalOutboxEntry);
+    await transactionDone(transaction);
+  }
+
+  #replayStructuralOperation(
+    entities: IDBObjectStore,
+    records: Map<string, CachedEntity>,
+    operation: SyncOperation,
+  ): void {
+    const target = syncOperationEntity(operation);
+    if (target === null) return;
+    const key = `${target.entityKind}:${target.entityId}`;
+    const current = records.get(key);
+    const now = operation.createdAt;
+    const base = {
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      color: null,
+      icon: null,
+      position: Number.MAX_SAFE_INTEGER,
+    };
+    let next: CachedEntity | null;
+    switch (operation.kind) {
+      case "project.create":
+        next =
+          current ??
+          this.#structuralEntity("project", target.entityId, {
+            ...base,
+            id: target.entityId,
+            ownerId: target.entityId,
+            title: operation.project.title,
+          });
+        break;
+      case "tag.create":
+        next =
+          current ??
+          this.#structuralEntity("tag", target.entityId, {
+            ...base,
+            id: target.entityId,
+            ownerId: target.entityId,
+            displayName: operation.tag.title,
+            normalizedName: operation.tag.title
+              .normalize("NFKC")
+              .toLocaleLowerCase(),
+          });
+        break;
+      case "project.patch":
+      case "tag.patch": {
+        if (current === undefined) return;
+        const { fields } = operation;
+        const record = current.value as {
+          readonly archivedAt: string | null;
+          readonly completedAt?: string | null;
+        };
+        const archivedAt =
+          fields.archived === false || fields.completed === false
+            ? null
+            : fields.archived === true || fields.completed === true
+              ? (record.archivedAt ?? now)
+              : record.archivedAt;
+        next = {
+          ...current,
+          value: {
+            ...(current.value as object),
+            ...(fields.title === undefined
+              ? {}
+              : operation.kind === "project.patch"
+                ? { title: fields.title }
+                : {
+                    displayName: fields.title,
+                    normalizedName: fields.title
+                      .normalize("NFKC")
+                      .toLocaleLowerCase(),
+                  }),
+            ...(fields.color === undefined ? {} : { color: fields.color }),
+            ...(fields.icon === undefined ? {} : { icon: fields.icon }),
+            archivedAt,
+            ...(operation.kind === "project.patch"
+              ? {
+                  completedAt:
+                    fields.completed === true
+                      ? (record.completedAt ?? now)
+                      : fields.completed === false || fields.archived === false
+                        ? null
+                        : (record.completedAt ?? null),
+                }
+              : {}),
+            updatedAt: now,
+          },
+        };
+        break;
+      }
+      case "subtask.create":
+        next =
+          current ??
+          this.#structuralEntity("subtask", target.entityId, {
+            ...operation.subtask,
+            completed: false,
+            revision: 1,
+            createdAt: now,
+            updatedAt: now,
+          });
+        break;
+      case "subtask.patch":
+        if (current === undefined) return;
+        next = {
+          ...current,
+          value: {
+            ...(current.value as object),
+            ...operation.fields,
+            updatedAt: now,
+          },
+        };
+        break;
+      case "subtask.delete":
+        next = null;
+        break;
+      default:
+        return;
+    }
+    if (next === null) {
+      records.delete(key);
+      entities.delete(entityKey(target.entityKind, target.entityId));
+      return;
+    }
+    records.set(key, next);
+    entities.put(next);
+  }
+
+  #structuralEntity(
+    entityKind: "project" | "tag" | "subtask",
+    id: string,
+    value: unknown,
+  ): CachedEntity {
+    return {
+      entityKind,
+      id,
+      value:
+        entityKind === "project"
+          ? projectSchema.parse(value)
+          : entityKind === "tag"
+            ? tagSchema.parse(value)
+            : subtaskSchema.parse(value),
+      revision: 1,
+      changeSequence: 0,
+    };
+  }
+
+  async #requiredEntity(
+    entityKind: CachedEntityKind,
+    id: string,
+  ): Promise<CachedEntity> {
+    const database = await this.#open();
+    const transaction = database.transaction(entityStore, "readonly");
+    const record = (await requestResult(
+      transaction.objectStore(entityStore).get(entityKey(entityKind, id)),
+    )) as CachedEntity | undefined;
+    await transactionDone(transaction);
+    if (record === undefined)
+      throw new Error("The record is not present in the local cache");
+    return record;
   }
 
   #applyChange(store: IDBObjectStore, change: SyncChange): void {

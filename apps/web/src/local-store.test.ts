@@ -213,6 +213,7 @@ describe("LocalStore", () => {
         taskRevision: 2,
         conflictingFields: ["title"],
         code: "SYNC_FIELD_CONFLICT",
+        entityKind: "task",
       },
     ]);
 

@@ -127,6 +127,7 @@ describe("date-only planning in the browser", () => {
     form.set("deadlineReminder", "none");
     expect(taskPlanningPatchFromForm(form)).toEqual({
       plannedDay: "2026-03-08",
+      plannedStart: null,
       startReminder: { kind: "before_start", minutes: 30 },
       deadlineReminder: null,
     });
@@ -135,13 +136,24 @@ describe("date-only planning in the browser", () => {
     form.set("deadlineReminder", "60");
     expect(taskPlanningPatchFromForm(form)).toEqual({
       plannedDay: null,
+      plannedStart: null,
       startReminder: { kind: "none" },
       deadlineReminder: { minutes: 60 },
     });
     form.set("startReminder", "7");
     expect(() => taskPlanningPatchFromForm(form)).toThrow();
+    // ADR 0033: an exact time is parsed from the device-local input and is
+    // exclusive with a planned day.
+    form.set("startReminder", "none");
+    form.set("plannedStart", "2026-03-08T09:30");
+    expect(taskPlanningPatchFromForm(form)).toMatchObject({
+      plannedDay: null,
+      plannedStart: new Date("2026-03-08T09:30").toISOString(),
+    });
+    form.set("plannedDay", "2026-03-08");
+    expect(() => taskPlanningPatchFromForm(form)).toThrow();
 
-    const offline = renderToStaticMarkup(
+    const unavailable = renderToStaticMarkup(
       <TaskPlanningForm
         task={task("a", "Pack bags", { plannedDay: "2026-03-08" })}
         timeZone="America/Chicago"
@@ -150,8 +162,24 @@ describe("date-only planning in the browser", () => {
         onSubmit={async () => await Promise.resolve()}
       />,
     );
-    expect(offline).toContain("Reconnect to change planning and reminders");
-    expect(offline).toContain('value="2026-03-08"');
-    expect(offline).toContain("Deadline reminders need a deadline with a time");
+    expect(unavailable).toContain("Reconnect to change planning");
+    expect(unavailable).toContain('value="2026-03-08"');
+    expect(unavailable).toContain(
+      "Deadline reminders need a deadline with a time",
+    );
+    // Offline, the planned day or time still saves; reminders are disabled.
+    const offline = renderToStaticMarkup(
+      <TaskPlanningForm
+        task={task("a", "Pack bags", { plannedDay: "2026-03-08" })}
+        timeZone="America/Chicago"
+        busy={false}
+        available={true}
+        remindersAvailable={false}
+        onSubmit={async () => await Promise.resolve()}
+      />,
+    );
+    expect(offline).toContain("saved locally and syncs later");
+    expect(offline).toMatch(/<input[^>]*name="plannedDay"(?![^>]*disabled)/);
+    expect(offline).toMatch(/<select[^>]*name="startReminder"[^>]*disabled/);
   });
 });

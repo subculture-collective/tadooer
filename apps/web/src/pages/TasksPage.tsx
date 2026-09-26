@@ -25,7 +25,10 @@ import { EmptyState } from "../components/ui/empty-state.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
-import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
+import {
+  OrganizationPanel,
+  type OrganizationQueue,
+} from "../components/organization/OrganizationPanel.tsx";
 import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
 import { NoteMarkdown } from "../components/notes/NoteMarkdown.tsx";
 import { useApplicationPreferences } from "../application-preferences.tsx";
@@ -103,6 +106,8 @@ export interface TasksPageProps extends TaskHierarchyActions {
     readonly online: boolean;
     readonly onProjectsChange: (projects: readonly Project[]) => void;
     readonly onTagsChange: (tags: readonly Tag[]) => void;
+    /** ADR 0033: lifecycle and appearance edits through the offline outbox. */
+    readonly queue?: OrganizationQueue;
   };
   /** Owner planning zone for date-only plans (ADR 0020). */
   readonly timeZone?: string;
@@ -283,7 +288,8 @@ export const TasksPage = ({
           task={task}
           timeZone={timeZone}
           busy={busy}
-          available={calendarActionsAvailable}
+          available={true}
+          remindersAvailable={calendarActionsAvailable}
           onSubmit={onSubmitTaskPlanning}
         />
       )}
