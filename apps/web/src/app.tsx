@@ -17,6 +17,7 @@ import { HabitsPage } from "./pages/HabitsPage.tsx";
 import { HistoryPage } from "./pages/HistoryPage.tsx";
 import { WorklogPage } from "./pages/WorklogPage.tsx";
 import { CountersPage } from "./pages/CountersPage.tsx";
+import { BoardsPage } from "./pages/BoardsPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
@@ -2490,6 +2491,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           timeZone={state.planningPreferences?.timeZone ?? "UTC"}
           tasks={state.tasks.filter((task) => task.deletedAt === null)}
           projects={projects}
+        />
+      )}
+      {route === "boards" && (
+        <BoardsPage
+          csrfToken={state.session.csrfToken}
+          online={networkOnline}
+          tasks={state.tasks.filter((task) => task.deletedAt === null)}
+          projects={projects}
+          tags={tags}
         />
       )}
       {route === "counters" && (

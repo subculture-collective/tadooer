@@ -163,6 +163,36 @@ import {
   type DayOrder,
   type DayOrderPlanRequest,
   type Task as DayOrderPlannedTask,
+  boardCreateRequestSchema,
+  boardListResponseSchema,
+  boardMoveRequestSchema,
+  boardMoveResponseSchema,
+  boardOrderRequestSchema,
+  boardPanelOrderRequestSchema,
+  boardResponseSchema,
+  boardUpdateRequestSchema,
+  boardViewResponseSchema,
+  menuFolderCreateRequestSchema,
+  menuFolderListResponseSchema,
+  menuFolderOrderRequestSchema,
+  menuFolderUpdateRequestSchema,
+  sectionCreateRequestSchema,
+  sectionListResponseSchema,
+  sectionOrderRequestSchema,
+  sectionUpdateRequestSchema,
+  taskViewListResponseSchema,
+  taskViewResponseSchema,
+  taskViewSetRequestSchema,
+  type Board,
+  type BoardMoveResponse,
+  type BoardView,
+  type MenuFolder,
+  type MenuFolderUpdateRequest,
+  type Section,
+  type SectionContextKind,
+  type SectionCreateRequest,
+  type SectionUpdateRequest,
+  type TaskView,
 } from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
@@ -1572,3 +1602,210 @@ export const planTasksForDay = (
       body: JSON.stringify(dayOrderPlanRequestSchema.parse(plan)),
     },
   );
+
+// Boards, sections, saved task views and sidebar folders (issue #63, ADR
+// 0028). Online-only HTTP records with revisions; nothing here is cached.
+
+export const getBoards = (): Promise<readonly Board[]> =>
+  request("/api/boards", boardListResponseSchema).then(({ boards }) => boards);
+
+export const getBoardView = (boardId: string): Promise<BoardView> =>
+  request(
+    `/api/boards/${encodeURIComponent(boardId)}`,
+    boardViewResponseSchema,
+  ).then(({ view }) => view);
+
+export const createBoard = (
+  input: z.input<typeof boardCreateRequestSchema>,
+  csrfToken: string,
+): Promise<Board> =>
+  request("/api/boards", boardResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(boardCreateRequestSchema.parse(input)),
+  }).then(({ board }) => board);
+
+export const updateBoard = (
+  boardId: string,
+  input: z.input<typeof boardUpdateRequestSchema>,
+  csrfToken: string,
+): Promise<Board> =>
+  request(`/api/boards/${encodeURIComponent(boardId)}`, boardResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(boardUpdateRequestSchema.parse(input)),
+  }).then(({ board }) => board);
+
+export const reorderBoards = (
+  items: readonly { readonly id: string; readonly revision: number }[],
+  csrfToken: string,
+): Promise<readonly Board[]> =>
+  request("/api/boards/order", boardListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(boardOrderRequestSchema.parse({ items })),
+  }).then(({ boards }) => boards);
+
+export const deleteBoard = (
+  boardId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/boards/${encodeURIComponent(boardId)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const reorderBoardPanel = (
+  boardId: string,
+  panelId: string,
+  input: z.input<typeof boardPanelOrderRequestSchema>,
+  csrfToken: string,
+): Promise<BoardView> =>
+  request(
+    `/api/boards/${encodeURIComponent(boardId)}/panels/${encodeURIComponent(panelId)}/order`,
+    boardViewResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(boardPanelOrderRequestSchema.parse(input)),
+    },
+  ).then(({ view }) => view);
+
+/** With `dryRun`, returns the change list without applying it. */
+export const moveTaskToPanel = (
+  boardId: string,
+  panelId: string,
+  input: z.input<typeof boardMoveRequestSchema>,
+  csrfToken: string,
+): Promise<BoardMoveResponse> =>
+  request(
+    `/api/boards/${encodeURIComponent(boardId)}/panels/${encodeURIComponent(panelId)}/tasks`,
+    boardMoveResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(boardMoveRequestSchema.parse(input)),
+    },
+  );
+
+export const getSections = (
+  contextKind: SectionContextKind,
+  contextId: string,
+): Promise<readonly Section[]> =>
+  request(
+    `/api/sections?${new URLSearchParams({ contextKind, contextId }).toString()}`,
+    sectionListResponseSchema,
+  ).then(({ sections }) => sections);
+
+export const createSection = (
+  input: SectionCreateRequest,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request("/api/sections", sectionListResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(sectionCreateRequestSchema.parse(input)),
+  }).then(({ sections }) => sections);
+
+export const updateSection = (
+  sectionId: string,
+  input: SectionUpdateRequest,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request(
+    `/api/sections/${encodeURIComponent(sectionId)}`,
+    sectionListResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(sectionUpdateRequestSchema.parse(input)),
+    },
+  ).then(({ sections }) => sections);
+
+export const reorderSections = (
+  input: z.input<typeof sectionOrderRequestSchema>,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request("/api/sections/order", sectionListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(sectionOrderRequestSchema.parse(input)),
+  }).then(({ sections }) => sections);
+
+export const deleteSection = (
+  sectionId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request(
+    `/api/sections/${encodeURIComponent(sectionId)}`,
+    sectionListResponseSchema,
+    { method: "DELETE", headers: conditionalHeaders(revision, csrfToken) },
+  ).then(({ sections }) => sections);
+
+export const getTaskViews = (): Promise<readonly TaskView[]> =>
+  request("/api/task-views", taskViewListResponseSchema).then(
+    ({ views }) => views,
+  );
+
+export const setTaskView = (
+  input: z.input<typeof taskViewSetRequestSchema>,
+  csrfToken: string,
+): Promise<TaskView> =>
+  request("/api/task-views", taskViewResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(taskViewSetRequestSchema.parse(input)),
+  }).then(({ view }) => view);
+
+export const getMenuFolders = (): Promise<readonly MenuFolder[]> =>
+  request("/api/menu-folders", menuFolderListResponseSchema).then(
+    ({ folders }) => folders,
+  );
+
+export const createMenuFolder = (
+  input: z.input<typeof menuFolderCreateRequestSchema>,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request("/api/menu-folders", menuFolderListResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(menuFolderCreateRequestSchema.parse(input)),
+  }).then(({ folders }) => folders);
+
+export const updateMenuFolder = (
+  folderId: string,
+  input: MenuFolderUpdateRequest,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request(
+    `/api/menu-folders/${encodeURIComponent(folderId)}`,
+    menuFolderListResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(menuFolderUpdateRequestSchema.parse(input)),
+    },
+  ).then(({ folders }) => folders);
+
+export const reorderMenuFolders = (
+  input: z.input<typeof menuFolderOrderRequestSchema>,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request("/api/menu-folders/order", menuFolderListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(menuFolderOrderRequestSchema.parse(input)),
+  }).then(({ folders }) => folders);
+
+export const deleteMenuFolder = (
+  folderId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request(
+    `/api/menu-folders/${encodeURIComponent(folderId)}`,
+    menuFolderListResponseSchema,
+    { method: "DELETE", headers: conditionalHeaders(revision, csrfToken) },
+  ).then(({ folders }) => folders);

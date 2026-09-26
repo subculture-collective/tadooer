@@ -126,6 +126,25 @@ export {
   type PluginMetadataRecord,
 } from "./plugin-data-store.ts";
 import { SqliteDayOrderStore, dayOrderMigration } from "./day-order-store.ts";
+import {
+  SqliteBoardStore,
+  boardsMigration,
+  type ImportedBoardData,
+} from "./board-store.ts";
+export {
+  SqliteBoardStore,
+  type BoardConfigInput,
+  type BoardMoveResult,
+  type BoardMutationResult,
+  type BoardPanelInput,
+  type ImportedBoard,
+  type ImportedBoardData,
+  type ImportedMenuFolder,
+  type ImportedSection,
+  type MenuFolderMutationResult,
+  type SectionMutationResult,
+  type TaskViewSetResult,
+} from "./board-store.ts";
 export {
   SqliteDayOrderStore,
   type DayOrderPlanResult,
@@ -1526,6 +1545,7 @@ const migrations: readonly Migration[] = [
   countersMigration,
   pluginDataMigration,
   dayOrderMigration,
+  boardsMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1549,10 +1569,47 @@ export class SuiteDatabase {
   readonly counters: SqliteCounterStore;
   readonly pluginData: SqlitePluginDataStore;
   readonly dayOrders: SqliteDayOrderStore;
+  readonly boards: SqliteBoardStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.counters = new SqliteCounterStore(database);
+    this.boards = new SqliteBoardStore(database, {
+      setTags: (ownerId, taskId, tagIds, revision, now) =>
+        this.setTaskTags(ownerId, taskId, tagIds, revision, now),
+      setCompleted: (ownerId, taskId, revision, completed, now) =>
+        this.setTaskCompleted(ownerId, taskId, revision, completed, now)
+          .kind === "updated",
+      assignProject: (ownerId, taskId, projectId, revision, now) =>
+        this.assignTaskProject(ownerId, taskId, projectId, revision, now) !==
+        undefined,
+      setPlannedDay: (ownerId, taskId, revision, plannedDay, now) => {
+        if (this.getTaskCalendarBlock(ownerId, taskId) !== undefined)
+          return "blocked";
+        return this.patchTask(ownerId, taskId, revision, { plannedDay }, now)
+          .kind === "updated"
+          ? "applied"
+          : "conflict";
+      },
+      setBacklog: (ownerId, projectId, taskId, inBacklog, now) => {
+        const project = this.listProjects(ownerId).find(
+          ({ id }) => id === projectId,
+        );
+        return (
+          project !== undefined &&
+          this.setProjectBacklog(
+            ownerId,
+            projectId,
+            project.revision,
+            taskId,
+            inBacklog,
+            now,
+          ).kind === "applied"
+        );
+      },
+      currentTaskRevision: (ownerId, taskId) =>
+        this.getTask(ownerId, taskId)?.revision,
+    });
     this.dayOrders = new SqliteDayOrderStore(database, {
       planTask: (ownerId, taskId, expectedRevision, date, now) => {
         const task = this.getTask(ownerId, taskId);
@@ -3262,6 +3319,8 @@ export class SuiteDatabase {
         readonly date: string;
         readonly sourceTaskIds: readonly string[];
       }[];
+      /** ADR 0028: boards, sections, sidebar folders and task markers. */
+      readonly boards?: ImportedBoardData;
     } = {},
   ): {
     created: number;
@@ -3270,6 +3329,7 @@ export class SuiteDatabase {
     counters?: ReturnType<SqliteCounterStore["importInTransaction"]>;
     pluginData?: { created: number; existing: number };
     dayOrders?: number;
+    boards?: ReturnType<SqliteBoardStore["importInTransaction"]>;
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3576,6 +3636,24 @@ export class SuiteDatabase {
               })),
               now,
             );
+      // ADR 0028: boards, sections and folders reference tasks, projects and
+      // tags by their final IDs; markers apply to newly imported tasks only.
+      const boards =
+        options.boards === undefined ||
+        options.boards.boards.length +
+          options.boards.sections.length +
+          options.boards.folders.length +
+          options.boards.taskMarkers.length ===
+          0
+          ? undefined
+          : this.boards.importInTransaction(
+              ownerId,
+              options.boards,
+              (kind, sourceId) => targets.get(`${kind}:${sourceId}`),
+              new Set(newTasks.map(({ id }) => id)),
+              randomUUID,
+              now,
+            );
       this.#database.exec("COMMIT;");
       return {
         created,
@@ -3584,6 +3662,7 @@ export class SuiteDatabase {
         ...(counters === undefined ? {} : { counters }),
         ...(pluginData === undefined ? {} : { pluginData }),
         ...(dayOrders === undefined ? {} : { dayOrders }),
+        ...(boards === undefined ? {} : { boards }),
       };
     } catch (error) {
       this.#database.exec("ROLLBACK;");

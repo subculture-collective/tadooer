@@ -3,6 +3,7 @@ export const workspaceRoutes = [
   "inbox",
   "planner",
   "tasks",
+  "boards",
   "history",
   "worklog",
   "counters",

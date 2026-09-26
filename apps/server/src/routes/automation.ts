@@ -85,6 +85,16 @@ import {
 } from "./automation-day-order.ts";
 import { readDayOrder } from "./day-order.ts";
 import {
+  confirmBoardCommand,
+  isBoardCommand,
+  previewBoardCommand,
+} from "./automation-boards.ts";
+import { boardClock } from "./boards.ts";
+import {
+  automationBoardsResourceInputSchema,
+  automationSectionsResourceInputSchema,
+} from "@suite/contracts";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -548,7 +558,59 @@ export const handleAutomation: RouteHandler = async (
           ),
         ),
       };
-    } else if (resource === "projects.list")
+    } else if (resource === "boards.list") {
+      // ADR 0028: configurations plus computed membership of one or all boards.
+      const input = automationBoardsResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_BOARD_ID",
+          "Provide a board ID or omit it",
+        );
+        return true;
+      }
+      const clock = boardClock(database, token.ownerId, ctx.sessionClock.now());
+      const boards = database.boards
+        .listBoards(token.ownerId)
+        .filter(
+          (board) =>
+            input.data.boardId === undefined || board.id === input.data.boardId,
+        );
+      body = {
+        boards,
+        views: boards.flatMap((board) => {
+          const view = database.boards.viewBoard(
+            token.ownerId,
+            board.id,
+            clock,
+          );
+          return view === undefined ? [] : [view];
+        }),
+      };
+    } else if (resource === "sections.list") {
+      const input = automationSectionsResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_SECTION_CONTEXT",
+          "Provide contextKind (project or tag) and contextId",
+        );
+        return true;
+      }
+      body = {
+        sections: database.boards.listSections(token.ownerId, input.data),
+      };
+    } else if (resource === "task_views.list")
+      body = { views: database.boards.listTaskViews(token.ownerId) };
+    else if (resource === "menu_folders.list")
+      body = { folders: database.boards.listMenuFolders(token.ownerId) };
+    else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
       };
@@ -774,6 +836,10 @@ export const handleAutomation: RouteHandler = async (
         | "recurring_series"
         | "counter"
         | "daily_evaluation"
+        | "board"
+        | "section"
+        | "task_view"
+        | "menu_folder"
         | "habit";
       entityId: string;
     }[] = [];
@@ -798,6 +864,9 @@ export const handleAutomation: RouteHandler = async (
         | "recurring_series"
         | "counter"
         | "daily_evaluation"
+        | "board"
+        | "section"
+        | "menu_folder"
         | "habit";
       entityId: string;
       revision: number;
@@ -1009,6 +1078,21 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       affected.push(...planned.affected);
+      taskSummary = planned.summary;
+    } else if (isBoardCommand(command)) {
+      // ADR 0028: freezes board, section, folder and moved-task revisions.
+      const planned = previewBoardCommand(
+        database,
+        token.ownerId,
+        command,
+        boardClock(database, token.ownerId, ctx.sessionClock.now()),
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
       taskSummary = planned.summary;
     } else if (isTimeEntryCommand(command)) {
       // ADR 0024: freezes the entry revision, or the task for an addition.
@@ -1788,6 +1872,7 @@ export const handleAutomation: RouteHandler = async (
           .flatMap((pool) => database.listChoicePoolItems(pool.id, true))
           .find(({ id }) => id === entityId) ??
         database.recurrence.get(token.ownerId, entityId) ??
+        database.boards.entityRevision(token.ownerId, entityId) ??
         database.getActiveSession(token.ownerId);
       if (current?.id !== entityId || current.revision !== revision) {
         database.appendAutomationAudit({
@@ -1985,6 +2070,24 @@ export const handleAutomation: RouteHandler = async (
         database,
         token.ownerId,
         command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isBoardCommand(command)) {
+      const confirmation = confirmBoardCommand(
+        database,
+        token.ownerId,
+        command,
+        boardClock(database, token.ownerId, ctx.sessionClock.now()),
         () => ctx.sessionClock.now().toISOString(),
       );
       if (!confirmation.ok) {
