@@ -4,7 +4,10 @@ import type {
   NotificationPreferences,
   NotificationStatusResponse,
   PlanningPreferences,
+  Project,
 } from "@suite/contracts";
+import type { ApplicationPreferencesState } from "../application-preferences.tsx";
+import { ApplicationPreferencesSettings } from "../components/settings/ApplicationPreferencesSettings.tsx";
 import { GooglePlanning } from "../google-planning.tsx";
 import { NotificationSettings } from "../notification-settings.tsx";
 import { FocusSettings, type FocusSettingsProps } from "../focus-settings.tsx";
@@ -36,6 +39,9 @@ export interface SettingsPageProps {
   /** ADR 0029: focus, idle and break preferences. */
   readonly focus?: Omit<FocusSettingsProps, "busy" | "online"> | undefined;
   readonly focusBusy?: boolean | undefined;
+  /** ADR 0030 application preferences and shortcuts. */
+  readonly applicationPreferences?: ApplicationPreferencesState | undefined;
+  readonly projects?: readonly Project[] | undefined;
 }
 
 export const SettingsPage = ({
@@ -58,6 +64,8 @@ export const SettingsPage = ({
   onExportDiagnostics,
   focus,
   focusBusy = false,
+  applicationPreferences,
+  projects = [],
 }: SettingsPageProps) => {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -102,6 +110,17 @@ export const SettingsPage = ({
           {...focus}
           busy={busy || focusBusy}
           online={syncStatus === "online"}
+        />
+      )}
+      {applicationPreferences !== undefined && (
+        <ApplicationPreferencesSettings
+          preferences={applicationPreferences.snapshot.preferences}
+          revision={applicationPreferences.snapshot.revision}
+          projects={projects}
+          busy={busy}
+          online={syncStatus === "online" && applicationPreferences.loaded}
+          error={applicationPreferences.error}
+          onSave={applicationPreferences.save}
         />
       )}
       <Button

@@ -41,6 +41,7 @@ import { handleBoards } from "./routes/boards.ts";
 import { handleBoardViews } from "./routes/board-views.ts";
 import { handleFocus } from "./routes/focus.ts";
 import { runFocusReminders } from "./focus-reminders.ts";
+import { handleApplicationPreferences } from "./routes/application-preferences.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
@@ -330,6 +331,7 @@ export const startSuiteServer = async (
     handleBoards,
     handleBoardViews,
     handleFocus,
+    handleApplicationPreferences,
     handleChoicePools,
     handleTemplates,
     handleStatic,

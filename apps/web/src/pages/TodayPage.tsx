@@ -27,6 +27,8 @@ import {
   type DayOrderApi,
 } from "../day-order.tsx";
 import { PlanTomorrowPanel } from "../plan-tomorrow.tsx";
+import { NoteMarkdown } from "../components/notes/NoteMarkdown.tsx";
+import { useApplicationPreferences } from "../application-preferences.tsx";
 
 export interface TodayPageProps {
   readonly dayPlan: DayPlanResponse | undefined;
@@ -82,6 +84,8 @@ export const updateHiddenCalendarIds = (
       : [...current, calendarId];
 
 export const TodayPage = (props: TodayPageProps) => {
+  // ADR 0030: the owner's daily summary note text.
+  const { dailySummaryNote } = useApplicationPreferences().snapshot.preferences;
   const {
     dayPlan,
     planningPreferences,
@@ -171,6 +175,20 @@ export const TodayPage = (props: TodayPageProps) => {
             ? "Syncing local tasks."
             : "Task sync is available."}
       </p>
+      {dailySummaryNote.trim() !== "" && (
+        <Card aria-labelledby="daily-summary-note-title">
+          <CardHeader>
+            <SectionHeading
+              as="h3"
+              id="daily-summary-note-title"
+              title="Daily note"
+            />
+          </CardHeader>
+          <CardContent>
+            <NoteMarkdown content={dailySummaryNote} />
+          </CardContent>
+        </Card>
+      )}
       <TaskCaptureForm busy={busy} onSubmit={onSubmitTask} />
       <FocusPanel
         tasks={tasks}

@@ -38,6 +38,7 @@ import {
   type ImportedIssueLink,
 } from "./super-productivity-links.ts";
 import { mapSuperProductivityFocusPreferences } from "./super-productivity-focus.ts";
+import { mapSuperProductivityGlobalConfig } from "./super-productivity-config.ts";
 
 type Source = Record<string, unknown>;
 const object = (value: unknown): Source =>
@@ -135,6 +136,10 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "board_notice",
     // ADR 0029: focus settings reported by name; nothing is dropped silently.
     "focus_preference_notice",
+    // ADR 0030: globalConfig settings; configuration never blocks.
+    "config_applied",
+    "config_field_excluded",
+    "config_field_retained",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -825,12 +830,18 @@ export const prepareSuperProductivityImport = (
       issues.push({ code: "board_notice", sourceId, detail }),
   });
   // ADR 0029: focus, idle, break and tracking-reminder settings map to the
-  // owner's focus preferences on first import; other globalConfig sections
-  // stay configuration (#67).
+  // owner's focus preferences on first import; the application preferences
+  // mapper (#67) neither reads nor reports those sections.
   const focusPreferences = mapSuperProductivityFocusPreferences(
     data.globalConfig,
     (sourceId, detail) =>
       issues.push({ code: "focus_preference_notice", sourceId, detail }),
+  );
+  // ADR 0030: safe globalConfig settings become application and planning
+  // preferences; credentials and provider configuration are never read.
+  const applicationPreferences = mapSuperProductivityGlobalConfig(
+    data.globalConfig,
+    (found) => issues.push(found),
   );
   const reported = issues.map((issue) => ({
     ...issue,
@@ -855,5 +866,13 @@ export const prepareSuperProductivityImport = (
     dayOrders,
     boards,
     focusPreferences,
+    ...(applicationPreferences === undefined
+      ? {}
+      : {
+          applicationPreferences: {
+            preferences: applicationPreferences.preferences,
+            planning: applicationPreferences.planning,
+          },
+        }),
   };
 };

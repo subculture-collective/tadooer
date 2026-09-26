@@ -271,10 +271,10 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
   const codes = (report: ReturnType<typeof prepare>) =>
     report.issues.map(({ code }) => code);
 
-  // Configuration is reported without blocking. Counters and metric days
-  // apply since #64 (ADR 0025).
+  // Boards (#63) and globalConfig (#67) apply per field; counters and
+  // metric days apply since #64 (ADR 0025). Nothing here blocks.
   const configured = prepare({
-    globalConfig: { lang: { lng: "en" } },
+    globalConfig: { localization: { lng: "en" } },
     boards: {
       boardCfgs: [{ id: "kanban", title: "Kanban", cols: 1, panels: [] }],
     },
@@ -287,8 +287,8 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
     timeTracking: { project: {}, tag: {} },
   });
   expect(configured.canApply).toBe(true);
-  expect(codes(configured)).toEqual([
-    "configuration_not_imported",
+  expect(codes(configured).toSorted()).toEqual([
+    "config_applied",
     "counter_reconciliation",
   ]);
 

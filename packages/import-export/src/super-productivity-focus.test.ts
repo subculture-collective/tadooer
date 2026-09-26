@@ -195,8 +195,10 @@ describe("Super Productivity focus configuration (ADR 0029)", () => {
       sourceId: "globalConfig",
       blocking: false,
     });
+    // globalConfig is applied per field (#65, #67), never reported as
+    // unimported configuration.
     expect(
       report.issues.filter(({ code }) => code === "configuration_not_imported"),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 });

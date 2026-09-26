@@ -48,7 +48,10 @@ export const superProductivitySections = {
   // keys are classified in super-productivity-day-order.ts.
   planner: "applied",
   boards: "applied",
-  globalConfig: "configuration",
+  // Safe application, shortcut and planning settings apply since #67
+  // (ADR 0030); every section and field is classified in
+  // super-productivity-config.ts. Credentials are never read.
+  globalConfig: "applied",
   // Provider configuration holds credentials. The importer reads only each
   // provider's id and key (and a Gitea host and repository to rebuild issue
   // addresses); nothing from this section is stored.

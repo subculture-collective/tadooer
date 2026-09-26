@@ -3,6 +3,7 @@ import {
   notificationPreferencesSchema,
   checklistCommandSchema,
   organizationIconPattern,
+  type ApplicationPreferences,
   type ChecklistCommand,
   type FocusPreferenceProvenance,
   type FocusPreferences,
@@ -154,6 +155,15 @@ export {
   type IdleDispositionRecord,
   type OwnerIntervalRecord,
 } from "./focus-store.ts";
+import {
+  SqliteApplicationPreferencesStore,
+  applicationPreferencesMigration,
+} from "./application-preferences-store.ts";
+export {
+  SqliteApplicationPreferencesStore,
+  type ApplicationPreferencesMutationResult,
+  type ApplicationPreferencesRecord,
+} from "./application-preferences-store.ts";
 export {
   SqliteDayOrderStore,
   type DayOrderPlanResult,
@@ -1564,6 +1574,7 @@ const migrations: readonly Migration[] = [
   dayOrderMigration,
   boardsMigration,
   focusMigration,
+  applicationPreferencesMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1589,6 +1600,7 @@ export class SuiteDatabase {
   readonly dayOrders: SqliteDayOrderStore;
   readonly boards: SqliteBoardStore;
   readonly focus: SqliteFocusStore;
+  readonly applicationPreferences: SqliteApplicationPreferencesStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
@@ -1630,6 +1642,16 @@ export class SuiteDatabase {
         this.getTask(ownerId, taskId)?.revision,
     });
     this.focus = new SqliteFocusStore(database);
+    this.applicationPreferences = new SqliteApplicationPreferencesStore(
+      database,
+      {
+        projectActive: (ownerId, projectId) =>
+          this.listProjects(ownerId).some(
+            (project) =>
+              project.id === projectId && project.archivedAt === null,
+          ),
+      },
+    );
     this.dayOrders = new SqliteDayOrderStore(database, {
       planTask: (ownerId, taskId, expectedRevision, date, now) => {
         const task = this.getTask(ownerId, taskId);
@@ -2547,8 +2569,10 @@ export class SuiteDatabase {
     const desired = new Set<string>();
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
+      const ownerDefault = this.applicationPreferences.get(input.ownerId)
+        .preferences.defaultTaskReminder;
       for (const reminder of input.tasks.flatMap((task) =>
-        scheduledReminders(task, input.preferences),
+        scheduledReminders(task, input.preferences, ownerDefault),
       )) {
         desired.add(
           `${reminder.taskId}\n${reminder.occurrenceStart}\n${reminder.kind}`,
@@ -3346,6 +3370,28 @@ export class SuiteDatabase {
         readonly preferences: FocusPreferences;
         readonly provenance: FocusPreferenceProvenance;
       };
+      /**
+       * ADR 0030: mapped globalConfig settings, applied once while the owner
+       * has never saved application (or, for the day start, planning)
+       * preferences. Source project IDs are resolved to imported projects.
+       */
+      readonly applicationPreferences?: {
+        readonly preferences: Readonly<
+          Partial<Omit<ApplicationPreferences, "defaultProjectId">>
+        > & { readonly defaultProjectSourceId?: string | null };
+        readonly planning?: Readonly<
+          Partial<
+            Pick<
+              PlanningPreferencesRecord,
+              | "workdayStart"
+              | "workdayEnd"
+              | "breakStart"
+              | "breakEnd"
+              | "dayStartsAt"
+            >
+          >
+        >;
+      };
     } = {},
   ): {
     created: number;
@@ -3356,6 +3402,7 @@ export class SuiteDatabase {
     dayOrders?: number;
     boards?: ReturnType<SqliteBoardStore["importInTransaction"]>;
     focusPreferences?: "applied" | "skipped";
+    applicationPreferences?: number;
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3689,6 +3736,15 @@ export class SuiteDatabase {
               options.focusPreferences.provenance,
               now,
             );
+      const applicationPreferences =
+        options.applicationPreferences === undefined
+          ? undefined
+          : this.#importApplicationPreferences(
+              ownerId,
+              options.applicationPreferences,
+              targets,
+              now,
+            );
       this.#database.exec("COMMIT;");
       return {
         created,
@@ -3699,6 +3755,9 @@ export class SuiteDatabase {
         ...(pluginData === undefined ? {} : { pluginData }),
         ...(dayOrders === undefined ? {} : { dayOrders }),
         ...(boards === undefined ? {} : { boards }),
+        ...(applicationPreferences === undefined
+          ? {}
+          : { applicationPreferences }),
       };
     } catch (error) {
       this.#database.exec("ROLLBACK;");
@@ -4059,6 +4118,76 @@ export class SuiteDatabase {
     );
   }
 
+  /** ADR 0030 import: apply mapped settings once; count the fields applied. */
+  #importApplicationPreferences(
+    ownerId: string,
+    input: NonNullable<
+      Parameters<SuiteDatabase["importTaskRecords"]>[4]
+    >["applicationPreferences"] &
+      object,
+    targets: ReadonlyMap<string, string>,
+    now: string,
+  ): number {
+    const { defaultProjectSourceId, ...rest } = input.preferences;
+    const defaultProjectId =
+      typeof defaultProjectSourceId === "string"
+        ? targets.get(`project:${defaultProjectSourceId}`)
+        : undefined;
+    let applied = this.applicationPreferences.importInTransaction(
+      ownerId,
+      {
+        ...rest,
+        ...(defaultProjectId === undefined ? {} : { defaultProjectId }),
+      },
+      now,
+    );
+    const planning = Object.fromEntries(
+      Object.entries(input.planning ?? {}).filter(
+        ([, value]) => value !== undefined,
+      ),
+    );
+    if (
+      Object.keys(planning).length > 0 &&
+      this.getPreferenceRevision(ownerId, "planning") === 0
+    ) {
+      const candidate = {
+        ...this.getPlanningPreferences(ownerId),
+        ...planning,
+      };
+      if (planningPreferencesSchema.safeParse(candidate).success) {
+        this.putPlanningPreferences(ownerId, candidate, now);
+        applied += Object.keys(planning).length;
+      }
+    }
+    return applied;
+  }
+
+  /**
+   * ADR 0030: with `autoMarkParentDone` on, completing the last open child
+   * completes its parent through the same conditional update, so the parent
+   * gains a revision, a status version and a sync change.
+   */
+  #autoCompleteParent(ownerId: string, taskId: string, now: string): void {
+    if (
+      !this.applicationPreferences.get(ownerId).preferences.autoMarkParentDone
+    )
+      return;
+    const child = this.getTask(ownerId, taskId);
+    if (child?.parentId == null || child.status !== "completed") return;
+    const parent = this.getTask(ownerId, child.parentId);
+    if (parent?.status !== "open") return;
+    const children = this.taskHierarchy.listChildren(ownerId, parent.id);
+    if (children.some((sibling) => sibling.status !== "completed")) return;
+    this.#conditionallyUpdateTask(
+      ownerId,
+      parent.id,
+      parent.revision,
+      false,
+      (task) => ({ ...task, status: "completed", completedAt: now }),
+      now,
+    );
+  }
+
   setTaskCompleted(
     ownerId: string,
     taskId: string,
@@ -4066,18 +4195,30 @@ export class SuiteDatabase {
     completed: boolean,
     now: string,
   ): ConditionalTaskResult {
-    return this.#conditionallyUpdateTask(
-      ownerId,
-      taskId,
-      expectedRevision,
-      false,
-      (task) => ({
-        ...task,
-        status: completed ? "completed" : "open",
-        completedAt: completed ? now : null,
-      }),
-      now,
-    );
+    this.#database.exec("SAVEPOINT task_completion;");
+    try {
+      const result = this.#conditionallyUpdateTask(
+        ownerId,
+        taskId,
+        expectedRevision,
+        false,
+        (task) => ({
+          ...task,
+          status: completed ? "completed" : "open",
+          completedAt: completed ? now : null,
+        }),
+        now,
+      );
+      if (result.kind === "updated" && completed)
+        this.#autoCompleteParent(ownerId, taskId, now);
+      this.#database.exec("RELEASE SAVEPOINT task_completion;");
+      return result;
+    } catch (error) {
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT task_completion; RELEASE SAVEPOINT task_completion;",
+      );
+      throw error;
+    }
   }
 
   deleteTask(
@@ -6591,7 +6732,7 @@ export class SuiteDatabase {
     readonly task?: TaskRecord;
     readonly fields?: readonly string[];
   } {
-    return this.applyTaskFieldSync({
+    const result = this.applyTaskFieldSync({
       ownerId: input.ownerId,
       clientId: input.clientId,
       operationId: input.operationId,
@@ -6601,6 +6742,9 @@ export class SuiteDatabase {
       patch: { status: input.completed ? "completed" : "open" },
       now: input.now,
     });
+    if (result.kind === "applied" && input.completed)
+      this.#autoCompleteParent(input.ownerId, input.taskId, input.now);
+    return result;
   }
 
   applyTaskCreateSync(input: {
