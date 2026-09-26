@@ -15,7 +15,9 @@ import {
   applicationPreferenceMutationInputSchema,
   applicationPreferenceSnapshotSchema,
 } from "./application-preferences.ts";
+export * from "./capture.ts";
 import { z } from "zod";
+import { captureBatchMaxTasks, captureCreateFields } from "./capture.ts";
 import {
   automationNoteMutationInputSchema,
   automationOrganizationOrderInputSchema,
@@ -412,7 +414,38 @@ export const createTaskRequestSchema = z.object({
   deadline: taskDeadlineSchema.nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
   tagIds: z.array(entityIdSchema).max(25).optional(),
+  /** ADR 0031: owner consent for new tags, and the resolved capture extras. */
+  ...captureCreateFields,
 });
+
+/** ADR 0031: several tasks from a pasted list, at most 100 in one batch. */
+export const taskBatchCreateRequestSchema = z
+  .object({
+    items: z
+      .array(
+        createTaskRequestSchema.extend({
+          children: z
+            .array(createTaskRequestSchema)
+            .max(captureBatchMaxTasks)
+            .default([]),
+        }),
+      )
+      .min(1)
+      .max(captureBatchMaxTasks),
+    createTags: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    ({ items }) =>
+      items.reduce((count, item) => count + 1 + item.children.length, 0) <=
+      captureBatchMaxTasks,
+    {
+      message: `A batch creates at most ${String(captureBatchMaxTasks)} tasks`,
+    },
+  );
+export const taskBatchMutationResponseSchema = z
+  .object({ tasks: z.array(taskSchema), replayed: z.boolean() })
+  .strict();
 
 export const taskMutationResponseSchema = z.object({
   task: taskSchema,
@@ -1744,6 +1777,7 @@ export const automationOperationSchema = z.enum([
   "tasks.set_tags",
   "tasks.hierarchy",
   "tasks.create",
+  "tasks.create_many",
   "tasks.update",
   "tasks.set_completed",
   "tasks.delete",
@@ -2109,6 +2143,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: createTaskRequestSchema,
     }),
     z.object({
+      operation: z.literal("tasks.create_many"),
+      input: taskBatchCreateRequestSchema,
+    }),
+    z.object({
       operation: z.literal("schedule.create_time_block"),
       input: z
         .object({ taskId: entityIdSchema })
@@ -2335,6 +2373,11 @@ const automationToolInputSchema = (
       operation: z.literal("tasks.create"),
       input: createTaskRequestSchema,
     });
+  if (operation === "tasks.create_many")
+    return z.object({
+      operation: z.literal("tasks.create_many"),
+      input: taskBatchCreateRequestSchema,
+    });
   if (operation === "schedule.create_time_block")
     return z.object({
       operation: z.literal("schedule.create_time_block"),
@@ -2526,6 +2569,7 @@ export const automationExecutionResultSchema = z.union([
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
   taskMutationResponseSchema,
+  taskBatchMutationResponseSchema,
   templateInstantiationResponseSchema,
   planningPlaceholderResolutionResponseSchema,
 ]);
@@ -3119,6 +3163,12 @@ export type BaikalStatusResponse = z.infer<typeof baikalStatusResponseSchema>;
 export type CalendarEventIdentity = z.infer<typeof calendarEventIdentitySchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
+export type TaskBatchCreateRequest = z.input<
+  typeof taskBatchCreateRequestSchema
+>;
+export type TaskBatchMutationResponse = z.infer<
+  typeof taskBatchMutationResponseSchema
+>;
 export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
 export type HabitListResponse = z.infer<typeof habitListResponseSchema>;

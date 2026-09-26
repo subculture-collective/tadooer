@@ -18,6 +18,11 @@ import { SqliteCalendarProjectionStore } from "./calendar-projection-store.js";
 import { SqliteCredentialStore } from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 import { SqliteNoteStore } from "./note-store.ts";
+import { captureMigration, SqliteCaptureStore } from "./capture-store.ts";
+export type {
+  CapturePreferencesRecord,
+  CaptureUrlBehavior,
+} from "./capture-store.ts";
 export type { NoteMutationResult, NoteRecord } from "./note-store.ts";
 import {
   SqliteTaskLinkStore,
@@ -1575,6 +1580,7 @@ const migrations: readonly Migration[] = [
   boardsMigration,
   focusMigration,
   applicationPreferencesMigration,
+  captureMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1592,6 +1598,8 @@ export class SuiteDatabase {
   readonly notes: SqliteNoteStore;
   readonly taskHierarchy: SqliteTaskHierarchyStore;
   readonly taskLinks: SqliteTaskLinkStore;
+  /** ADR 0031: capture settings and the atomic capture boundary. */
+  readonly capture: SqliteCaptureStore;
   readonly taskArchive: SqliteTaskArchiveStore;
   readonly recurrence: SqliteRecurrenceStore;
   readonly timeEntries: SqliteTimeEntryStore;
@@ -1738,6 +1746,7 @@ export class SuiteDatabase {
       },
     });
     this.taskLinks = new SqliteTaskLinkStore(database);
+    this.capture = new SqliteCaptureStore(database);
     this.habits = new SqliteHabitStore(
       database,
       (ownerId, kind, id, revision, now) => {
@@ -3788,6 +3797,7 @@ export class SuiteDatabase {
         | "deadlineAt"
         | "projectId"
         | "tagIds"
+        | "estimateMinutes"
       >
     >,
   ): IdempotentTaskCreateResult {

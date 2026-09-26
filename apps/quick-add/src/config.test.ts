@@ -44,6 +44,19 @@ describe("quick-add configuration", () => {
     expect(() => parseQuickAddConfig(["Only title"])).toThrow(
       "--url is required",
     );
+    expect(
+      parseQuickAddConfig([
+        "--url",
+        "http://127.0.0.1:8080",
+        "--token-file",
+        "/tmp/suite-token",
+        "--idempotency-key",
+        "capture-inbox-20260806",
+        "--structured",
+        "--create-tags",
+        "Capture #inbox",
+      ]),
+    ).toMatchObject({ structured: true, createTags: true });
     expect(() =>
       parseQuickAddConfig([
         "--url",

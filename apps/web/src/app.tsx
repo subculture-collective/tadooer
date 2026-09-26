@@ -1018,6 +1018,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           title: formValue(data, "title"),
           notes: formValue(data, "notes"),
           structured: true,
+          createTags: data.get("createTags") === "on",
           estimateMinutes:
             Number.isInteger(estimate) && estimate > 0 ? estimate : null,
         };

@@ -1,4 +1,13 @@
 import {
+  capturePreferencesResponseSchema,
+  capturePreviewResponseSchema,
+  taskBatchMutationResponseSchema,
+  type CapturePreferences,
+  type CapturePreferencesResponse,
+  type CapturePreviewRequest,
+  type CapturePreviewResponse,
+  type TaskBatchCreateRequest,
+  type TaskBatchMutationResponse,
   taskImportApplyResponseSchema,
   automationTokenListResponseSchema,
   createAutomationTokenRequestSchema,
@@ -1902,4 +1911,40 @@ export const snoozeBreakReminder = (
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: "{}",
+  });
+
+// Capture syntax (issue #90, ADR 0031): online-only preview, batch and settings.
+export const previewTaskCapture = (
+  input: CapturePreviewRequest,
+  csrfToken: string,
+): Promise<CapturePreviewResponse> =>
+  request("/api/tasks/capture-preview", capturePreviewResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(input),
+  });
+
+export const createTaskBatch = (
+  input: TaskBatchCreateRequest,
+  csrfToken: string,
+  idempotencyKey: string,
+): Promise<TaskBatchMutationResponse> =>
+  request("/api/tasks/batch", taskBatchMutationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(input),
+  });
+
+export const getCapturePreferences = (): Promise<CapturePreferencesResponse> =>
+  request("/api/capture-preferences", capturePreferencesResponseSchema);
+
+export const updateCapturePreferences = (
+  preferences: CapturePreferences,
+  expectedRevision: number,
+  csrfToken: string,
+): Promise<CapturePreferencesResponse> =>
+  request("/api/capture-preferences", capturePreferencesResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ preferences, expectedRevision }),
   });

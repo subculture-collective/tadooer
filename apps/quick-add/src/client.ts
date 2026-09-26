@@ -14,7 +14,12 @@ import type { QuickAddConfig } from "./config.ts";
 export const submitQuickAdd = async (
   config: Pick<
     QuickAddConfig,
-    "baseUrl" | "idempotencyKey" | "title" | "notes" | "structured"
+    | "baseUrl"
+    | "idempotencyKey"
+    | "title"
+    | "notes"
+    | "structured"
+    | "createTags"
   >,
   token: string,
 ): Promise<AutomationConfirmationResponse> => {
@@ -38,7 +43,26 @@ export const submitQuickAdd = async (
       },
     },
     { headers: authHeaders },
-  )) as { readonly preview: { readonly id: string } };
+  )) as {
+    readonly preview: {
+      readonly id: string;
+      readonly summary: string;
+      readonly affected: readonly {
+        readonly entityKind: string;
+        readonly entityId: string;
+      }[];
+    };
+  };
+
+  // ADR 0031: the preview names every tag it would create. Without explicit
+  // consent the CLI stops before confirmation and creates nothing.
+  const newTags = previewResponse.preview.affected.filter(
+    (entry) => entry.entityKind === "tag",
+  );
+  if (newTags.length > 0 && config.createTags !== true)
+    throw new Error(
+      `Capture would create ${String(newTags.length)} new ${newTags.length === 1 ? "tag" : "tags"} (${previewResponse.preview.summary}). Re-run with --create-tags to confirm.`,
+    );
 
   const previewId = previewResponse.preview.id;
 

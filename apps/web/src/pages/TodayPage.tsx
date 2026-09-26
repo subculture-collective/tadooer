@@ -189,7 +189,12 @@ export const TodayPage = (props: TodayPageProps) => {
           </CardContent>
         </Card>
       )}
-      <TaskCaptureForm busy={busy} onSubmit={onSubmitTask} />
+      <TaskCaptureForm
+        busy={busy}
+        onSubmit={onSubmitTask}
+        csrfToken={syncStatus === "offline" ? undefined : csrfToken}
+        onTasksCreated={onTasksPlanned}
+      />
       <FocusPanel
         tasks={tasks}
         activeSession={activeSession}

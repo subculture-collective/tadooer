@@ -20,6 +20,7 @@ import type { RouteContext } from "./routes/shared.ts";
 import { handleHealth } from "./routes/health.ts";
 import { handleAuthSetup } from "./routes/auth-setup.ts";
 import { handleTasks } from "./routes/tasks.ts";
+import { handleCapture } from "./routes/capture.ts";
 import { handleTaskImport } from "./routes/task-import.ts";
 import { handlePlanner } from "./routes/planner.ts";
 import { handleConnectors } from "./routes/connectors.ts";
@@ -314,6 +315,7 @@ export const startSuiteServer = async (
     handleNotifications,
     handleHabits,
     handleTasks,
+    handleCapture,
     handleTaskImport,
     handlePlanner,
     handleProjects,
