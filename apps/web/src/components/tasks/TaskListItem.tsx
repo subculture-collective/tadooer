@@ -76,7 +76,7 @@ export const TaskListItem = ({
       : `Change schedule for “${task.title}”`;
 
   return (
-    <li className="today-task-row">
+    <li className="today-task-row" data-task-id={task.id}>
       <div>
         <strong>{task.title}</strong>
         <p className="today-task-meta">

@@ -3,7 +3,10 @@ import {
   notificationPreferencesSchema,
   checklistCommandSchema,
   organizationIconPattern,
+  type ApplicationPreferences,
   type ChecklistCommand,
+  type FocusPreferenceProvenance,
+  type FocusPreferences,
 } from "@suite/contracts";
 import { StructuredCaptureError } from "@suite/domain";
 import { SqliteHabitStore } from "./habit-store.ts";
@@ -15,6 +18,11 @@ import { SqliteCalendarProjectionStore } from "./calendar-projection-store.js";
 import { SqliteCredentialStore } from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 import { SqliteNoteStore } from "./note-store.ts";
+import { captureMigration, SqliteCaptureStore } from "./capture-store.ts";
+export type {
+  CapturePreferencesRecord,
+  CaptureUrlBehavior,
+} from "./capture-store.ts";
 export type { NoteMutationResult, NoteRecord } from "./note-store.ts";
 import {
   SqliteTaskLinkStore,
@@ -125,7 +133,59 @@ export {
   type PluginDataEntryRecord,
   type PluginMetadataRecord,
 } from "./plugin-data-store.ts";
+import {
+  SqliteCalendarSubscriptionStore,
+  calendarSubscriptionMigration,
+} from "./calendar-subscription-store.ts";
+export {
+  SqliteCalendarSubscriptionStore,
+  calendarSubscriptionHiddenEventLimit,
+  calendarSubscriptionLimit,
+  type CalendarSubscriptionDeleteResult,
+  type CalendarSubscriptionEventInput,
+  type CalendarSubscriptionEventRecord,
+  type CalendarSubscriptionFetchOutcome,
+  type CalendarSubscriptionRecord,
+  type CalendarSubscriptionSettings,
+  type CalendarSubscriptionUrlCipher,
+  type CalendarSubscriptionWriteResult,
+} from "./calendar-subscription-store.ts";
 import { SqliteDayOrderStore, dayOrderMigration } from "./day-order-store.ts";
+import {
+  SqliteBoardStore,
+  boardsMigration,
+  type ImportedBoardData,
+} from "./board-store.ts";
+export {
+  SqliteBoardStore,
+  type BoardConfigInput,
+  type BoardMoveResult,
+  type BoardMutationResult,
+  type BoardPanelInput,
+  type ImportedBoard,
+  type ImportedBoardData,
+  type ImportedMenuFolder,
+  type ImportedSection,
+  type MenuFolderMutationResult,
+  type SectionMutationResult,
+  type TaskViewSetResult,
+} from "./board-store.ts";
+import { SqliteFocusStore, focusMigration } from "./focus-store.ts";
+export {
+  SqliteFocusStore,
+  type FocusPreferencesRecord,
+  type IdleDispositionRecord,
+  type OwnerIntervalRecord,
+} from "./focus-store.ts";
+import {
+  SqliteApplicationPreferencesStore,
+  applicationPreferencesMigration,
+} from "./application-preferences-store.ts";
+export {
+  SqliteApplicationPreferencesStore,
+  type ApplicationPreferencesMutationResult,
+  type ApplicationPreferencesRecord,
+} from "./application-preferences-store.ts";
 export {
   SqliteDayOrderStore,
   type DayOrderPlanResult,
@@ -224,7 +284,8 @@ export interface BaikalConnectorRecord {
 export interface CalendarProviderRecord {
   readonly id: string;
   readonly ownerId: string;
-  readonly kind: "baikal" | "caldav" | "google";
+  /** `ical` marks a read-only subscription (ADR 0032); it has no connector. */
+  readonly kind: "baikal" | "caldav" | "google" | "ical";
   readonly connectorId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -711,7 +772,15 @@ export interface NotificationDeliveryRecord {
   readonly ownerId: string;
   readonly taskId: string | null;
   readonly occurrenceStart: string;
-  readonly kind: "lead" | "at_start" | "deadline" | "test";
+  readonly kind:
+    | "lead"
+    | "at_start"
+    | "deadline"
+    | "test"
+    | "focus_countdown"
+    | "focus_break_end"
+    | "focus_break_reminder"
+    | "focus_tracking_reminder";
   readonly taskRevision: number | null;
   readonly state:
     | "pending"
@@ -1526,6 +1595,11 @@ const migrations: readonly Migration[] = [
   countersMigration,
   pluginDataMigration,
   dayOrderMigration,
+  boardsMigration,
+  focusMigration,
+  applicationPreferencesMigration,
+  captureMigration,
+  calendarSubscriptionMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1543,16 +1617,70 @@ export class SuiteDatabase {
   readonly notes: SqliteNoteStore;
   readonly taskHierarchy: SqliteTaskHierarchyStore;
   readonly taskLinks: SqliteTaskLinkStore;
+  /** ADR 0031: capture settings and the atomic capture boundary. */
+  readonly capture: SqliteCaptureStore;
   readonly taskArchive: SqliteTaskArchiveStore;
   readonly recurrence: SqliteRecurrenceStore;
   readonly timeEntries: SqliteTimeEntryStore;
   readonly counters: SqliteCounterStore;
   readonly pluginData: SqlitePluginDataStore;
   readonly dayOrders: SqliteDayOrderStore;
+  readonly boards: SqliteBoardStore;
+  readonly focus: SqliteFocusStore;
+  readonly applicationPreferences: SqliteApplicationPreferencesStore;
+  readonly calendarSubscriptions: SqliteCalendarSubscriptionStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.calendarSubscriptions = new SqliteCalendarSubscriptionStore(database);
     this.counters = new SqliteCounterStore(database);
+    this.boards = new SqliteBoardStore(database, {
+      setTags: (ownerId, taskId, tagIds, revision, now) =>
+        this.setTaskTags(ownerId, taskId, tagIds, revision, now),
+      setCompleted: (ownerId, taskId, revision, completed, now) =>
+        this.setTaskCompleted(ownerId, taskId, revision, completed, now)
+          .kind === "updated",
+      assignProject: (ownerId, taskId, projectId, revision, now) =>
+        this.assignTaskProject(ownerId, taskId, projectId, revision, now) !==
+        undefined,
+      setPlannedDay: (ownerId, taskId, revision, plannedDay, now) => {
+        if (this.getTaskCalendarBlock(ownerId, taskId) !== undefined)
+          return "blocked";
+        return this.patchTask(ownerId, taskId, revision, { plannedDay }, now)
+          .kind === "updated"
+          ? "applied"
+          : "conflict";
+      },
+      setBacklog: (ownerId, projectId, taskId, inBacklog, now) => {
+        const project = this.listProjects(ownerId).find(
+          ({ id }) => id === projectId,
+        );
+        return (
+          project !== undefined &&
+          this.setProjectBacklog(
+            ownerId,
+            projectId,
+            project.revision,
+            taskId,
+            inBacklog,
+            now,
+          ).kind === "applied"
+        );
+      },
+      currentTaskRevision: (ownerId, taskId) =>
+        this.getTask(ownerId, taskId)?.revision,
+    });
+    this.focus = new SqliteFocusStore(database);
+    this.applicationPreferences = new SqliteApplicationPreferencesStore(
+      database,
+      {
+        projectActive: (ownerId, projectId) =>
+          this.listProjects(ownerId).some(
+            (project) =>
+              project.id === projectId && project.archivedAt === null,
+          ),
+      },
+    );
     this.dayOrders = new SqliteDayOrderStore(database, {
       planTask: (ownerId, taskId, expectedRevision, date, now) => {
         const task = this.getTask(ownerId, taskId);
@@ -1639,6 +1767,7 @@ export class SuiteDatabase {
       },
     });
     this.taskLinks = new SqliteTaskLinkStore(database);
+    this.capture = new SqliteCaptureStore(database);
     this.habits = new SqliteHabitStore(
       database,
       (ownerId, kind, id, revision, now) => {
@@ -2470,8 +2599,10 @@ export class SuiteDatabase {
     const desired = new Set<string>();
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
+      const ownerDefault = this.applicationPreferences.get(input.ownerId)
+        .preferences.defaultTaskReminder;
       for (const reminder of input.tasks.flatMap((task) =>
-        scheduledReminders(task, input.preferences),
+        scheduledReminders(task, input.preferences, ownerDefault),
       )) {
         desired.add(
           `${reminder.taskId}\n${reminder.occurrenceStart}\n${reminder.kind}`,
@@ -2741,7 +2872,11 @@ export class SuiteDatabase {
     from: string,
     to: string,
   ): readonly CalendarEventProjectionRecord[] {
-    return this.calendarProjections.listProjectedEvents(ownerId, from, to);
+    // ADR 0032: visible subscription occurrences join the provider projection.
+    return [
+      ...this.calendarProjections.listProjectedEvents(ownerId, from, to),
+      ...this.calendarSubscriptions.listProjectedEvents(ownerId, from, to),
+    ];
   }
 
   listActiveTaskCalendarEventLinks(
@@ -3262,6 +3397,35 @@ export class SuiteDatabase {
         readonly date: string;
         readonly sourceTaskIds: readonly string[];
       }[];
+      /** ADR 0028: boards, sections, sidebar folders and task markers. */
+      readonly boards?: ImportedBoardData;
+      /** ADR 0029: focus preferences mapped from globalConfig, applied once. */
+      readonly focusPreferences?: {
+        readonly preferences: FocusPreferences;
+        readonly provenance: FocusPreferenceProvenance;
+      };
+      /**
+       * ADR 0030: mapped globalConfig settings, applied once while the owner
+       * has never saved application (or, for the day start, planning)
+       * preferences. Source project IDs are resolved to imported projects.
+       */
+      readonly applicationPreferences?: {
+        readonly preferences: Readonly<
+          Partial<Omit<ApplicationPreferences, "defaultProjectId">>
+        > & { readonly defaultProjectSourceId?: string | null };
+        readonly planning?: Readonly<
+          Partial<
+            Pick<
+              PlanningPreferencesRecord,
+              | "workdayStart"
+              | "workdayEnd"
+              | "breakStart"
+              | "breakEnd"
+              | "dayStartsAt"
+            >
+          >
+        >;
+      };
     } = {},
   ): {
     created: number;
@@ -3270,6 +3434,9 @@ export class SuiteDatabase {
     counters?: ReturnType<SqliteCounterStore["importInTransaction"]>;
     pluginData?: { created: number; existing: number };
     dayOrders?: number;
+    boards?: ReturnType<SqliteBoardStore["importInTransaction"]>;
+    focusPreferences?: "applied" | "skipped";
+    applicationPreferences?: number;
   } {
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
@@ -3576,14 +3743,55 @@ export class SuiteDatabase {
               })),
               now,
             );
+      // ADR 0028: boards, sections and folders reference tasks, projects and
+      // tags by their final IDs; markers apply to newly imported tasks only.
+      const boards =
+        options.boards === undefined ||
+        options.boards.boards.length +
+          options.boards.sections.length +
+          options.boards.folders.length +
+          options.boards.taskMarkers.length ===
+          0
+          ? undefined
+          : this.boards.importInTransaction(
+              ownerId,
+              options.boards,
+              (kind, sourceId) => targets.get(`${kind}:${sourceId}`),
+              new Set(newTasks.map(({ id }) => id)),
+              randomUUID,
+              now,
+            );
+      const focusPreferences =
+        options.focusPreferences === undefined
+          ? undefined
+          : this.focus.importInTransaction(
+              ownerId,
+              options.focusPreferences.preferences,
+              options.focusPreferences.provenance,
+              now,
+            );
+      const applicationPreferences =
+        options.applicationPreferences === undefined
+          ? undefined
+          : this.#importApplicationPreferences(
+              ownerId,
+              options.applicationPreferences,
+              targets,
+              now,
+            );
       this.#database.exec("COMMIT;");
       return {
         created,
         existing,
+        ...(focusPreferences === undefined ? {} : { focusPreferences }),
         ...(recurringSeries === undefined ? {} : { recurringSeries }),
         ...(counters === undefined ? {} : { counters }),
         ...(pluginData === undefined ? {} : { pluginData }),
         ...(dayOrders === undefined ? {} : { dayOrders }),
+        ...(boards === undefined ? {} : { boards }),
+        ...(applicationPreferences === undefined
+          ? {}
+          : { applicationPreferences }),
       };
     } catch (error) {
       this.#database.exec("ROLLBACK;");
@@ -3614,6 +3822,7 @@ export class SuiteDatabase {
         | "deadlineAt"
         | "projectId"
         | "tagIds"
+        | "estimateMinutes"
       >
     >,
   ): IdempotentTaskCreateResult {
@@ -3944,6 +4153,76 @@ export class SuiteDatabase {
     );
   }
 
+  /** ADR 0030 import: apply mapped settings once; count the fields applied. */
+  #importApplicationPreferences(
+    ownerId: string,
+    input: NonNullable<
+      Parameters<SuiteDatabase["importTaskRecords"]>[4]
+    >["applicationPreferences"] &
+      object,
+    targets: ReadonlyMap<string, string>,
+    now: string,
+  ): number {
+    const { defaultProjectSourceId, ...rest } = input.preferences;
+    const defaultProjectId =
+      typeof defaultProjectSourceId === "string"
+        ? targets.get(`project:${defaultProjectSourceId}`)
+        : undefined;
+    let applied = this.applicationPreferences.importInTransaction(
+      ownerId,
+      {
+        ...rest,
+        ...(defaultProjectId === undefined ? {} : { defaultProjectId }),
+      },
+      now,
+    );
+    const planning = Object.fromEntries(
+      Object.entries(input.planning ?? {}).filter(
+        ([, value]) => value !== undefined,
+      ),
+    );
+    if (
+      Object.keys(planning).length > 0 &&
+      this.getPreferenceRevision(ownerId, "planning") === 0
+    ) {
+      const candidate = {
+        ...this.getPlanningPreferences(ownerId),
+        ...planning,
+      };
+      if (planningPreferencesSchema.safeParse(candidate).success) {
+        this.putPlanningPreferences(ownerId, candidate, now);
+        applied += Object.keys(planning).length;
+      }
+    }
+    return applied;
+  }
+
+  /**
+   * ADR 0030: with `autoMarkParentDone` on, completing the last open child
+   * completes its parent through the same conditional update, so the parent
+   * gains a revision, a status version and a sync change.
+   */
+  #autoCompleteParent(ownerId: string, taskId: string, now: string): void {
+    if (
+      !this.applicationPreferences.get(ownerId).preferences.autoMarkParentDone
+    )
+      return;
+    const child = this.getTask(ownerId, taskId);
+    if (child?.parentId == null || child.status !== "completed") return;
+    const parent = this.getTask(ownerId, child.parentId);
+    if (parent?.status !== "open") return;
+    const children = this.taskHierarchy.listChildren(ownerId, parent.id);
+    if (children.some((sibling) => sibling.status !== "completed")) return;
+    this.#conditionallyUpdateTask(
+      ownerId,
+      parent.id,
+      parent.revision,
+      false,
+      (task) => ({ ...task, status: "completed", completedAt: now }),
+      now,
+    );
+  }
+
   setTaskCompleted(
     ownerId: string,
     taskId: string,
@@ -3951,18 +4230,30 @@ export class SuiteDatabase {
     completed: boolean,
     now: string,
   ): ConditionalTaskResult {
-    return this.#conditionallyUpdateTask(
-      ownerId,
-      taskId,
-      expectedRevision,
-      false,
-      (task) => ({
-        ...task,
-        status: completed ? "completed" : "open",
-        completedAt: completed ? now : null,
-      }),
-      now,
-    );
+    this.#database.exec("SAVEPOINT task_completion;");
+    try {
+      const result = this.#conditionallyUpdateTask(
+        ownerId,
+        taskId,
+        expectedRevision,
+        false,
+        (task) => ({
+          ...task,
+          status: completed ? "completed" : "open",
+          completedAt: completed ? now : null,
+        }),
+        now,
+      );
+      if (result.kind === "updated" && completed)
+        this.#autoCompleteParent(ownerId, taskId, now);
+      this.#database.exec("RELEASE SAVEPOINT task_completion;");
+      return result;
+    } catch (error) {
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT task_completion; RELEASE SAVEPOINT task_completion;",
+      );
+      throw error;
+    }
   }
 
   deleteTask(
@@ -6068,6 +6359,8 @@ export class SuiteDatabase {
     readonly intervals: readonly ActiveSessionIntervalRecord[];
     readonly events: readonly ActiveSessionEventRecord[];
     readonly now: string;
+    /** ADR 0029: extra rows committed with the transition (idle provenance). */
+    readonly inTransaction?: () => void;
   }): {
     readonly kind: "applied" | "replayed" | "conflict" | "stale";
     readonly session?: ActiveSessionRecord;
@@ -6143,6 +6436,7 @@ export class SuiteDatabase {
           event.actorClientId,
           event.createdAt,
         );
+      input.inTransaction?.();
       this.#database
         .prepare(
           "INSERT INTO active_session_operation_outcomes (owner_id,client_id,idempotency_key,request_hash,session_id,revision,response_json,created_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -6473,7 +6767,7 @@ export class SuiteDatabase {
     readonly task?: TaskRecord;
     readonly fields?: readonly string[];
   } {
-    return this.applyTaskFieldSync({
+    const result = this.applyTaskFieldSync({
       ownerId: input.ownerId,
       clientId: input.clientId,
       operationId: input.operationId,
@@ -6483,6 +6777,9 @@ export class SuiteDatabase {
       patch: { status: input.completed ? "completed" : "open" },
       now: input.now,
     });
+    if (result.kind === "applied" && input.completed)
+      this.#autoCompleteParent(input.ownerId, input.taskId, input.now);
+    return result;
   }
 
   applyTaskCreateSync(input: {

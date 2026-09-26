@@ -1,4 +1,13 @@
 import {
+  capturePreferencesResponseSchema,
+  capturePreviewResponseSchema,
+  taskBatchMutationResponseSchema,
+  type CapturePreferences,
+  type CapturePreferencesResponse,
+  type CapturePreviewRequest,
+  type CapturePreviewResponse,
+  type TaskBatchCreateRequest,
+  type TaskBatchMutationResponse,
   taskImportApplyResponseSchema,
   automationTokenListResponseSchema,
   createAutomationTokenRequestSchema,
@@ -48,6 +57,10 @@ import {
   googleConnectorStatusResponseSchema,
   googleSyncResponseSchema,
   planningPreferencesSchema,
+  applicationPreferenceMutationInputSchema,
+  applicationPreferenceSnapshotSchema,
+  type ApplicationPreferenceMutationInput,
+  type ApplicationPreferenceSnapshot,
   dayPlanResponseSchema,
   notificationPreferencesSchema,
   notificationStatusResponseSchema,
@@ -163,6 +176,69 @@ import {
   type DayOrder,
   type DayOrderPlanRequest,
   type Task as DayOrderPlannedTask,
+  boardCreateRequestSchema,
+  boardListResponseSchema,
+  boardMoveRequestSchema,
+  boardMoveResponseSchema,
+  boardOrderRequestSchema,
+  boardPanelOrderRequestSchema,
+  boardResponseSchema,
+  boardUpdateRequestSchema,
+  boardViewResponseSchema,
+  menuFolderCreateRequestSchema,
+  menuFolderListResponseSchema,
+  menuFolderOrderRequestSchema,
+  menuFolderUpdateRequestSchema,
+  sectionCreateRequestSchema,
+  sectionListResponseSchema,
+  sectionOrderRequestSchema,
+  sectionUpdateRequestSchema,
+  taskViewListResponseSchema,
+  taskViewResponseSchema,
+  taskViewSetRequestSchema,
+  type Board,
+  type BoardMoveResponse,
+  type BoardView,
+  type MenuFolder,
+  type MenuFolderUpdateRequest,
+  type Section,
+  type SectionContextKind,
+  type SectionCreateRequest,
+  type SectionUpdateRequest,
+  type TaskView,
+} from "@suite/contracts";
+import {
+  focusBreakSnoozeResponseSchema,
+  focusIdleRequestSchema,
+  focusIdleResponseSchema,
+  focusPlanRequestSchema,
+  focusPreferencesResponseSchema,
+  focusPreferencesSchema,
+  focusTimerSchema,
+  type FocusIdleRequest,
+  type FocusIdleResponse,
+  type FocusPlanRequest,
+  type FocusPreferences,
+  type FocusPreferencesResponse,
+  type FocusTimer,
+} from "@suite/contracts";
+import {
+  calendarSubscriptionConversionResponseSchema,
+  calendarSubscriptionCreateRequestSchema,
+  calendarSubscriptionEventListResponseSchema,
+  calendarSubscriptionEventMutationResponseSchema,
+  calendarSubscriptionListResponseSchema,
+  calendarSubscriptionMutationResponseSchema,
+  calendarSubscriptionPatchRequestSchema,
+  calendarSubscriptionRefreshResponseSchema,
+  type CalendarSubscriptionConversionResponse,
+  type CalendarSubscriptionCreateRequest,
+  type CalendarSubscriptionEventListResponse,
+  type CalendarSubscriptionEventMutationResponse,
+  type CalendarSubscriptionListResponse,
+  type CalendarSubscriptionMutationResponse,
+  type CalendarSubscriptionPatchRequest,
+  type CalendarSubscriptionRefreshResponse,
 } from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
@@ -324,6 +400,24 @@ export const updatePlanningPreferences = (
     method: "PUT",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(planningPreferencesSchema.parse(input)),
+  });
+
+/** Application preferences and shortcuts (ADR 0030); online-only. */
+export const getApplicationPreferences =
+  (): Promise<ApplicationPreferenceSnapshot> =>
+    request(
+      "/api/application/preferences",
+      applicationPreferenceSnapshotSchema,
+    );
+
+export const updateApplicationPreferences = (
+  input: ApplicationPreferenceMutationInput,
+  csrfToken: string,
+): Promise<ApplicationPreferenceSnapshot> =>
+  request("/api/application/preferences", applicationPreferenceSnapshotSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(applicationPreferenceMutationInputSchema.parse(input)),
   });
 
 export const getDayPlan = (
@@ -1570,5 +1664,420 @@ export const planTasksForDay = (
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken },
       body: JSON.stringify(dayOrderPlanRequestSchema.parse(plan)),
+    },
+  );
+
+// Boards, sections, saved task views and sidebar folders (issue #63, ADR
+// 0028). Online-only HTTP records with revisions; nothing here is cached.
+
+export const getBoards = (): Promise<readonly Board[]> =>
+  request("/api/boards", boardListResponseSchema).then(({ boards }) => boards);
+
+export const getBoardView = (boardId: string): Promise<BoardView> =>
+  request(
+    `/api/boards/${encodeURIComponent(boardId)}`,
+    boardViewResponseSchema,
+  ).then(({ view }) => view);
+
+export const createBoard = (
+  input: z.input<typeof boardCreateRequestSchema>,
+  csrfToken: string,
+): Promise<Board> =>
+  request("/api/boards", boardResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(boardCreateRequestSchema.parse(input)),
+  }).then(({ board }) => board);
+
+export const updateBoard = (
+  boardId: string,
+  input: z.input<typeof boardUpdateRequestSchema>,
+  csrfToken: string,
+): Promise<Board> =>
+  request(`/api/boards/${encodeURIComponent(boardId)}`, boardResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(boardUpdateRequestSchema.parse(input)),
+  }).then(({ board }) => board);
+
+export const reorderBoards = (
+  items: readonly { readonly id: string; readonly revision: number }[],
+  csrfToken: string,
+): Promise<readonly Board[]> =>
+  request("/api/boards/order", boardListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(boardOrderRequestSchema.parse({ items })),
+  }).then(({ boards }) => boards);
+
+export const deleteBoard = (
+  boardId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/boards/${encodeURIComponent(boardId)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const reorderBoardPanel = (
+  boardId: string,
+  panelId: string,
+  input: z.input<typeof boardPanelOrderRequestSchema>,
+  csrfToken: string,
+): Promise<BoardView> =>
+  request(
+    `/api/boards/${encodeURIComponent(boardId)}/panels/${encodeURIComponent(panelId)}/order`,
+    boardViewResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(boardPanelOrderRequestSchema.parse(input)),
+    },
+  ).then(({ view }) => view);
+
+/** With `dryRun`, returns the change list without applying it. */
+export const moveTaskToPanel = (
+  boardId: string,
+  panelId: string,
+  input: z.input<typeof boardMoveRequestSchema>,
+  csrfToken: string,
+): Promise<BoardMoveResponse> =>
+  request(
+    `/api/boards/${encodeURIComponent(boardId)}/panels/${encodeURIComponent(panelId)}/tasks`,
+    boardMoveResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(boardMoveRequestSchema.parse(input)),
+    },
+  );
+
+export const getSections = (
+  contextKind: SectionContextKind,
+  contextId: string,
+): Promise<readonly Section[]> =>
+  request(
+    `/api/sections?${new URLSearchParams({ contextKind, contextId }).toString()}`,
+    sectionListResponseSchema,
+  ).then(({ sections }) => sections);
+
+export const createSection = (
+  input: SectionCreateRequest,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request("/api/sections", sectionListResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(sectionCreateRequestSchema.parse(input)),
+  }).then(({ sections }) => sections);
+
+export const updateSection = (
+  sectionId: string,
+  input: SectionUpdateRequest,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request(
+    `/api/sections/${encodeURIComponent(sectionId)}`,
+    sectionListResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(sectionUpdateRequestSchema.parse(input)),
+    },
+  ).then(({ sections }) => sections);
+
+export const reorderSections = (
+  input: z.input<typeof sectionOrderRequestSchema>,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request("/api/sections/order", sectionListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(sectionOrderRequestSchema.parse(input)),
+  }).then(({ sections }) => sections);
+
+export const deleteSection = (
+  sectionId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<readonly Section[]> =>
+  request(
+    `/api/sections/${encodeURIComponent(sectionId)}`,
+    sectionListResponseSchema,
+    { method: "DELETE", headers: conditionalHeaders(revision, csrfToken) },
+  ).then(({ sections }) => sections);
+
+export const getTaskViews = (): Promise<readonly TaskView[]> =>
+  request("/api/task-views", taskViewListResponseSchema).then(
+    ({ views }) => views,
+  );
+
+export const setTaskView = (
+  input: z.input<typeof taskViewSetRequestSchema>,
+  csrfToken: string,
+): Promise<TaskView> =>
+  request("/api/task-views", taskViewResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(taskViewSetRequestSchema.parse(input)),
+  }).then(({ view }) => view);
+
+export const getMenuFolders = (): Promise<readonly MenuFolder[]> =>
+  request("/api/menu-folders", menuFolderListResponseSchema).then(
+    ({ folders }) => folders,
+  );
+
+export const createMenuFolder = (
+  input: z.input<typeof menuFolderCreateRequestSchema>,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request("/api/menu-folders", menuFolderListResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(menuFolderCreateRequestSchema.parse(input)),
+  }).then(({ folders }) => folders);
+
+export const updateMenuFolder = (
+  folderId: string,
+  input: MenuFolderUpdateRequest,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request(
+    `/api/menu-folders/${encodeURIComponent(folderId)}`,
+    menuFolderListResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(menuFolderUpdateRequestSchema.parse(input)),
+    },
+  ).then(({ folders }) => folders);
+
+export const reorderMenuFolders = (
+  input: z.input<typeof menuFolderOrderRequestSchema>,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request("/api/menu-folders/order", menuFolderListResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(menuFolderOrderRequestSchema.parse(input)),
+  }).then(({ folders }) => folders);
+
+export const deleteMenuFolder = (
+  folderId: string,
+  revision: number,
+  csrfToken: string,
+): Promise<readonly MenuFolder[]> =>
+  request(
+    `/api/menu-folders/${encodeURIComponent(folderId)}`,
+    menuFolderListResponseSchema,
+    { method: "DELETE", headers: conditionalHeaders(revision, csrfToken) },
+  ).then(({ folders }) => folders);
+// Focus presets, idle disposition and break reminders (issue #65, ADR 0029).
+// Online-only: nothing here is cached or queued offline.
+
+export const getFocusPreferences = (): Promise<FocusPreferencesResponse> =>
+  request("/api/focus/preferences", focusPreferencesResponseSchema);
+
+export const updateFocusPreferences = (
+  preferences: FocusPreferences,
+  revision: number,
+  csrfToken: string,
+): Promise<FocusPreferencesResponse> =>
+  request("/api/focus/preferences", focusPreferencesResponseSchema, {
+    method: "PUT",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      "If-Match": `"${String(revision)}"`,
+    },
+    body: JSON.stringify(focusPreferencesSchema.parse(preferences)),
+  });
+
+export const getFocusTimer = (
+  client: LocalClientIdentity,
+): Promise<FocusTimer> =>
+  request("/api/focus/timer", focusTimerSchema, {
+    headers: clientProofHeaders(client),
+  });
+
+export const setFocusPlan = (
+  client: LocalClientIdentity,
+  csrfToken: string,
+  plan: FocusPlanRequest,
+): Promise<FocusTimer> =>
+  request("/api/focus/plan", focusTimerSchema, {
+    method: "PUT",
+    headers: { ...clientProofHeaders(client), "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(focusPlanRequestSchema.parse(plan)),
+  });
+
+export const applyIdleDisposition = (
+  client: LocalClientIdentity,
+  csrfToken: string,
+  input: FocusIdleRequest,
+): Promise<FocusIdleResponse> =>
+  request("/api/focus/idle", focusIdleResponseSchema, {
+    method: "POST",
+    headers: { ...clientProofHeaders(client), "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(focusIdleRequestSchema.parse(input)),
+  });
+
+export const snoozeBreakReminder = (
+  csrfToken: string,
+): Promise<{ readonly snoozedUntil: string }> =>
+  request("/api/focus/break-reminder/snooze", focusBreakSnoozeResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: "{}",
+  });
+
+// Capture syntax (issue #90, ADR 0031): online-only preview, batch and settings.
+export const previewTaskCapture = (
+  input: CapturePreviewRequest,
+  csrfToken: string,
+): Promise<CapturePreviewResponse> =>
+  request("/api/tasks/capture-preview", capturePreviewResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(input),
+  });
+
+export const createTaskBatch = (
+  input: TaskBatchCreateRequest,
+  csrfToken: string,
+  idempotencyKey: string,
+): Promise<TaskBatchMutationResponse> =>
+  request("/api/tasks/batch", taskBatchMutationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken, "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(input),
+  });
+
+export const getCapturePreferences = (): Promise<CapturePreferencesResponse> =>
+  request("/api/capture-preferences", capturePreferencesResponseSchema);
+
+export const updateCapturePreferences = (
+  preferences: CapturePreferences,
+  expectedRevision: number,
+  csrfToken: string,
+): Promise<CapturePreferencesResponse> =>
+  request("/api/capture-preferences", capturePreferencesResponseSchema, {
+    method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ preferences, expectedRevision }),
+  });
+// Read-only iCal subscriptions (ADR 0032). Online-only and owner-only: the
+// feed address is sent once on create or change and never read back.
+export const listCalendarSubscriptions =
+  (): Promise<CalendarSubscriptionListResponse> =>
+    request(
+      "/api/calendar-subscriptions",
+      calendarSubscriptionListResponseSchema,
+    );
+
+export const createCalendarSubscription = (
+  input: CalendarSubscriptionCreateRequest,
+  csrfToken: string,
+): Promise<CalendarSubscriptionRefreshResponse> =>
+  request(
+    "/api/calendar-subscriptions",
+    calendarSubscriptionRefreshResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(
+        calendarSubscriptionCreateRequestSchema.parse(input),
+      ),
+    },
+  );
+
+export const updateCalendarSubscription = (
+  id: string,
+  revision: number,
+  input: CalendarSubscriptionPatchRequest,
+  csrfToken: string,
+): Promise<CalendarSubscriptionMutationResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(id)}`,
+    calendarSubscriptionMutationResponseSchema,
+    {
+      method: "PATCH",
+      headers: conditionalHeaders(revision, csrfToken),
+      body: JSON.stringify(calendarSubscriptionPatchRequestSchema.parse(input)),
+    },
+  );
+
+export const deleteCalendarSubscription = (
+  id: string,
+  revision: number,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(`/api/calendar-subscriptions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: conditionalHeaders(revision, csrfToken),
+  });
+
+export const refreshCalendarSubscription = (
+  id: string,
+  csrfToken: string,
+): Promise<CalendarSubscriptionRefreshResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(id)}/refresh`,
+    calendarSubscriptionRefreshResponseSchema,
+    { method: "POST", headers: { "X-CSRF-Token": csrfToken } },
+  );
+
+export const listCalendarSubscriptionEvents = (
+  from: string,
+  to: string,
+): Promise<CalendarSubscriptionEventListResponse> =>
+  request(
+    `/api/calendar-subscriptions/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    calendarSubscriptionEventListResponseSchema,
+  );
+
+export const setCalendarSubscriptionEventHidden = (
+  subscriptionId: string,
+  event: { readonly uid: string; readonly occurrenceStart: string },
+  hidden: boolean,
+  csrfToken: string,
+): Promise<CalendarSubscriptionEventMutationResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(subscriptionId)}/events/hidden`,
+    calendarSubscriptionEventMutationResponseSchema,
+    {
+      method: "PUT",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ ...event, hidden }),
+    },
+  );
+
+export const convertCalendarSubscriptionEvent = (
+  subscriptionId: string,
+  event: { readonly uid: string; readonly occurrenceStart: string },
+  csrfToken: string,
+): Promise<CalendarSubscriptionConversionResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(subscriptionId)}/events/convert`,
+    calendarSubscriptionConversionResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(event),
+    },
+  );
+
+export const dismissCalendarSubscriptionEvent = (
+  subscriptionId: string,
+  event: { readonly uid: string; readonly occurrenceStart: string },
+  csrfToken: string,
+): Promise<CalendarSubscriptionEventMutationResponse> =>
+  request(
+    `/api/calendar-subscriptions/${encodeURIComponent(subscriptionId)}/events/dismiss`,
+    calendarSubscriptionEventMutationResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(event),
     },
   );

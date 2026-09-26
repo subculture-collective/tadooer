@@ -12,6 +12,7 @@ import {
 } from "@suite/domain";
 import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
+import { planWorkedOnTaskForToday } from "../worked-on-today.ts";
 import {
   activeResponse,
   activeFromRecord,
@@ -305,6 +306,14 @@ export const handleActiveSession: RouteHandler = async (
             startedAt: interval.startedAt,
             endedAt: interval.endedAt,
           };
+    // ADR 0030: a task worked on joins today unless already planned.
+    if (command.command === "start" && transitionResult.kind === "applied")
+      planWorkedOnTaskForToday(
+        database,
+        session.owner.id,
+        command.taskId,
+        sessionClock.now(),
+      );
     const body: ActiveSessionCommandResponse = {
       session: activeResponse(persisted),
       openedInterval: intervalResponse(opened),

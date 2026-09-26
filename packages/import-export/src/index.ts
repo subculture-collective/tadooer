@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import { splitVEventComponents, unfoldIcsLines } from "./ics-lines.ts";
+export * from "./ics-lines.ts";
 export * from "./super-productivity.ts";
 export * from "./super-productivity-apply.ts";
 export * from "./super-productivity-links.ts";
 export * from "./super-productivity-time.ts";
 export * from "./super-productivity-plugins.ts";
+export * from "./super-productivity-focus.ts";
 
 export type ImportSourceKind = "ics" | "google_ics";
 
@@ -46,19 +49,6 @@ export interface ImportReconciliationReport {
     readonly unknownProperties: number;
   };
 }
-
-const unfold = (raw: string): readonly string[] | undefined => {
-  if (Buffer.byteLength(raw, "utf8") > 4 * 1024 * 1024 || raw.includes("\0"))
-    return undefined;
-  const normalized = raw.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
-  const output: string[] = [];
-  for (const line of normalized.split("\n")) {
-    if (/^[ \t]/.test(line) && output.length > 0)
-      output[output.length - 1] = `${output.at(-1) ?? ""}${line.slice(1)}`;
-    else output.push(line);
-  }
-  return output;
-};
 
 const text = (value: string): string =>
   value
@@ -115,32 +105,18 @@ export const parseIcsImport = (
   raw: string,
 ): ImportReconciliationReport => {
   const inputHash = createHash("sha256").update(raw).digest("hex");
-  const lines = unfold(raw);
+  const lines = unfoldIcsLines(raw);
   const skipped: ImportIssue[] = [];
-  const components: string[][] = [];
+  const components: (readonly string[])[] = [];
   if (!lines?.includes("BEGIN:VCALENDAR"))
     skipped.push({
       code: "malformed_component",
       detail: "Input is not a bounded VCALENDAR",
     });
   else {
-    let current: string[] | undefined;
-    let depth = 0;
-    for (const line of lines) {
-      if (line === "BEGIN:VEVENT" && current === undefined) {
-        current = [line];
-        depth = 1;
-      } else if (current !== undefined) {
-        current.push(line);
-        if (line.startsWith("BEGIN:")) depth += 1;
-        if (line.startsWith("END:")) depth -= 1;
-        if (line === "END:VEVENT" && depth === 0) {
-          components.push(current);
-          current = undefined;
-        }
-      }
-    }
-    if (current !== undefined)
+    const split = splitVEventComponents(lines);
+    components.push(...split.components);
+    if (!split.closed)
       skipped.push({
         code: "malformed_component",
         detail: "VEVENT is not closed",
@@ -260,7 +236,7 @@ export const sourceAdapters: Readonly<
 
 export const serializeCalendarFeed = (rawEvents: readonly string[]): string => {
   const bodies = rawEvents.flatMap((raw) => {
-    const lines = unfold(raw) ?? [];
+    const lines = unfoldIcsLines(raw) ?? [];
     const start = lines.indexOf("BEGIN:VEVENT");
     const end = lines.lastIndexOf("END:VEVENT");
     return start >= 0 && end >= start ? [lines.slice(start, end + 1)] : [];
@@ -278,3 +254,6 @@ export const serializeCalendarFeed = (rawEvents: readonly string[]): string => {
 export * from "./super-productivity-recurrence.ts";
 export * from "./super-productivity-counters.ts";
 export * from "./super-productivity-day-order.ts";
+export * from "./super-productivity-config.ts";
+export * from "./ical-feed.ts";
+export * from "./super-productivity-calendar.ts";

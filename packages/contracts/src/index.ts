@@ -8,7 +8,17 @@ export * from "./time-history.ts";
 export * from "./counters.ts";
 export * from "./plugin-data.ts";
 export * from "./day-order.ts";
+export * from "./boards.ts";
+export * from "./focus.ts";
+export * from "./application-preferences.ts";
+import {
+  applicationPreferenceMutationInputSchema,
+  applicationPreferenceSnapshotSchema,
+} from "./application-preferences.ts";
+export * from "./capture.ts";
+export * from "./calendar-subscriptions.ts";
 import { z } from "zod";
+import { captureBatchMaxTasks, captureCreateFields } from "./capture.ts";
 import {
   automationNoteMutationInputSchema,
   automationOrganizationOrderInputSchema,
@@ -72,6 +82,49 @@ import {
   dayOrderSchema,
   dayStartsAtSchema,
 } from "./day-order.ts";
+import {
+  automationBoardMutationInputSchema,
+  automationBoardsResourceInputSchema,
+  automationBoardsResourceSchema,
+  automationMenuFolderMutationInputSchema,
+  automationSectionMutationInputSchema,
+  automationSectionsResourceInputSchema,
+  boardMutationResponseSchema,
+  menuFolderListResponseSchema,
+  menuFolderMutationResponseSchema,
+  sectionListResponseSchema,
+  sectionMutationResponseSchema,
+  taskViewListResponseSchema,
+  taskViewResponseSchema,
+  taskViewSetRequestSchema,
+} from "./boards.ts";
+import {
+  focusIdleCorrectionSchema,
+  focusIdleDispositionInputSchema,
+  focusPreferenceMutationInputSchema,
+  focusPreferenceSnapshotSchema,
+  focusReminderKinds,
+  focusTimerBaseSchema,
+} from "./focus.ts";
+
+/** Reminder ledger kinds: task reminders, tests and focus reminders (ADR 0029). */
+export const notificationReminderKindSchema = z.enum([
+  "lead",
+  "at_start",
+  "deadline",
+  "test",
+  ...focusReminderKinds,
+]);
+import {
+  automationCalendarSubscriptionEventInputSchema,
+  automationCalendarSubscriptionHideInputSchema,
+  automationCalendarSubscriptionRefreshInputSchema,
+  calendarSubscriptionEventMutationResponseSchema,
+  calendarSubscriptionEventSchema,
+  calendarSubscriptionRefreshResponseSchema,
+  calendarSubscriptionResourceInputSchema,
+  calendarSubscriptionResourceSchema,
+} from "./calendar-subscriptions.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -203,6 +256,8 @@ export const calendarProviderKindSchema = z.enum([
   "baikal",
   "caldav",
   "google",
+  // Read-only iCal subscription (ADR 0032).
+  "ical",
 ]);
 
 export const clientIdentitySchema = z.object({
@@ -372,7 +427,38 @@ export const createTaskRequestSchema = z.object({
   deadline: taskDeadlineSchema.nullable().optional(),
   projectId: entityIdSchema.nullable().optional(),
   tagIds: z.array(entityIdSchema).max(25).optional(),
+  /** ADR 0031: owner consent for new tags, and the resolved capture extras. */
+  ...captureCreateFields,
 });
+
+/** ADR 0031: several tasks from a pasted list, at most 100 in one batch. */
+export const taskBatchCreateRequestSchema = z
+  .object({
+    items: z
+      .array(
+        createTaskRequestSchema.extend({
+          children: z
+            .array(createTaskRequestSchema)
+            .max(captureBatchMaxTasks)
+            .default([]),
+        }),
+      )
+      .min(1)
+      .max(captureBatchMaxTasks),
+    createTags: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    ({ items }) =>
+      items.reduce((count, item) => count + 1 + item.children.length, 0) <=
+      captureBatchMaxTasks,
+    {
+      message: `A batch creates at most ${String(captureBatchMaxTasks)} tasks`,
+    },
+  );
+export const taskBatchMutationResponseSchema = z
+  .object({ tasks: z.array(taskSchema), replayed: z.boolean() })
+  .strict();
 
 export const taskMutationResponseSchema = z.object({
   task: taskSchema,
@@ -645,7 +731,7 @@ export const notificationStatusResponseSchema = z
     lastDelivery: z
       .object({
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "deadline", "test"]),
+        kind: notificationReminderKindSchema,
         occurredAt: z.iso.datetime(),
         errorCode: apiErrorCodeSchema.nullable(),
       })
@@ -663,7 +749,7 @@ export const notificationDeliveryResponseSchema = z
       .object({
         id: entityIdSchema,
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "deadline", "test"]),
+        kind: notificationReminderKindSchema,
         attemptCount: z.number().int().nonnegative(),
         updatedAt: z.iso.datetime(),
         deliveredAt: z.iso.datetime().nullable(),
@@ -1427,6 +1513,20 @@ export const activeSessionCommandResponseSchema = z.object({
   changeSequence: revisionSchema,
 });
 
+// ADR 0029: focus timer state and idle correction carry the session.
+export const focusTimerSchema = focusTimerBaseSchema
+  .extend({ session: activeSessionSchema.nullable() })
+  .strict();
+export type FocusTimer = z.infer<typeof focusTimerSchema>;
+export const focusIdleResponseSchema = z
+  .object({
+    session: activeSessionSchema,
+    correction: focusIdleCorrectionSchema,
+    replayed: z.boolean(),
+  })
+  .strict();
+export type FocusIdleResponse = z.infer<typeof focusIdleResponseSchema>;
+
 export const syncTaskTemplateSnapshotSchema = z
   .object({
     template: taskTemplateSchema,
@@ -1596,6 +1696,9 @@ export const automationTokenScopeSchema = z.enum([
   "notifications:read",
   "notifications:write",
   "planning:write",
+  // Application preferences and shortcuts (ADR 0030).
+  "application:read",
+  "application:write",
   "tasks:read",
   "tasks:write",
   "schedule:read",
@@ -1672,6 +1775,7 @@ export const automationTokenListResponseSchema = z
 
 export const automationOperationSchema = z.enum([
   "planning.update_preferences",
+  "application.update_preferences",
   "notifications.send_test",
   "notifications.update_preferences",
   "subtasks.mutate",
@@ -1686,6 +1790,7 @@ export const automationOperationSchema = z.enum([
   "tasks.set_tags",
   "tasks.hierarchy",
   "tasks.create",
+  "tasks.create_many",
   "tasks.update",
   "tasks.set_completed",
   "tasks.delete",
@@ -1701,6 +1806,14 @@ export const automationOperationSchema = z.enum([
   "counters.record",
   "evaluations.write",
   "day_order.reorder",
+  "boards.mutate",
+  "sections.mutate",
+  "task_views.set",
+  "menu_folders.mutate",
+  // Read-only iCal subscriptions (ADR 0032): add/remove stay owner-only.
+  "calendar_subscriptions.refresh",
+  "calendar_subscriptions.convert_event",
+  "calendar_subscriptions.hide_event",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -1709,6 +1822,9 @@ export const automationOperationSchema = z.enum([
   "focus.end_break",
   "focus.complete",
   "focus.takeover",
+  // ADR 0029: revision-bound preferences and idle disposition.
+  "focus.update_preferences",
+  "focus.idle_disposition",
   "templates.instantiate",
   "template_sets.instantiate",
   "placeholders.resolve",
@@ -1900,6 +2016,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: planningPreferenceMutationInputSchema,
     }),
     z.object({
+      operation: z.literal("application.update_preferences"),
+      input: applicationPreferenceMutationInputSchema,
+    }),
+    z.object({
       operation: z.literal("notifications.update_preferences"),
       input: notificationPreferenceMutationInputSchema,
     }),
@@ -1926,6 +2046,42 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     z.object({
       operation: z.literal("day_order.reorder"),
       input: automationDayOrderReorderInputSchema,
+    }),
+    z.object({
+      operation: z.literal("boards.mutate"),
+      input: automationBoardMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("sections.mutate"),
+      input: automationSectionMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("task_views.set"),
+      input: taskViewSetRequestSchema,
+    }),
+    z.object({
+      operation: z.literal("menu_folders.mutate"),
+      input: automationMenuFolderMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("focus.update_preferences"),
+      input: focusPreferenceMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("focus.idle_disposition"),
+      input: focusIdleDispositionInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_subscriptions.refresh"),
+      input: automationCalendarSubscriptionRefreshInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_subscriptions.convert_event"),
+      input: automationCalendarSubscriptionEventInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_subscriptions.hide_event"),
+      input: automationCalendarSubscriptionHideInputSchema,
     }),
     z.object({
       operation: z.literal("projects.mutate"),
@@ -2016,6 +2172,10 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: createTaskRequestSchema,
     }),
     z.object({
+      operation: z.literal("tasks.create_many"),
+      input: taskBatchCreateRequestSchema,
+    }),
+    z.object({
       operation: z.literal("schedule.create_time_block"),
       input: z
         .object({ taskId: entityIdSchema })
@@ -2076,6 +2236,11 @@ const automationToolInputSchema = (
     return z.object({
       operation: z.literal(operation),
       input: planningPreferenceMutationInputSchema,
+    });
+  if (operation === "application.update_preferences")
+    return z.object({
+      operation: z.literal(operation),
+      input: applicationPreferenceMutationInputSchema,
     });
   if (operation === "notifications.update_preferences")
     return z.object({
@@ -2142,6 +2307,51 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationDayOrderReorderInputSchema,
     });
+  if (operation === "boards.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationBoardMutationInputSchema,
+    });
+  if (operation === "sections.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationSectionMutationInputSchema,
+    });
+  if (operation === "task_views.set")
+    return z.object({
+      operation: z.literal(operation),
+      input: taskViewSetRequestSchema,
+    });
+  if (operation === "menu_folders.mutate")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationMenuFolderMutationInputSchema,
+    });
+  if (operation === "focus.update_preferences")
+    return z.object({
+      operation: z.literal(operation),
+      input: focusPreferenceMutationInputSchema,
+    });
+  if (operation === "focus.idle_disposition")
+    return z.object({
+      operation: z.literal(operation),
+      input: focusIdleDispositionInputSchema,
+    });
+  if (operation === "calendar_subscriptions.refresh")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarSubscriptionRefreshInputSchema,
+    });
+  if (operation === "calendar_subscriptions.convert_event")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarSubscriptionEventInputSchema,
+    });
+  if (operation === "calendar_subscriptions.hide_event")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarSubscriptionHideInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2207,6 +2417,11 @@ const automationToolInputSchema = (
       operation: z.literal("tasks.create"),
       input: createTaskRequestSchema,
     });
+  if (operation === "tasks.create_many")
+    return z.object({
+      operation: z.literal("tasks.create_many"),
+      input: taskBatchCreateRequestSchema,
+    });
   if (operation === "schedule.create_time_block")
     return z.object({
       operation: z.literal("schedule.create_time_block"),
@@ -2256,6 +2471,8 @@ export const automationAffectedEntitySchema = z
     entityKind: z.enum([
       "planning_preferences",
       "notification_preferences",
+      "focus_preferences",
+      "application_preferences",
       "habit",
       "task",
       "subtask",
@@ -2275,6 +2492,10 @@ export const automationAffectedEntitySchema = z
       "recurring_series",
       "counter",
       "daily_evaluation",
+      "board",
+      "section",
+      "task_view",
+      "menu_folder",
     ]),
     entityId: entityIdSchema,
   })
@@ -2301,6 +2522,9 @@ const existingAutomationBaseRevisionSchema = z
       "recurring_series",
       "counter",
       "daily_evaluation",
+      "board",
+      "section",
+      "menu_folder",
     ]),
     entityId: entityIdSchema,
     revision: revisionSchema,
@@ -2311,7 +2535,12 @@ export const automationBaseRevisionSchema = z.union([
   existingAutomationBaseRevisionSchema,
   z
     .object({
-      entityKind: z.enum(["planning_preferences", "notification_preferences"]),
+      entityKind: z.enum([
+        "planning_preferences",
+        "notification_preferences",
+        "focus_preferences",
+        "application_preferences",
+      ]),
       entityId: entityIdSchema,
       revision: z.number().int().nonnegative(),
     })
@@ -2351,9 +2580,24 @@ export const habitMutationResponseSchema = z
   })
   .strict();
 
+/** ADR 0032: the task made from a subscribed event; replayed when it existed. */
+export const calendarSubscriptionConversionResponseSchema = z
+  .object({
+    task: taskSchema,
+    event: calendarSubscriptionEventSchema,
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export const automationExecutionResultSchema = z.union([
   notificationTestQueuedSchema,
+  calendarSubscriptionRefreshResponseSchema,
+  calendarSubscriptionEventMutationResponseSchema,
+  calendarSubscriptionConversionResponseSchema,
   z.object({ planningPreferences: planningPreferenceSnapshotSchema }).strict(),
+  z
+    .object({ applicationPreferences: applicationPreferenceSnapshotSchema })
+    .strict(),
   z
     .object({ notificationPreferences: notificationPreferenceSnapshotSchema })
     .strict(),
@@ -2365,6 +2609,12 @@ export const automationExecutionResultSchema = z.union([
   counterMutationResponseSchema,
   evaluationMutationResponseSchema,
   dayOrderResponseSchema,
+  boardMutationResponseSchema,
+  sectionMutationResponseSchema,
+  taskViewResponseSchema,
+  menuFolderMutationResponseSchema,
+  z.object({ focusPreferences: focusPreferenceSnapshotSchema }).strict(),
+  focusIdleResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2375,6 +2625,7 @@ export const automationExecutionResultSchema = z.union([
   taskTimeBlockMutationResponseSchema,
   activeSessionCommandResponseSchema,
   taskMutationResponseSchema,
+  taskBatchMutationResponseSchema,
   templateInstantiationResponseSchema,
   planningPlaceholderResolutionResponseSchema,
 ]);
@@ -2446,6 +2697,17 @@ export const automationCatalog = [
     mcpUri: "suite://v1/planning-preferences",
     inputSchema: z.object({}).strict(),
     outputSchema: planningPreferenceSnapshotSchema,
+  },
+  {
+    id: "application.preferences",
+    kind: "resource",
+    scopes: ["application:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/application-preferences",
+    mcpName: "suite.application.preferences",
+    mcpUri: "suite://v1/application-preferences",
+    inputSchema: z.object({}).strict(),
+    outputSchema: applicationPreferenceSnapshotSchema,
   },
   {
     id: "notifications.preferences",
@@ -2593,6 +2855,72 @@ export const automationCatalog = [
     outputSchema: dayOrderResponseSchema,
   },
   {
+    id: "boards.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/boards",
+    mcpName: "suite.boards.list",
+    mcpUri: "suite://v1/boards{?boardId}",
+    inputSchema: automationBoardsResourceInputSchema,
+    outputSchema: automationBoardsResourceSchema,
+  },
+  {
+    id: "sections.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/sections",
+    mcpName: "suite.sections.list",
+    mcpUri: "suite://v1/sections{?contextKind,contextId}",
+    inputSchema: automationSectionsResourceInputSchema,
+    outputSchema: sectionListResponseSchema,
+  },
+  {
+    id: "task_views.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/task-views",
+    mcpName: "suite.task_views.list",
+    mcpUri: "suite://v1/task-views",
+    inputSchema: z.object({}).strict(),
+    outputSchema: taskViewListResponseSchema,
+  },
+  {
+    id: "menu_folders.list",
+    kind: "resource",
+    scopes: ["tasks:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/menu-folders",
+    mcpName: "suite.menu_folders.list",
+    mcpUri: "suite://v1/menu-folders",
+    inputSchema: z.object({}).strict(),
+    outputSchema: menuFolderListResponseSchema,
+  },
+  {
+    id: "focus.preferences",
+    kind: "resource",
+    scopes: ["focus:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/focus-preferences",
+    mcpName: "suite.focus.preferences",
+    mcpUri: "suite://v1/focus-preferences",
+    inputSchema: z.object({}).strict(),
+    outputSchema: focusPreferenceSnapshotSchema,
+  },
+  {
+    id: "calendar_subscriptions.list",
+    kind: "resource",
+    scopes: ["schedule:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/calendar-subscriptions",
+    mcpName: "suite.calendar_subscriptions.list",
+    mcpUri: "suite://v1/calendar-subscriptions{?from,to}",
+    inputSchema: calendarSubscriptionResourceInputSchema,
+    outputSchema: calendarSubscriptionResourceSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2710,34 +3038,44 @@ export const automationCatalog = [
         ? "notifications:test"
         : id === "planning.update_preferences"
           ? "planning:write"
-          : id === "notifications.update_preferences"
-            ? "notifications:write"
-            : id.startsWith("projects.")
-              ? "projects:write"
-              : id.startsWith("tags.")
-                ? "tags:write"
-                : id === "notes.mutate"
-                  ? "notes:write"
-                  : id === "task_links.mutate"
-                    ? "task_links:write"
-                    : id === "habits.mutate"
-                      ? "habits:write"
-                      : id.startsWith("counters.") || id === "evaluations.write"
-                        ? "metrics:write"
-                        : id.startsWith("tasks.") ||
-                            id.startsWith("recurrence.") ||
-                            id === "subtasks.mutate" ||
-                            id === "time_entries.mutate" ||
-                            id === "day_order.reorder"
-                          ? "tasks:write"
-                          : id === "schedule.create_time_block"
-                            ? "schedule:write"
-                            : id.startsWith("templates.") ||
-                                id.startsWith("template_sets.")
-                              ? "templates:write"
-                              : id === "placeholders.resolve"
-                                ? "pools:write"
-                                : "focus:write",
+          : id === "application.update_preferences"
+            ? "application:write"
+            : id === "notifications.update_preferences"
+              ? "notifications:write"
+              : id.startsWith("projects.")
+                ? "projects:write"
+                : id.startsWith("tags.")
+                  ? "tags:write"
+                  : id === "notes.mutate"
+                    ? "notes:write"
+                    : id === "task_links.mutate"
+                      ? "task_links:write"
+                      : id === "habits.mutate"
+                        ? "habits:write"
+                        : id.startsWith("counters.") ||
+                            id === "evaluations.write"
+                          ? "metrics:write"
+                          : id.startsWith("tasks.") ||
+                              id.startsWith("recurrence.") ||
+                              id === "subtasks.mutate" ||
+                              id === "time_entries.mutate" ||
+                              id === "day_order.reorder" ||
+                              id === "boards.mutate" ||
+                              id === "sections.mutate" ||
+                              id === "task_views.set" ||
+                              id === "menu_folders.mutate" ||
+                              id === "calendar_subscriptions.convert_event"
+                            ? "tasks:write"
+                            : id === "schedule.create_time_block" ||
+                                id === "calendar_subscriptions.refresh" ||
+                                id === "calendar_subscriptions.hide_event"
+                              ? "schedule:write"
+                              : id.startsWith("templates.") ||
+                                  id.startsWith("template_sets.")
+                                ? "templates:write"
+                                : id === "placeholders.resolve"
+                                  ? "pools:write"
+                                  : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -2751,6 +3089,7 @@ export const automationCatalog = [
     scopes: [
       "notifications:test",
       "planning:write",
+      "application:write",
       "notifications:write",
       "tasks:write",
       "projects:write",
@@ -2894,7 +3233,16 @@ export type BaikalStatusResponse = z.infer<typeof baikalStatusResponseSchema>;
 export type CalendarEventIdentity = z.infer<typeof calendarEventIdentitySchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
+export type TaskBatchCreateRequest = z.input<
+  typeof taskBatchCreateRequestSchema
+>;
+export type TaskBatchMutationResponse = z.infer<
+  typeof taskBatchMutationResponseSchema
+>;
 export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
+export type CalendarSubscriptionConversionResponse = z.infer<
+  typeof calendarSubscriptionConversionResponseSchema
+>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
 export type HabitListResponse = z.infer<typeof habitListResponseSchema>;
 export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
@@ -3165,5 +3513,19 @@ export const taskImportApplyResponseSchema = z
       .optional(),
     /** ADR 0027: dates whose Today or planner-day order was saved. */
     dayOrders: z.number().int().nonnegative().optional(),
+    /** ADR 0028: boards, sections and sidebar folders. */
+    boards: z
+      .object({
+        boards: z.number().int().nonnegative(),
+        sections: z.number().int().nonnegative(),
+        folders: z.number().int().nonnegative(),
+        existing: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    /** ADR 0029: focus settings applied on first import, or skipped. */
+    focusPreferences: z.enum(["applied", "skipped"]).optional(),
+    /** ADR 0030: application and planning settings applied from globalConfig. */
+    applicationPreferences: z.number().int().nonnegative().optional(),
   })
   .strict();

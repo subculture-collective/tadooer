@@ -27,10 +27,22 @@ import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
 import { OrganizationPanel } from "../components/organization/OrganizationPanel.tsx";
 import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
+import { NoteMarkdown } from "../components/notes/NoteMarkdown.tsx";
+import { useApplicationPreferences } from "../application-preferences.tsx";
 import {
   RecurringSeriesManager,
   TaskRecurrencePanel,
 } from "../components/tasks/TaskRecurrence.tsx";
+import {
+  MenuFolderManager,
+  SectionsPanel,
+  TaskViewControls,
+  applyTaskView,
+  groupByFolder,
+  useMenuFolders,
+  useSavedTaskView,
+  viewContextFor,
+} from "../components/tasks/TaskViews.tsx";
 
 export interface TasksPageProps extends TaskHierarchyActions {
   readonly tasks: readonly Task[];
@@ -137,12 +149,38 @@ export const TasksPage = ({
   onCreateChildTask,
   onMoveTask,
 }: TasksPageProps) => {
+  // ADR 0030: task notes use the same safe Markdown subset as notes.
+  const { markdownInNotes } = useApplicationPreferences().snapshot.preferences;
   const visibleIds = new Set(visibleTasks.map(({ id }) => id));
   const today = zonedCalendarDate(new Date(), timeZone);
+  // Saved view, sections and sidebar folders (ADR 0028): online HTTP records.
+  const viewContext = viewContextFor(taskProjectFilter, taskTagFilter);
+  const savedView = useSavedTaskView(
+    organization?.csrfToken,
+    organization?.online === true,
+    viewContext,
+  );
+  const { folders, setFolders } = useMenuFolders(
+    organization?.csrfToken,
+    organization?.online === true,
+  );
+  const viewLabels = {
+    tag: (tagId: string) =>
+      tags.find(({ id }) => id === tagId)?.displayName ?? "Unknown tag",
+    project: (projectId: string) =>
+      projects.find(({ id }) => id === projectId)?.title ?? "Unknown project",
+  };
   // Children render under a visible parent; a child whose parent is filtered
   // out stays visible at top level with its placement shown.
   const topLevel = visibleTasks.filter(
     (task) => task.parentId == null || !visibleIds.has(task.parentId),
+  );
+  const viewGroups = applyTaskView(
+    topLevel,
+    savedView.view,
+    { today, timeZone },
+    viewLabels,
+    savedView.timeSpentMinutes,
   );
   const { childrenByParent } = groupTaskHierarchy(visibleTasks);
   const allChildren = groupTaskHierarchy(tasks).childrenByParent;
@@ -167,7 +205,12 @@ export const TasksPage = ({
           {task.revision}
         </small>
       </div>
-      {task.notes !== "" && <span>{task.notes}</span>}
+      {task.notes !== "" &&
+        (markdownInNotes ? (
+          <NoteMarkdown content={task.notes} />
+        ) : (
+          <span>{task.notes}</span>
+        ))}
       {provenance[task.id] !== undefined && (
         <p className="template-provenance">Created from a reusable template.</p>
       )}
@@ -429,6 +472,17 @@ export const TasksPage = ({
         />
       )}
       {organization !== undefined && (
+        <MenuFolderManager
+          csrfToken={organization.csrfToken}
+          online={organization.online}
+          folders={folders}
+          onFoldersChange={setFolders}
+          projects={projects}
+          tags={tags}
+          busy={busy}
+        />
+      )}
+      {organization !== undefined && (
         <RecurringSeriesManager
           csrfToken={organization.csrfToken}
           online={organization.online}
@@ -470,16 +524,33 @@ export const TasksPage = ({
               }
             >
               <option value="">All projects</option>
-              {projects
-                .filter(
+              {groupByFolder(
+                projects.filter(
                   (project) =>
                     !project.hiddenFromMenu || project.id === taskProjectFilter,
-                )
-                .map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.title}
-                  </option>
-                ))}
+                ),
+                folders,
+                "project",
+              ).map((group) =>
+                group.folder === null ? (
+                  group.items.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.title}
+                    </option>
+                  ))
+                ) : (
+                  <optgroup
+                    key={group.folder.id}
+                    label={`${"· ".repeat(group.depth)}${group.folder.title}`}
+                  >
+                    {group.items.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                ),
+              )}
             </NativeSelect>
           </label>
           <label>
@@ -491,29 +562,88 @@ export const TasksPage = ({
               }
             >
               <option value="">All tags</option>
-              {tags.map((tag) => (
-                <option key={tag.id} value={tag.id}>
-                  {tag.displayName}
-                </option>
-              ))}
+              {groupByFolder(tags, folders, "tag").map((group) =>
+                group.folder === null ? (
+                  group.items.map((tag) => (
+                    <option key={tag.id} value={tag.id}>
+                      {tag.displayName}
+                    </option>
+                  ))
+                ) : (
+                  <optgroup
+                    key={group.folder.id}
+                    label={`${"· ".repeat(group.depth)}${group.folder.title}`}
+                  >
+                    {group.items.map((tag) => (
+                      <option key={tag.id} value={tag.id}>
+                        {tag.displayName}
+                      </option>
+                    ))}
+                  </optgroup>
+                ),
+              )}
             </NativeSelect>
           </label>
         </CardContent>
       </Card>
+      {organization !== undefined && (
+        <TaskViewControls
+          view={savedView.view}
+          online={organization.online}
+          tags={tags}
+          projects={projects}
+          message={savedView.message}
+          onSave={savedView.save}
+        />
+      )}
+      {organization !== undefined &&
+        viewContext.contextKind !== "all" &&
+        viewContext.contextKind !== "today" && (
+          <SectionsPanel
+            csrfToken={organization.csrfToken}
+            online={organization.online}
+            contextKind={viewContext.contextKind}
+            contextId={viewContext.contextId}
+            contextTitle={
+              viewContext.contextKind === "project"
+                ? viewLabels.project(viewContext.contextId)
+                : viewLabels.tag(viewContext.contextId)
+            }
+            tasks={tasks.filter(
+              (task) =>
+                task.deletedAt == null &&
+                (viewContext.contextKind === "project"
+                  ? task.projectId === viewContext.contextId
+                  : task.tagIds?.includes(viewContext.contextId) === true),
+            )}
+            busy={busy}
+          />
+        )}
       <SectionHeading as="h2" title="Captured tasks" />
-      {visibleTasks.length === 0 ? (
+      {visibleTasks.length === 0 ||
+      viewGroups.every((group) => group.tasks.length === 0) ? (
         <EmptyState title="No tasks match these filters." />
       ) : (
-        <ul className="tasks">
-          {topLevel.map((task) =>
-            renderTask(
-              task,
-              task.parentId == null
-                ? []
-                : (allChildren.get(task.parentId) ?? []),
-            ),
-          )}
-        </ul>
+        viewGroups.map((group) => (
+          <div key={group.key} className="task-view-group">
+            {group.label !== "" && (
+              <SectionHeading
+                as="h3"
+                title={`${group.label} (${String(group.tasks.length)})`}
+              />
+            )}
+            <ul className="tasks">
+              {group.tasks.map((task) =>
+                renderTask(
+                  task,
+                  task.parentId == null
+                    ? []
+                    : (allChildren.get(task.parentId) ?? []),
+                ),
+              )}
+            </ul>
+          </div>
+        ))
       )}
       <Card className="recovery">
         <CardHeader>

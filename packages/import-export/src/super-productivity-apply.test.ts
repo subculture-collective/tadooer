@@ -101,13 +101,19 @@ it("keeps Today and board system tags out of ordinary tags", () => {
   expect(
     today.report.issues.filter(({ code }) => code === "day_order_notice"),
   ).toHaveLength(2);
-  // Used priority markers need #63 first.
-  expect(
-    prepare(
-      { tag: state({ EM_URGENT: { id: "EM_URGENT", title: "urgent" } }) },
-      { tagIds: ["EM_URGENT"] },
-    ).report.canApply,
-  ).toBe(false);
+  // Priority markers apply as board markers on the task (ADR 0028).
+  const urgent = prepare(
+    { tag: state({ EM_URGENT: { id: "EM_URGENT", title: "urgent" } }) },
+    { tagIds: ["EM_URGENT"] },
+  );
+  expect(urgent.report.canApply).toBe(true);
+  expect(urgent.records.filter(({ kind }) => kind === "tag")).toEqual([]);
+  expect(urgent.records.find(({ kind }) => kind === "task")?.tagIds).toEqual(
+    [],
+  );
+  expect(urgent.boards.taskMarkers).toEqual([
+    { sourceTaskId: "t", markers: ["urgent"] },
+  ]);
 });
 
 it("maps project lifecycle, appearance, backlog, menu order and notes", () => {
@@ -179,7 +185,7 @@ it("maps project lifecycle, appearance, backlog, menu order and notes", () => {
       .map(({ code }) => code)
       .every((code) => code === "configuration_not_imported"),
   ).toBe(true);
-  expect(report.issues.map(({ detail }) => detail).join("\n")).toMatch(
+  expect(report.issues.map(({ detail }) => detail).join("\n")).not.toMatch(
     /folders are not imported/,
   );
   expect(records.map(({ kind, sourceId }) => `${kind}:${sourceId}`)).toEqual([
@@ -265,10 +271,13 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
   const codes = (report: ReturnType<typeof prepare>) =>
     report.issues.map(({ code }) => code);
 
-  // Configuration is reported without blocking. Counters and metric days
-  // apply since #64 (ADR 0025).
+  // Boards (#63) and globalConfig (#67) apply per field; counters and
+  // metric days apply since #64 (ADR 0025). Nothing here blocks.
   const configured = prepare({
-    boards: { boardCfgs: [{ id: "kanban" }] },
+    globalConfig: { localization: { lng: "en" } },
+    boards: {
+      boardCfgs: [{ id: "kanban", title: "Kanban", cols: 1, panels: [] }],
+    },
     menuTree: { projectTree: [], tagTree: [] },
     simpleCounter: state({
       c: { id: "c", title: "C", type: "ClickCounter", countOnDay: {} },
@@ -278,8 +287,8 @@ it("reports every export section and blocks unreviewed or unsupported data", () 
     timeTracking: { project: {}, tag: {} },
   });
   expect(configured.canApply).toBe(true);
-  expect(codes(configured)).toEqual([
-    "configuration_not_imported",
+  expect(codes(configured).toSorted()).toEqual([
+    "config_applied",
     "counter_reconciliation",
   ]);
 

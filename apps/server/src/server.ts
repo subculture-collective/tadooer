@@ -15,11 +15,16 @@ import { AuthService } from "./auth.ts";
 import { sendError } from "./http-utils.ts";
 import { BaikalConnectorService } from "./connector.ts";
 import { GoogleConnectorService } from "./google-connector.ts";
+import {
+  CalendarSubscriptionService,
+  type AddressLookup,
+} from "./calendar-subscriptions.ts";
 import { loadNtfyPublisherConfig, NtfyPublisher } from "./notifications.ts";
 import type { RouteContext } from "./routes/shared.ts";
 import { handleHealth } from "./routes/health.ts";
 import { handleAuthSetup } from "./routes/auth-setup.ts";
 import { handleTasks } from "./routes/tasks.ts";
+import { handleCapture } from "./routes/capture.ts";
 import { handleTaskImport } from "./routes/task-import.ts";
 import { handlePlanner } from "./routes/planner.ts";
 import { handleConnectors } from "./routes/connectors.ts";
@@ -37,9 +42,15 @@ import { handleTimeHistory } from "./routes/time-history.ts";
 import { handleCounters } from "./routes/counters.ts";
 import { handlePluginData } from "./routes/plugin-data.ts";
 import { handleDayOrder } from "./routes/day-order.ts";
+import { handleBoards } from "./routes/boards.ts";
+import { handleBoardViews } from "./routes/board-views.ts";
+import { handleFocus } from "./routes/focus.ts";
+import { runFocusReminders } from "./focus-reminders.ts";
+import { handleApplicationPreferences } from "./routes/application-preferences.ts";
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
+import { handleCalendarSubscriptions } from "./routes/calendar-subscriptions.ts";
 import { handleAutomation } from "./routes/automation.ts";
 import { handleNotifications } from "./routes/notifications.ts";
 import { handleHabits } from "./routes/habits.ts";
@@ -54,6 +65,9 @@ export interface RunningSuiteServer {
 export interface SuiteServerOptions {
   readonly connectorFetch?: typeof fetch;
   readonly googleFetch?: typeof fetch;
+  /** iCal subscription fetches (ADR 0032); tests supply fakes. */
+  readonly subscriptionFetch?: typeof fetch;
+  readonly subscriptionLookup?: AddressLookup;
   readonly sessionClock?: SessionClock;
   readonly notificationFetch?: typeof fetch;
   readonly notificationIntervalMs?: number;
@@ -79,6 +93,18 @@ export const startSuiteServer = async (
     config.googleOAuthConfigPath,
     options.googleFetch,
   );
+  const calendarSubscriptions = new CalendarSubscriptionService(
+    database,
+    config.credentialKeyPath,
+    {
+      ...(options.subscriptionFetch === undefined
+        ? {}
+        : { fetch: options.subscriptionFetch }),
+      ...(options.subscriptionLookup === undefined
+        ? {}
+        : { lookup: options.subscriptionLookup }),
+    },
+  );
   const requestCounts = new Map<number, number>();
   const notificationConfig = loadNtfyPublisherConfig(
     config.ntfyPublisherConfigPath,
@@ -103,6 +129,14 @@ export const startSuiteServer = async (
       });
     } catch {
       console.error("recurrence.generate_failed");
+    }
+    // ADR 0032: fetch due iCal subscriptions, then create today's tasks for
+    // auto-import subscriptions. Failures are recorded per subscription.
+    try {
+      await calendarSubscriptions.refreshDue(now);
+      calendarSubscriptions.autoImport(ownerId, now);
+    } catch {
+      console.error("calendar_subscriptions.tick_failed");
     }
     const preferences = database.getNotificationPreferences(ownerId);
     const tasks = database.listTasks(ownerId);
@@ -142,6 +176,19 @@ export const startSuiteServer = async (
       }
     }
     if (!preferences.enabled || notificationPublisher === undefined) return;
+    // ADR 0029: focus reminders share the ledger but not the task loop below.
+    try {
+      await runFocusReminders({
+        database,
+        sessionClock,
+        ownerId,
+        publisher: notificationPublisher,
+        detailedContentEnabled: preferences.detailedContentEnabled,
+        clickOrigin: config.publicOrigin ?? "http://localhost",
+      });
+    } catch {
+      console.error("focus.reminders_failed");
+    }
     const planning = database.getPlanningPreferences(ownerId);
     const window = zonedDayWindow(now, planning.timeZone);
     const events = database.listCalendarEvents(ownerId, window.from, window.to);
@@ -162,7 +209,13 @@ export const startSuiteServer = async (
         ? active.taskId
         : null;
     for (const due of database.listDueNotificationDeliveries(now)) {
-      if (due.ownerId !== ownerId || due.taskId === null || due.kind === "test")
+      if (
+        due.ownerId !== ownerId ||
+        due.taskId === null ||
+        (due.kind !== "lead" &&
+          due.kind !== "at_start" &&
+          due.kind !== "deadline")
+      )
         continue;
       const claimed = database.claimNotificationDelivery(due.id, now);
       if (claimed === undefined) continue;
@@ -273,6 +326,7 @@ export const startSuiteServer = async (
     config,
     baikal: connector,
     google,
+    calendarSubscriptions,
     ntfy: notificationPublisher,
     sessionClock,
     requestCounts,
@@ -286,10 +340,12 @@ export const startSuiteServer = async (
     handleSync,
     handleActiveSession,
     handleCalendar,
+    handleCalendarSubscriptions,
     handleAutomation,
     handleNotifications,
     handleHabits,
     handleTasks,
+    handleCapture,
     handleTaskImport,
     handlePlanner,
     handleProjects,
@@ -304,6 +360,10 @@ export const startSuiteServer = async (
     handleCounters,
     handlePluginData,
     handleDayOrder,
+    handleBoards,
+    handleBoardViews,
+    handleFocus,
+    handleApplicationPreferences,
     handleChoicePools,
     handleTemplates,
     handleStatic,

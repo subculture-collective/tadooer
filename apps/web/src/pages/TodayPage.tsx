@@ -7,7 +7,11 @@ import type {
   PlannerResponse,
   Task,
 } from "@suite/contracts";
-import { FocusPanel, type FocusPanelCommand } from "../focus-panel.tsx";
+import {
+  FocusPanel,
+  type FocusPanelCommand,
+  type FocusPanelTimerProps,
+} from "../focus-panel.tsx";
 import { TodayQueue } from "../today-queue.tsx";
 import { TaskCaptureForm } from "../components/tasks/TaskCaptureForm.tsx";
 import { Badge } from "../components/ui/badge.tsx";
@@ -23,6 +27,8 @@ import {
   type DayOrderApi,
 } from "../day-order.tsx";
 import { PlanTomorrowPanel } from "../plan-tomorrow.tsx";
+import { NoteMarkdown } from "../components/notes/NoteMarkdown.tsx";
+import { useApplicationPreferences } from "../application-preferences.tsx";
 
 export interface TodayPageProps {
   readonly dayPlan: DayPlanResponse | undefined;
@@ -56,6 +62,8 @@ export interface TodayPageProps {
   /** Called after tasks were planned so the task list can refresh. */
   readonly onTasksPlanned?: (() => void) | undefined;
   readonly dayOrderApi?: DayOrderApi | undefined;
+  /** ADR 0029: server timer state and the preset control. */
+  readonly focus?: FocusPanelTimerProps | undefined;
 }
 const calmStateLabel: Readonly<Record<DayPlanResponse["state"], string>> = {
   working: "Working",
@@ -76,6 +84,8 @@ export const updateHiddenCalendarIds = (
       : [...current, calendarId];
 
 export const TodayPage = (props: TodayPageProps) => {
+  // ADR 0030: the owner's daily summary note text.
+  const { dailySummaryNote } = useApplicationPreferences().snapshot.preferences;
   const {
     dayPlan,
     planningPreferences,
@@ -98,6 +108,7 @@ export const TodayPage = (props: TodayPageProps) => {
     online = false,
     onTasksPlanned,
     dayOrderApi,
+    focus,
   } = props;
   const [logicalAt, setLogicalAt] = useState(
     dayPlan?.at ?? new Date().toISOString(),
@@ -164,7 +175,26 @@ export const TodayPage = (props: TodayPageProps) => {
             ? "Syncing local tasks."
             : "Task sync is available."}
       </p>
-      <TaskCaptureForm busy={busy} onSubmit={onSubmitTask} />
+      {dailySummaryNote.trim() !== "" && (
+        <Card aria-labelledby="daily-summary-note-title">
+          <CardHeader>
+            <SectionHeading
+              as="h3"
+              id="daily-summary-note-title"
+              title="Daily note"
+            />
+          </CardHeader>
+          <CardContent>
+            <NoteMarkdown content={dailySummaryNote} />
+          </CardContent>
+        </Card>
+      )}
+      <TaskCaptureForm
+        busy={busy}
+        onSubmit={onSubmitTask}
+        csrfToken={syncStatus === "offline" ? undefined : csrfToken}
+        onTasksCreated={onTasksPlanned}
+      />
       <FocusPanel
         tasks={tasks}
         activeSession={activeSession}
@@ -173,6 +203,7 @@ export const TodayPage = (props: TodayPageProps) => {
         online={focusActionsAvailable}
         onCommand={onFocusCommand}
         showStartForm={false}
+        focus={focus}
       />
       <TodayQueue
         at={logicalAt}

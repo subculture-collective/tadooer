@@ -75,6 +75,10 @@ export const SuperProductivityImport = ({
           result.pluginData === undefined
             ? ""
             : ` Plugin records: ${String(result.pluginData.created)} kept, ${String(result.pluginData.existing)} already imported.`
+        }${
+          result.applicationPreferences === undefined
+            ? ""
+            : ` Settings applied: ${String(result.applicationPreferences)}.`
         }`,
       );
       setApproved(false);

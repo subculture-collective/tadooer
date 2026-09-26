@@ -27,10 +27,12 @@ export const superProductivitySections = {
   // timeTracking part applies since #41 (ADR 0024).
   archiveYoung: "applied",
   archiveOld: "applied",
-  // Notes and menu order apply since #28 (ADR 0019); menuTree folders do not.
+  // Notes and menu order apply since #28 (ADR 0019); menuTree folders apply
+  // since #63 (ADR 0028), with boards and sections. Their fields are in
+  // super-productivity-boards.ts.
   note: "applied",
   menuTree: "applied",
-  section: "blocked",
+  section: "applied",
   reminders: "blocked",
   // Metric days apply as daily evaluations since #64 (ADR 0025); their
   // fields are classified in super-productivity-counters.ts.
@@ -45,8 +47,11 @@ export const superProductivitySections = {
   // Planner day order applies as saved day orders since #98 (ADR 0027); its
   // keys are classified in super-productivity-day-order.ts.
   planner: "applied",
-  boards: "configuration",
-  globalConfig: "configuration",
+  boards: "applied",
+  // Safe application, shortcut and planning settings apply since #67
+  // (ADR 0030); every section and field is classified in
+  // super-productivity-config.ts. Credentials are never read.
+  globalConfig: "applied",
   // Provider configuration holds credentials. The importer reads only each
   // provider's id and key (and a Gitea host and repository to rebuild issue
   // addresses); nothing from this section is stored.
@@ -174,9 +179,9 @@ export const superProductivityNoteFields = {
 } as const satisfies Record<string, FieldDisposition>;
 
 /**
- * Super Productivity system tags. They are derived views or board state, never
- * ordinary imported tags: TODAY is the Today view (#29) and the others belong
- * to the Eisenhower/Kanban boards (#63).
+ * Super Productivity system tags. They are derived views or board markers,
+ * never ordinary imported tags: TODAY is the Today view (#29, ADR 0027) and
+ * the others are board markers on the task (#63, ADR 0028).
  */
 export const superProductivitySystemTagIds = [
   "TODAY",

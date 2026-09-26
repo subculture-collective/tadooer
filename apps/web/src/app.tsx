@@ -17,6 +17,7 @@ import { HabitsPage } from "./pages/HabitsPage.tsx";
 import { HistoryPage } from "./pages/HistoryPage.tsx";
 import { WorklogPage } from "./pages/WorklogPage.tsx";
 import { CountersPage } from "./pages/CountersPage.tsx";
+import { BoardsPage } from "./pages/BoardsPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
@@ -109,6 +110,9 @@ import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
 import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
 import { Field } from "./field.tsx";
 import type { FocusPanelCommand } from "./focus-panel.tsx";
+import { useFocusController } from "./focus-controller.ts";
+import { FocusReminders } from "./focus-reminders.tsx";
+import { IdleReturnDialog } from "./idle-return-dialog.tsx";
 import type {
   TemplateBlueprintView,
   TemplateSetView,
@@ -130,6 +134,12 @@ import {
 } from "./app/routes.ts";
 import { AppShell } from "./components/shell/AppShell.tsx";
 import { CommandBar } from "./components/command-bar/CommandBar.tsx";
+import {
+  ApplicationPreferencesProvider,
+  useApplicationPreferencesController,
+} from "./application-preferences.tsx";
+import { ShortcutHelpDialog } from "./components/shortcuts/ShortcutHelpDialog.tsx";
+import { shortcutActionFor } from "./shortcuts.ts";
 
 export type AppState =
   | { readonly kind: "loading" }
@@ -305,6 +315,23 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     if (typeof history !== "undefined") history.pushState({}, "", `/${next}`);
     setRoute(next);
   };
+
+  // ADR 0030: application preferences, theme and shortcuts for this session.
+  const appPreferences = useApplicationPreferencesController(
+    state.kind === "authenticated" ? state.session.csrfToken : undefined,
+  );
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [startPageApplied, setStartPageApplied] = useState(false);
+  const defaultStartPage = appPreferences.snapshot.preferences.defaultStartPage;
+  useEffect(() => {
+    if (!appPreferences.loaded || startPageApplied) return;
+    setStartPageApplied(true);
+    const path =
+      initialPath ??
+      (typeof window === "undefined" ? "/" : window.location.pathname);
+    if (path === "/" || path === "") navigate(defaultStartPage);
+    // navigate is a stable closure over setRoute; the effect runs once per load.
+  }, [appPreferences.loaded, startPageApplied, defaultStartPage, initialPath]);
 
   const publishPlanner = useCallback((planner: PlannerResponse) => {
     setState((current) =>
@@ -991,6 +1018,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           title: formValue(data, "title"),
           notes: formValue(data, "notes"),
           structured: true,
+          createTags: data.get("createTags") === "on",
           estimateMinutes:
             Number.isInteger(estimate) && estimate > 0 ? estimate : null,
         };
@@ -1157,6 +1185,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
 
   const removeTask = async (task: Task): Promise<void> => {
     if (state.kind !== "authenticated" && state.kind !== "offline") return;
+    // ADR 0030 confirmBeforeDelete; deleted tasks stay recoverable.
+    if (
+      appPreferences.snapshot.preferences.confirmBeforeDelete &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Delete “${task.title}”? It can be recovered from Deleted tasks.`,
+      )
+    )
+      return;
     setBusy(true);
     setFormError(null);
     try {
@@ -1212,6 +1249,32 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       setBusy(false);
     }
   };
+
+  // ADR 0029: focus presets, idle disposition and break reminders.
+  const focus = useFocusController({
+    authenticated: state.kind === "authenticated",
+    client: state.kind === "authenticated" ? state.client : undefined,
+    csrfToken:
+      state.kind === "authenticated" ? state.session.csrfToken : undefined,
+    activeSession:
+      state.kind === "authenticated" ? state.activeSession : undefined,
+    online: networkOnline,
+    tasks: state.kind === "authenticated" ? state.tasks : [],
+    onSessionChanged: (session) =>
+      setState((current) =>
+        current.kind === "authenticated"
+          ? { ...current, activeSession: session }
+          : current,
+      ),
+    onSessionCommand: (command, session) =>
+      void handleFocusCommand({
+        command,
+        sessionId: session.id,
+        expectedRevision: session.revision,
+      }),
+    onNavigateToday: () => navigate("today"),
+    onError: (message) => setFormError(message),
+  });
 
   const submitOrganization = async (
     event: SyntheticEvent<HTMLFormElement, SubmitEvent>,
@@ -1600,6 +1663,81 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       setBusy(false);
     }
   };
+
+  // ADR 0030 keyboard shortcuts. Bindings come from the preferences record;
+  // the command bar handles its own binding.
+  const shortcutOverrides = appPreferences.snapshot.preferences.shortcuts;
+  useEffect(() => {
+    if (state.kind !== "authenticated" || typeof window === "undefined") return;
+    const selectedTask = (): Task | undefined => {
+      const row =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement.closest<HTMLElement>("[data-task-id]")
+          : null;
+      const id = row?.dataset.taskId ?? state.activeSession?.taskId;
+      return state.tasks.find((task) => task.id === id);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented) return;
+      const action = shortcutActionFor(event, shortcutOverrides);
+      if (action === undefined || action === "command_bar.open") return;
+      event.preventDefault();
+      if (action.startsWith("navigate.")) {
+        const target = workspaceRoutes.find(
+          (candidate) => `navigate.${candidate}` === action,
+        );
+        if (target !== undefined) navigate(target);
+        return;
+      }
+      switch (action) {
+        case "help.shortcuts":
+          setShortcutHelpOpen((open) => !open);
+          return;
+        case "sync.now":
+          void syncNow();
+          return;
+        case "task.add": {
+          if (route !== "today" && route !== "inbox") navigate("today");
+          window.setTimeout(() => {
+            document
+              .querySelector<HTMLInputElement>('form input[name="title"]')
+              ?.focus();
+          }, 0);
+          return;
+        }
+        case "task.toggle_done": {
+          const task = selectedTask();
+          if (task !== undefined)
+            void changeTaskStatus(
+              task,
+              task.status === "completed" ? "reopen" : "complete",
+            );
+          return;
+        }
+        case "focus.toggle": {
+          const session = state.activeSession;
+          if (
+            session != null &&
+            session.state !== "completed" &&
+            session.state !== "expired"
+          ) {
+            void handleFocusCommand({
+              command: "complete",
+              sessionId: session.id,
+              expectedRevision: session.revision,
+            });
+            return;
+          }
+          const task = selectedTask();
+          if (task?.status === "open")
+            void handleFocusCommand({ command: "start", taskId: task.id });
+          return;
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   const refreshTemplateLibrary = async (query = ""): Promise<void> => {
     const [library, sets] = await Promise.all([
@@ -2350,235 +2488,263 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       : state.dayPlan;
 
   return (
-    <AppShell
-      route={route}
-      onNavigate={navigate}
-      syncStatus={state.syncStatus}
-      conflictCount={state.conflictCount}
-      baikalConnected={state.baikal.connected}
-      formError={formError}
-      onSignOut={() => void signOut()}
-      commandTrigger={
-        <CommandBar
-          onNavigate={navigate}
-          onSyncNow={() => void syncNow()}
-          syncAvailable={networkOnline && state.client !== undefined}
+    <ApplicationPreferencesProvider value={appPreferences}>
+      <AppShell
+        route={route}
+        onNavigate={navigate}
+        syncStatus={state.syncStatus}
+        conflictCount={state.conflictCount}
+        baikalConnected={state.baikal.connected}
+        formError={formError}
+        onSignOut={() => void signOut()}
+        commandTrigger={
+          <CommandBar
+            onNavigate={navigate}
+            onSyncNow={() => void syncNow()}
+            syncAvailable={networkOnline && state.client !== undefined}
+            onShowShortcuts={() => setShortcutHelpOpen(true)}
+          />
+        }
+      >
+        <ShortcutHelpDialog
+          open={shortcutHelpOpen}
+          overrides={shortcutOverrides}
+          onOpenChange={setShortcutHelpOpen}
         />
-      }
-    >
-      {recovery}
-      <SyncConflictReview
-        reviews={state.conflictReviews ?? []}
-        busy={busy}
-        onResolve={resolveConflict}
-      />
-      {route === "today" && (
-        <TodayPage
-          dayPlan={dayPlanView}
-          planningPreferences={state.planningPreferences}
-          tasks={state.tasks}
-          activeSession={state.activeSession ?? null}
-          clientId={state.client?.clientId ?? null}
-          syncStatus={state.syncStatus}
-          planner={plannerView}
-          baikalCalendars={state.baikal.calendars}
-          calendarActionsAvailable={networkOnline}
-          focusActionsAvailable={networkOnline && state.client !== undefined}
+        {recovery}
+        <SyncConflictReview
+          reviews={state.conflictReviews ?? []}
           busy={busy}
-          onFocusCommand={(command) => void handleFocusCommand(command)}
-          onSubmitTask={submitTask}
-          onChangeTaskStatus={changeTaskStatus}
-          onSubmitTimeBlock={submitTimeBlock}
-          onRemoveTimeBlock={removeTimeBlock}
-          onViewTasks={() => navigate("tasks")}
-          csrfToken={state.session.csrfToken}
-          online={networkOnline}
-          onTasksPlanned={() => void syncNow()}
+          onResolve={resolveConflict}
         />
-      )}
-      {route === "inbox" && (
-        <InboxPage
-          tasks={state.tasks}
-          activeSession={state.activeSession ?? null}
-          calendars={state.baikal.calendars}
-          busy={busy}
-          calendarActionsAvailable={networkOnline}
-          focusActionsAvailable={networkOnline && state.client !== undefined}
-          onSubmitTask={submitTask}
-          onStartFocus={(task) =>
-            void handleFocusCommand({ command: "start", taskId: task.id })
-          }
-          onChangeTaskStatus={changeTaskStatus}
-          onSubmitTimeBlock={submitTimeBlock}
-          onRemoveTimeBlock={removeTimeBlock}
+        <FocusReminders
+          {...focus.reminders}
+          busy={busy || focus.busy}
+          online={networkOnline && state.client !== undefined}
         />
-      )}
-      {route === "planner" && (
-        <PlannerPage
-          planner={plannerView}
-          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
-          busy={busy}
-          onLoadPlanner={loadPlanner}
-          loading={plannerLoading}
-          error={plannerError}
-          tasks={state.tasks}
-          onChangeTaskStatus={changeTaskStatus}
-          onSubmitTaskEdit={submitPlannerTaskEdit}
-          calendars={state.baikal.calendars}
-          onSubmitTimeBlock={submitPlannerTimeBlock}
-          onRemoveTimeBlock={removePlannerTimeBlock}
-          csrfToken={state.session.csrfToken}
-          online={networkOnline}
-        />
-      )}
-      {route === "tasks" && (
-        <TasksPage
-          tasks={state.tasks}
-          visibleTasks={visibleTasks}
-          recovery={state.recovery}
-          projects={projects}
-          tags={tags}
-          subtasks={subtasks}
-          provenance={templateProvenance}
-          baikalCalendars={state.baikal.calendars}
-          taskQuery={taskQuery}
-          taskStatusFilter={taskStatusFilter}
-          taskProjectFilter={taskProjectFilter}
-          taskTagFilter={taskTagFilter}
-          busy={busy}
-          calendarActionsAvailable={networkOnline}
-          onTaskQueryChange={setTaskQuery}
-          onTaskStatusFilterChange={setTaskStatusFilter}
-          onTaskProjectFilterChange={setTaskProjectFilter}
-          onTaskTagFilterChange={setTaskTagFilter}
-          onSubmitOrganization={submitOrganization}
-          onSubmitTaskEdit={submitTaskEdit}
-          onSubmitTimeBlock={submitTimeBlock}
-          onRemoveTimeBlock={removeTimeBlock}
-          onSubmitTaskOrganization={submitTaskOrganization}
-          onSubmitSubtask={submitSubtask}
-          onChangeSubtask={changeSubtask}
-          onSaveTaskAsTemplate={saveTaskAsTemplate}
-          onChangeTaskStatus={changeTaskStatus}
-          onRemoveTask={removeTask}
-          onRecoverTask={recoverTask}
-          onArchiveTask={archiveTaskToHistory}
-          organization={{
-            csrfToken: state.session.csrfToken,
-            online: networkOnline,
-            onProjectsChange: setProjects,
-            onTagsChange: setTags,
-          }}
-          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
-          onSubmitTaskPlanning={submitTaskPlanning}
-          {...taskHierarchyActions}
-        />
-      )}
-      {route === "history" && (
-        <HistoryPage
-          csrfToken={state.session.csrfToken}
-          online={networkOnline}
-          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
-          projects={projects}
-          onRestored={syncNow}
-        />
-      )}
-      {route === "worklog" && (
-        <WorklogPage
-          csrfToken={state.session.csrfToken}
-          online={networkOnline}
-          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
-          tasks={state.tasks.filter((task) => task.deletedAt === null)}
-          projects={projects}
-        />
-      )}
-      {route === "counters" && (
-        <CountersPage
-          csrfToken={state.session.csrfToken}
-          online={networkOnline}
-          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
-        />
-      )}
-      {route === "habits" && (
-        <HabitsPage
-          library={habitLibrary}
-          timeZone={state.planningPreferences?.timeZone ?? "UTC"}
-          online={networkOnline}
-          pending={habitPending}
-          onCommand={submitHabit}
-        />
-      )}
-      {route === "reuse" && (
-        <ReusePage
-          templates={templates}
-          templateBlueprints={templateBlueprints}
-          templateSets={templateSets}
-          choicePools={choicePools}
-          choicePoolItems={choicePoolItems}
-          choicePoolHistory={choicePoolHistory}
-          planningPlaceholders={planningPlaceholders}
-          templatePoolSlots={templatePoolSlots}
-          tasks={state.tasks}
-          projects={projects
-            .filter((project) => project.archivedAt === null)
-            .map(({ id, title }) => ({ id, title }))}
-          tags={tags
-            .filter((tag) => tag.archivedAt === null)
-            .map(({ id, displayName }) => ({ id, displayName }))}
-          busy={busy}
-          onCreateTemplate={submitTemplateCreate}
-          onSearchTemplates={(query) => void refreshTemplateLibrary(query)}
-          onArchiveTemplate={archiveTemplate}
-          onEditTemplate={editTemplate}
-          onCreateTemplateSet={submitTemplateSetCreate}
-          onInstantiateTemplate={submitTemplateInstantiation}
-          onInstantiateTemplateSet={submitTemplateSetInstantiation}
-          onCreateChoicePool={submitChoicePool}
-          onCreatePlanningPlaceholder={submitPlanningPlaceholder}
-          onEditChoicePool={editChoicePool}
-          onAddTemplatePoolSlot={addTemplatePoolSlot}
-          onRecordChoicePoolCompletion={completeChoicePoolItem}
-          onSuggestPlaceholder={previewPlanningPlaceholder}
-          onResolvePlaceholder={submitPlaceholderResolution}
-        />
-      )}
-      {route === "connections" && (
-        <ConnectionsPage
-          onTaskImport={syncNow}
-          calendarMessage={calendarMessage}
-          baikal={state.baikal}
-          google={googleView}
-          planningPreferences={state.planningPreferences}
-          dayPlan={dayPlanView}
-          csrfToken={state.session.csrfToken}
-          busy={busy}
-          onAuthorizeGoogle={authorizeGoogle}
-          onSyncGoogle={syncGoogleCalendar}
-          onDisconnectGoogle={removeGoogleCalendar}
-          onSavePlanningPreferences={savePlanningPreferences}
-        />
-      )}
-      {route === "settings" && (
-        <SettingsPage
-          google={googleView}
-          planningPreferences={state.planningPreferences}
-          dayPlan={dayPlanView}
-          notificationPreferences={state.notificationPreferences}
-          notificationStatus={state.notificationStatus}
-          syncStatus={state.syncStatus}
-          clientId={state.client?.clientId ?? null}
-          plannerFreshness={state.planner?.freshness.state}
-          busy={busy}
-          onAuthorizeGoogle={authorizeGoogle}
-          onSyncGoogle={syncGoogleCalendar}
-          onDisconnectGoogle={removeGoogleCalendar}
-          onSavePlanningPreferences={savePlanningPreferences}
-          onSaveNotificationPreferences={saveNotificationPreferences}
-          onTestNotification={testNotification}
-          onSyncNow={syncNow}
-          onExportDiagnostics={exportDiagnostics}
-        />
-      )}
-    </AppShell>
+        <IdleReturnDialog {...focus.idleDialog} busy={focus.busy} />
+        {route === "today" && (
+          <TodayPage
+            dayPlan={dayPlanView}
+            planningPreferences={state.planningPreferences}
+            tasks={state.tasks}
+            activeSession={state.activeSession ?? null}
+            clientId={state.client?.clientId ?? null}
+            syncStatus={state.syncStatus}
+            planner={plannerView}
+            baikalCalendars={state.baikal.calendars}
+            calendarActionsAvailable={networkOnline}
+            focusActionsAvailable={networkOnline && state.client !== undefined}
+            busy={busy}
+            onFocusCommand={(command) => void handleFocusCommand(command)}
+            focus={focus.panel}
+            onSubmitTask={submitTask}
+            onChangeTaskStatus={changeTaskStatus}
+            onSubmitTimeBlock={submitTimeBlock}
+            onRemoveTimeBlock={removeTimeBlock}
+            onViewTasks={() => navigate("tasks")}
+            csrfToken={state.session.csrfToken}
+            online={networkOnline}
+            onTasksPlanned={() => void syncNow()}
+          />
+        )}
+        {route === "inbox" && (
+          <InboxPage
+            tasks={state.tasks}
+            activeSession={state.activeSession ?? null}
+            calendars={state.baikal.calendars}
+            busy={busy}
+            calendarActionsAvailable={networkOnline}
+            focusActionsAvailable={networkOnline && state.client !== undefined}
+            onSubmitTask={submitTask}
+            onStartFocus={(task) =>
+              void handleFocusCommand({ command: "start", taskId: task.id })
+            }
+            onChangeTaskStatus={changeTaskStatus}
+            onSubmitTimeBlock={submitTimeBlock}
+            onRemoveTimeBlock={removeTimeBlock}
+          />
+        )}
+        {route === "planner" && (
+          <PlannerPage
+            planner={plannerView}
+            timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+            busy={busy}
+            onLoadPlanner={loadPlanner}
+            loading={plannerLoading}
+            error={plannerError}
+            tasks={state.tasks}
+            onChangeTaskStatus={changeTaskStatus}
+            onSubmitTaskEdit={submitPlannerTaskEdit}
+            calendars={state.baikal.calendars}
+            onSubmitTimeBlock={submitPlannerTimeBlock}
+            onRemoveTimeBlock={removePlannerTimeBlock}
+            csrfToken={state.session.csrfToken}
+            online={networkOnline}
+          />
+        )}
+        {route === "tasks" && (
+          <TasksPage
+            tasks={state.tasks}
+            visibleTasks={visibleTasks}
+            recovery={state.recovery}
+            projects={projects}
+            tags={tags}
+            subtasks={subtasks}
+            provenance={templateProvenance}
+            baikalCalendars={state.baikal.calendars}
+            taskQuery={taskQuery}
+            taskStatusFilter={taskStatusFilter}
+            taskProjectFilter={taskProjectFilter}
+            taskTagFilter={taskTagFilter}
+            busy={busy}
+            calendarActionsAvailable={networkOnline}
+            onTaskQueryChange={setTaskQuery}
+            onTaskStatusFilterChange={setTaskStatusFilter}
+            onTaskProjectFilterChange={setTaskProjectFilter}
+            onTaskTagFilterChange={setTaskTagFilter}
+            onSubmitOrganization={submitOrganization}
+            onSubmitTaskEdit={submitTaskEdit}
+            onSubmitTimeBlock={submitTimeBlock}
+            onRemoveTimeBlock={removeTimeBlock}
+            onSubmitTaskOrganization={submitTaskOrganization}
+            onSubmitSubtask={submitSubtask}
+            onChangeSubtask={changeSubtask}
+            onSaveTaskAsTemplate={saveTaskAsTemplate}
+            onChangeTaskStatus={changeTaskStatus}
+            onRemoveTask={removeTask}
+            onRecoverTask={recoverTask}
+            onArchiveTask={archiveTaskToHistory}
+            organization={{
+              csrfToken: state.session.csrfToken,
+              online: networkOnline,
+              onProjectsChange: setProjects,
+              onTagsChange: setTags,
+            }}
+            timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+            onSubmitTaskPlanning={submitTaskPlanning}
+            {...taskHierarchyActions}
+          />
+        )}
+        {route === "history" && (
+          <HistoryPage
+            csrfToken={state.session.csrfToken}
+            online={networkOnline}
+            timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+            projects={projects}
+            onRestored={syncNow}
+          />
+        )}
+        {route === "worklog" && (
+          <WorklogPage
+            csrfToken={state.session.csrfToken}
+            online={networkOnline}
+            timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+            tasks={state.tasks.filter((task) => task.deletedAt === null)}
+            projects={projects}
+          />
+        )}
+        {route === "boards" && (
+          <BoardsPage
+            csrfToken={state.session.csrfToken}
+            online={networkOnline}
+            tasks={state.tasks.filter((task) => task.deletedAt === null)}
+            projects={projects}
+            tags={tags}
+          />
+        )}
+        {route === "counters" && (
+          <CountersPage
+            csrfToken={state.session.csrfToken}
+            online={networkOnline}
+            timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+          />
+        )}
+        {route === "habits" && (
+          <HabitsPage
+            library={habitLibrary}
+            timeZone={state.planningPreferences?.timeZone ?? "UTC"}
+            online={networkOnline}
+            pending={habitPending}
+            onCommand={submitHabit}
+          />
+        )}
+        {route === "reuse" && (
+          <ReusePage
+            templates={templates}
+            templateBlueprints={templateBlueprints}
+            templateSets={templateSets}
+            choicePools={choicePools}
+            choicePoolItems={choicePoolItems}
+            choicePoolHistory={choicePoolHistory}
+            planningPlaceholders={planningPlaceholders}
+            templatePoolSlots={templatePoolSlots}
+            tasks={state.tasks}
+            projects={projects
+              .filter((project) => project.archivedAt === null)
+              .map(({ id, title }) => ({ id, title }))}
+            tags={tags
+              .filter((tag) => tag.archivedAt === null)
+              .map(({ id, displayName }) => ({ id, displayName }))}
+            busy={busy}
+            onCreateTemplate={submitTemplateCreate}
+            onSearchTemplates={(query) => void refreshTemplateLibrary(query)}
+            onArchiveTemplate={archiveTemplate}
+            onEditTemplate={editTemplate}
+            onCreateTemplateSet={submitTemplateSetCreate}
+            onInstantiateTemplate={submitTemplateInstantiation}
+            onInstantiateTemplateSet={submitTemplateSetInstantiation}
+            onCreateChoicePool={submitChoicePool}
+            onCreatePlanningPlaceholder={submitPlanningPlaceholder}
+            onEditChoicePool={editChoicePool}
+            onAddTemplatePoolSlot={addTemplatePoolSlot}
+            onRecordChoicePoolCompletion={completeChoicePoolItem}
+            onSuggestPlaceholder={previewPlanningPlaceholder}
+            onResolvePlaceholder={submitPlaceholderResolution}
+          />
+        )}
+        {route === "connections" && (
+          <ConnectionsPage
+            onTaskImport={syncNow}
+            calendarMessage={calendarMessage}
+            baikal={state.baikal}
+            google={googleView}
+            planningPreferences={state.planningPreferences}
+            dayPlan={dayPlanView}
+            csrfToken={state.session.csrfToken}
+            busy={busy}
+            onAuthorizeGoogle={authorizeGoogle}
+            onSyncGoogle={syncGoogleCalendar}
+            onDisconnectGoogle={removeGoogleCalendar}
+            onSavePlanningPreferences={savePlanningPreferences}
+          />
+        )}
+        {route === "settings" && (
+          <SettingsPage
+            google={googleView}
+            planningPreferences={state.planningPreferences}
+            dayPlan={dayPlanView}
+            notificationPreferences={state.notificationPreferences}
+            notificationStatus={state.notificationStatus}
+            syncStatus={state.syncStatus}
+            clientId={state.client?.clientId ?? null}
+            plannerFreshness={state.planner?.freshness.state}
+            busy={busy}
+            onAuthorizeGoogle={authorizeGoogle}
+            onSyncGoogle={syncGoogleCalendar}
+            onDisconnectGoogle={removeGoogleCalendar}
+            onSavePlanningPreferences={savePlanningPreferences}
+            onSaveNotificationPreferences={saveNotificationPreferences}
+            onTestNotification={testNotification}
+            onSyncNow={syncNow}
+            onExportDiagnostics={exportDiagnostics}
+            focus={focus.settings}
+            focusBusy={focus.busy}
+            applicationPreferences={appPreferences}
+            projects={projects}
+          />
+        )}
+      </AppShell>
+    </ApplicationPreferencesProvider>
   );
 };

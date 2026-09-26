@@ -5,6 +5,13 @@ import { readNotificationStatus } from "../notification-status.ts";
 import { StructuredCaptureError, validateTaskParent } from "@suite/domain";
 import { hierarchyViolationError } from "./task-hierarchy.ts";
 import { createCapturedTask, resolveTaskCapture } from "../task-capture.ts";
+import {
+  captureAffected,
+  captureSummary,
+  confirmCaptureBatch,
+  isCaptureBatchCommand,
+  previewCaptureBatch,
+} from "../capture-automation.ts";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
@@ -27,6 +34,7 @@ import {
   counterHistoryQuerySchema,
   evaluationListQuerySchema,
   dayOrderResourceInputSchema,
+  calendarSubscriptionResourceInputSchema,
 } from "@suite/contracts";
 import type { CalendarEventResource } from "@suite/caldav";
 import type { CalendarOperationResult } from "../connector.ts";
@@ -84,6 +92,34 @@ import {
   previewDayOrder,
 } from "./automation-day-order.ts";
 import { readDayOrder } from "./day-order.ts";
+import {
+  confirmBoardCommand,
+  isBoardCommand,
+  previewBoardCommand,
+} from "./automation-boards.ts";
+import { boardClock } from "./boards.ts";
+import {
+  automationBoardsResourceInputSchema,
+  automationSectionsResourceInputSchema,
+} from "@suite/contracts";
+import {
+  confirmFocusParity,
+  isFocusParityCommand,
+  previewFocusParity,
+} from "./automation-focus.ts";
+import { focusPreferencesBody } from "./focus.ts";
+import {
+  applicationPreferencesEntityKind,
+  confirmApplicationPreferences,
+  isApplicationPreferencesCommand,
+  previewApplicationPreferences,
+} from "./automation-application-preferences.ts";
+import { readApplicationPreferences } from "./application-preferences.ts";
+import {
+  confirmCalendarSubscription,
+  isCalendarSubscriptionCommand,
+  previewCalendarSubscription,
+} from "./automation-calendar-subscriptions.ts";
 import {
   automationTokenResponse,
   automationScopeFor,
@@ -381,6 +417,8 @@ export const handleAutomation: RouteHandler = async (
         ...database.getPlanningPreferences(token.ownerId),
         revision: database.getPreferenceRevision(token.ownerId, "planning"),
       };
+    else if (resource === "application.preferences")
+      body = readApplicationPreferences(database, token.ownerId);
     else if (resource === "notifications.preferences")
       body = {
         ...database.getNotificationPreferences(token.ownerId),
@@ -547,6 +585,88 @@ export const handleAutomation: RouteHandler = async (
             ctx.sessionClock.now(),
           ),
         ),
+      };
+    } else if (resource === "boards.list") {
+      // ADR 0028: configurations plus computed membership of one or all boards.
+      const input = automationBoardsResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_BOARD_ID",
+          "Provide a board ID or omit it",
+        );
+        return true;
+      }
+      const clock = boardClock(database, token.ownerId, ctx.sessionClock.now());
+      const boards = database.boards
+        .listBoards(token.ownerId)
+        .filter(
+          (board) =>
+            input.data.boardId === undefined || board.id === input.data.boardId,
+        );
+      body = {
+        boards,
+        views: boards.flatMap((board) => {
+          const view = database.boards.viewBoard(
+            token.ownerId,
+            board.id,
+            clock,
+          );
+          return view === undefined ? [] : [view];
+        }),
+      };
+    } else if (resource === "sections.list") {
+      const input = automationSectionsResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_SECTION_CONTEXT",
+          "Provide contextKind (project or tag) and contextId",
+        );
+        return true;
+      }
+      body = {
+        sections: database.boards.listSections(token.ownerId, input.data),
+      };
+    } else if (resource === "task_views.list")
+      body = { views: database.boards.listTaskViews(token.ownerId) };
+    else if (resource === "menu_folders.list")
+      body = { folders: database.boards.listMenuFolders(token.ownerId) };
+    else if (resource === "focus.preferences") {
+      // ADR 0029: the preference fields with their revision.
+      const focus = focusPreferencesBody(database, token.ownerId);
+      body = { ...focus.preferences, revision: focus.revision };
+    } else if (resource === "calendar_subscriptions.list") {
+      // ADR 0032: subscriptions by host, plus their events for a window.
+      const input = calendarSubscriptionResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_WINDOW",
+          "Give both from and to, at most 31 days apart, or neither",
+        );
+        return true;
+      }
+      const at = ctx.sessionClock.now().toISOString();
+      body = {
+        subscriptions: ctx.calendarSubscriptions.list(token.ownerId, at),
+        events:
+          input.data.from === undefined || input.data.to === undefined
+            ? []
+            : ctx.calendarSubscriptions.events(
+                token.ownerId,
+                input.data.from,
+                input.data.to,
+              ),
       };
     } else if (resource === "projects.list")
       body = {
@@ -734,6 +854,8 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
+    // ADR 0031: capture resolves at preview; new tags become affected objects.
+    let captureBatch: ReturnType<typeof previewCaptureBatch> | undefined;
     if (command.operation === "tasks.create") {
       try {
         command = {
@@ -743,8 +865,23 @@ export const handleAutomation: RouteHandler = async (
             token.ownerId,
             command.input,
             new Date().toISOString(),
+            { allowNewTags: true },
           ),
         };
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
+    } else if (isCaptureBatchCommand(command)) {
+      try {
+        captureBatch = previewCaptureBatch(
+          database,
+          token.ownerId,
+          command,
+          new Date().toISOString(),
+        );
+        command = { ...command, input: captureBatch.input };
       } catch (error) {
         if (!(error instanceof StructuredCaptureError)) throw error;
         sendError(response, 400, "INVALID_TASK", error.message);
@@ -756,6 +893,8 @@ export const handleAutomation: RouteHandler = async (
       entityKind:
         | "planning_preferences"
         | "notification_preferences"
+        | "focus_preferences"
+        | "application_preferences"
         | "subtask"
         | "task"
         | "calendar"
@@ -774,6 +913,10 @@ export const handleAutomation: RouteHandler = async (
         | "recurring_series"
         | "counter"
         | "daily_evaluation"
+        | "board"
+        | "section"
+        | "task_view"
+        | "menu_folder"
         | "habit";
       entityId: string;
     }[] = [];
@@ -781,6 +924,8 @@ export const handleAutomation: RouteHandler = async (
       entityKind:
         | "planning_preferences"
         | "notification_preferences"
+        | "focus_preferences"
+        | "application_preferences"
         | "subtask"
         | "task"
         | "active_session"
@@ -798,6 +943,9 @@ export const handleAutomation: RouteHandler = async (
         | "recurring_series"
         | "counter"
         | "daily_evaluation"
+        | "board"
+        | "section"
+        | "menu_folder"
         | "habit";
       entityId: string;
       revision: number;
@@ -1000,10 +1148,66 @@ export const handleAutomation: RouteHandler = async (
       affected.push(...planned.affected);
       baseRevisions.push(...planned.baseRevisions);
       taskSummary = planned.summary;
+    } else if (isApplicationPreferencesCommand(command)) {
+      // ADR 0030: freezes the preference record revision.
+      const planned = previewApplicationPreferences(
+        database,
+        token.ownerId,
+        command,
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push({
+        entityKind: applicationPreferencesEntityKind,
+        entityId: token.ownerId,
+      });
+      baseRevisions.push({
+        entityKind: applicationPreferencesEntityKind,
+        entityId: token.ownerId,
+        revision: planned.revision,
+      });
+      taskSummary = planned.summary;
+    } else if (command.operation === "tasks.create") {
+      affected.push(...captureAffected(command.input));
+      taskSummary = captureSummary(command.input);
+    } else if (captureBatch !== undefined) {
+      affected.push(...captureBatch.affected);
+      taskSummary = captureBatch.summary;
     } else if (isDayOrderCommand(command)) {
       // ADR 0027: no entity revision to freeze; confirmation re-checks the
       // day order revision and exact membership.
       const planned = previewDayOrder(database, token.ownerId, command);
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      taskSummary = planned.summary;
+    } else if (isBoardCommand(command)) {
+      // ADR 0028: freezes board, section, folder and moved-task revisions.
+      const planned = previewBoardCommand(
+        database,
+        token.ownerId,
+        command,
+        boardClock(database, token.ownerId, ctx.sessionClock.now()),
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isCalendarSubscriptionCommand(command)) {
+      // ADR 0032: names the subscription host and event; a refresh repeats
+      // its revision check at confirmation.
+      const planned = previewCalendarSubscription(
+        database,
+        token.ownerId,
+        command,
+      );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -1017,6 +1221,21 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
         ctx.sessionClock.now().toISOString(),
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isFocusParityCommand(command)) {
+      // ADR 0029: binds the focus preference revision or the session revision.
+      const planned = previewFocusParity(
+        database,
+        ctx.sessionClock,
+        token.ownerId,
+        command,
       );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
@@ -1751,17 +1970,28 @@ export const handleAutomation: RouteHandler = async (
           : preview.operation === "notifications.update_preferences" ||
               preview.operation === "notifications.send_test"
             ? "notifications"
-            : undefined;
+            : preview.operation === "focus.update_preferences"
+              ? "focus"
+              : undefined;
       const preferenceCurrent =
-        preferenceKind === undefined
-          ? undefined
-          : {
+        preview.operation === "application.update_preferences"
+          ? {
               id: token.ownerId,
-              revision: database.getPreferenceRevision(
-                token.ownerId,
-                preferenceKind,
-              ),
-            };
+              revision: database.applicationPreferences.get(token.ownerId)
+                .revision,
+            }
+          : preferenceKind === undefined
+            ? undefined
+            : {
+                id: token.ownerId,
+                revision:
+                  preferenceKind === "focus"
+                    ? database.focus.getRevision(token.ownerId)
+                    : database.getPreferenceRevision(
+                        token.ownerId,
+                        preferenceKind,
+                      ),
+              };
       const current =
         preferenceCurrent ??
         database.habits.list(token.ownerId).find(({ id }) => id === entityId) ??
@@ -1788,6 +2018,7 @@ export const handleAutomation: RouteHandler = async (
           .flatMap((pool) => database.listChoicePoolItems(pool.id, true))
           .find(({ id }) => id === entityId) ??
         database.recurrence.get(token.ownerId, entityId) ??
+        database.boards.entityRevision(token.ownerId, entityId) ??
         database.getActiveSession(token.ownerId);
       if (current?.id !== entityId || current.revision !== revision) {
         database.appendAutomationAudit({
@@ -1980,6 +2211,23 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       applyLocalMutation = confirmation.apply;
+    } else if (isApplicationPreferencesCommand(command)) {
+      const confirmation = confirmApplicationPreferences(
+        database,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
     } else if (isDayOrderCommand(command)) {
       const confirmation = confirmDayOrder(
         database,
@@ -1997,6 +2245,43 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       applyLocalMutation = confirmation.apply;
+    } else if (isBoardCommand(command)) {
+      const confirmation = confirmBoardCommand(
+        database,
+        token.ownerId,
+        command,
+        boardClock(database, token.ownerId, ctx.sessionClock.now()),
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isCalendarSubscriptionCommand(command)) {
+      const confirmation = await confirmCalendarSubscription(
+        database,
+        ctx.calendarSubscriptions,
+        token.ownerId,
+        command,
+        () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      if ("result" in confirmation) result = confirmation.result;
+      else applyLocalMutation = confirmation.apply;
     } else if (isTimeEntryCommand(command)) {
       const confirmation = confirmTimeEntry(
         database,
@@ -2014,6 +2299,40 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       applyLocalMutation = confirmation.apply;
+    } else if (isFocusParityCommand(command)) {
+      // ADR 0029: preferences nest in the confirmation transaction; an idle
+      // disposition commits its own session transition like focus commands.
+      if (command.operation === "focus.update_preferences")
+        applyLocalMutation = () =>
+          confirmFocusParity(
+            database,
+            ctx.sessionClock,
+            token.ownerId,
+            token.id,
+            internalKey,
+            requestHash,
+            command,
+          );
+      else
+        try {
+          result = confirmFocusParity(
+            database,
+            ctx.sessionClock,
+            token.ownerId,
+            token.id,
+            internalKey,
+            requestHash,
+            command,
+          );
+        } catch {
+          sendError(
+            response,
+            409,
+            "ACTIVE_SESSION_CONFLICT",
+            "Session changed; preview the idle disposition again",
+          );
+          return true;
+        }
     } else if (isCounterCommand(command)) {
       const confirmation = confirmCounter(
         database,
@@ -2327,6 +2646,34 @@ export const handleAutomation: RouteHandler = async (
         task: taskResponse(created.task),
         replayed: created.kind === "replayed",
       };
+    } else if (isCaptureBatchCommand(command)) {
+      let batch;
+      try {
+        batch = confirmCaptureBatch(
+          database,
+          token.ownerId,
+          internalKey,
+          createHash("sha256")
+            .update(JSON.stringify(command.input))
+            .digest("hex"),
+          command,
+          new Date().toISOString(),
+        );
+      } catch (error) {
+        if (!(error instanceof StructuredCaptureError)) throw error;
+        sendError(response, 400, "INVALID_TASK", error.message);
+        return true;
+      }
+      if (batch.kind === "conflict") {
+        sendError(
+          response,
+          409,
+          "IDEMPOTENCY_CONFLICT",
+          "Operation key conflict",
+        );
+        return true;
+      }
+      result = batch.result;
     } else if (command.operation === "schedule.create_time_block") {
       const input = command.input;
       const taskRevision = preview.baseRevisions[input.taskId];
