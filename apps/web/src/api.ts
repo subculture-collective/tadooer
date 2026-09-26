@@ -164,6 +164,21 @@ import {
   type DayOrderPlanRequest,
   type Task as DayOrderPlannedTask,
 } from "@suite/contracts";
+import {
+  focusBreakSnoozeResponseSchema,
+  focusIdleRequestSchema,
+  focusIdleResponseSchema,
+  focusPlanRequestSchema,
+  focusPreferencesResponseSchema,
+  focusPreferencesSchema,
+  focusTimerSchema,
+  type FocusIdleRequest,
+  type FocusIdleResponse,
+  type FocusPlanRequest,
+  type FocusPreferences,
+  type FocusPreferencesResponse,
+  type FocusTimer,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -1572,3 +1587,61 @@ export const planTasksForDay = (
       body: JSON.stringify(dayOrderPlanRequestSchema.parse(plan)),
     },
   );
+
+// Focus presets, idle disposition and break reminders (issue #65, ADR 0029).
+// Online-only: nothing here is cached or queued offline.
+
+export const getFocusPreferences = (): Promise<FocusPreferencesResponse> =>
+  request("/api/focus/preferences", focusPreferencesResponseSchema);
+
+export const updateFocusPreferences = (
+  preferences: FocusPreferences,
+  revision: number,
+  csrfToken: string,
+): Promise<FocusPreferencesResponse> =>
+  request("/api/focus/preferences", focusPreferencesResponseSchema, {
+    method: "PUT",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      "If-Match": `"${String(revision)}"`,
+    },
+    body: JSON.stringify(focusPreferencesSchema.parse(preferences)),
+  });
+
+export const getFocusTimer = (
+  client: LocalClientIdentity,
+): Promise<FocusTimer> =>
+  request("/api/focus/timer", focusTimerSchema, {
+    headers: clientProofHeaders(client),
+  });
+
+export const setFocusPlan = (
+  client: LocalClientIdentity,
+  csrfToken: string,
+  plan: FocusPlanRequest,
+): Promise<FocusTimer> =>
+  request("/api/focus/plan", focusTimerSchema, {
+    method: "PUT",
+    headers: { ...clientProofHeaders(client), "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(focusPlanRequestSchema.parse(plan)),
+  });
+
+export const applyIdleDisposition = (
+  client: LocalClientIdentity,
+  csrfToken: string,
+  input: FocusIdleRequest,
+): Promise<FocusIdleResponse> =>
+  request("/api/focus/idle", focusIdleResponseSchema, {
+    method: "POST",
+    headers: { ...clientProofHeaders(client), "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(focusIdleRequestSchema.parse(input)),
+  });
+
+export const snoozeBreakReminder = (
+  csrfToken: string,
+): Promise<{ readonly snoozedUntil: string }> =>
+  request("/api/focus/break-reminder/snooze", focusBreakSnoozeResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: "{}",
+  });

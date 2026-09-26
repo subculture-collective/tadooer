@@ -8,6 +8,7 @@ export * from "./time-history.ts";
 export * from "./counters.ts";
 export * from "./plugin-data.ts";
 export * from "./day-order.ts";
+export * from "./focus.ts";
 import { z } from "zod";
 import {
   automationNoteMutationInputSchema,
@@ -72,6 +73,23 @@ import {
   dayOrderSchema,
   dayStartsAtSchema,
 } from "./day-order.ts";
+import {
+  focusIdleCorrectionSchema,
+  focusIdleDispositionInputSchema,
+  focusPreferenceMutationInputSchema,
+  focusPreferenceSnapshotSchema,
+  focusReminderKinds,
+  focusTimerBaseSchema,
+} from "./focus.ts";
+
+/** Reminder ledger kinds: task reminders, tests and focus reminders (ADR 0029). */
+export const notificationReminderKindSchema = z.enum([
+  "lead",
+  "at_start",
+  "deadline",
+  "test",
+  ...focusReminderKinds,
+]);
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -645,7 +663,7 @@ export const notificationStatusResponseSchema = z
     lastDelivery: z
       .object({
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "deadline", "test"]),
+        kind: notificationReminderKindSchema,
         occurredAt: z.iso.datetime(),
         errorCode: apiErrorCodeSchema.nullable(),
       })
@@ -663,7 +681,7 @@ export const notificationDeliveryResponseSchema = z
       .object({
         id: entityIdSchema,
         state: notificationDeliveryStateSchema,
-        kind: z.enum(["lead", "at_start", "deadline", "test"]),
+        kind: notificationReminderKindSchema,
         attemptCount: z.number().int().nonnegative(),
         updatedAt: z.iso.datetime(),
         deliveredAt: z.iso.datetime().nullable(),
@@ -1427,6 +1445,20 @@ export const activeSessionCommandResponseSchema = z.object({
   changeSequence: revisionSchema,
 });
 
+// ADR 0029: focus timer state and idle correction carry the session.
+export const focusTimerSchema = focusTimerBaseSchema
+  .extend({ session: activeSessionSchema.nullable() })
+  .strict();
+export type FocusTimer = z.infer<typeof focusTimerSchema>;
+export const focusIdleResponseSchema = z
+  .object({
+    session: activeSessionSchema,
+    correction: focusIdleCorrectionSchema,
+    replayed: z.boolean(),
+  })
+  .strict();
+export type FocusIdleResponse = z.infer<typeof focusIdleResponseSchema>;
+
 export const syncTaskTemplateSnapshotSchema = z
   .object({
     template: taskTemplateSchema,
@@ -1709,6 +1741,9 @@ export const automationOperationSchema = z.enum([
   "focus.end_break",
   "focus.complete",
   "focus.takeover",
+  // ADR 0029: revision-bound preferences and idle disposition.
+  "focus.update_preferences",
+  "focus.idle_disposition",
   "templates.instantiate",
   "template_sets.instantiate",
   "placeholders.resolve",
@@ -1928,6 +1963,14 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: automationDayOrderReorderInputSchema,
     }),
     z.object({
+      operation: z.literal("focus.update_preferences"),
+      input: focusPreferenceMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("focus.idle_disposition"),
+      input: focusIdleDispositionInputSchema,
+    }),
+    z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
     }),
@@ -2142,6 +2185,16 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationDayOrderReorderInputSchema,
     });
+  if (operation === "focus.update_preferences")
+    return z.object({
+      operation: z.literal(operation),
+      input: focusPreferenceMutationInputSchema,
+    });
+  if (operation === "focus.idle_disposition")
+    return z.object({
+      operation: z.literal(operation),
+      input: focusIdleDispositionInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2256,6 +2309,7 @@ export const automationAffectedEntitySchema = z
     entityKind: z.enum([
       "planning_preferences",
       "notification_preferences",
+      "focus_preferences",
       "habit",
       "task",
       "subtask",
@@ -2311,7 +2365,11 @@ export const automationBaseRevisionSchema = z.union([
   existingAutomationBaseRevisionSchema,
   z
     .object({
-      entityKind: z.enum(["planning_preferences", "notification_preferences"]),
+      entityKind: z.enum([
+        "planning_preferences",
+        "notification_preferences",
+        "focus_preferences",
+      ]),
       entityId: entityIdSchema,
       revision: z.number().int().nonnegative(),
     })
@@ -2365,6 +2423,8 @@ export const automationExecutionResultSchema = z.union([
   counterMutationResponseSchema,
   evaluationMutationResponseSchema,
   dayOrderResponseSchema,
+  z.object({ focusPreferences: focusPreferenceSnapshotSchema }).strict(),
+  focusIdleResponseSchema,
   z.object({ project: projectSchema }).strict(),
   z.object({ tag: tagSchema }).strict(),
   z.object({ projects: z.array(projectSchema) }).strict(),
@@ -2591,6 +2651,17 @@ export const automationCatalog = [
     mcpUri: "suite://v1/day-order{?date}",
     inputSchema: dayOrderResourceInputSchema,
     outputSchema: dayOrderResponseSchema,
+  },
+  {
+    id: "focus.preferences",
+    kind: "resource",
+    scopes: ["focus:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/focus-preferences",
+    mcpName: "suite.focus.preferences",
+    mcpUri: "suite://v1/focus-preferences",
+    inputSchema: z.object({}).strict(),
+    outputSchema: focusPreferenceSnapshotSchema,
   },
   {
     id: "schedule.get",
@@ -3165,5 +3236,7 @@ export const taskImportApplyResponseSchema = z
       .optional(),
     /** ADR 0027: dates whose Today or planner-day order was saved. */
     dayOrders: z.number().int().nonnegative().optional(),
+    /** ADR 0029: focus settings applied on first import, or skipped. */
+    focusPreferences: z.enum(["applied", "skipped"]).optional(),
   })
   .strict();

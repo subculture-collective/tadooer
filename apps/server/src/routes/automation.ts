@@ -85,6 +85,12 @@ import {
 } from "./automation-day-order.ts";
 import { readDayOrder } from "./day-order.ts";
 import {
+  confirmFocusParity,
+  isFocusParityCommand,
+  previewFocusParity,
+} from "./automation-focus.ts";
+import { focusPreferencesBody } from "./focus.ts";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -548,6 +554,10 @@ export const handleAutomation: RouteHandler = async (
           ),
         ),
       };
+    } else if (resource === "focus.preferences") {
+      // ADR 0029: the preference fields with their revision.
+      const focus = focusPreferencesBody(database, token.ownerId);
+      body = { ...focus.preferences, revision: focus.revision };
     } else if (resource === "projects.list")
       body = {
         projects: database.listProjects(token.ownerId).map(projectResponse),
@@ -756,6 +766,7 @@ export const handleAutomation: RouteHandler = async (
       entityKind:
         | "planning_preferences"
         | "notification_preferences"
+        | "focus_preferences"
         | "subtask"
         | "task"
         | "calendar"
@@ -781,6 +792,7 @@ export const handleAutomation: RouteHandler = async (
       entityKind:
         | "planning_preferences"
         | "notification_preferences"
+        | "focus_preferences"
         | "subtask"
         | "task"
         | "active_session"
@@ -1017,6 +1029,21 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
         ctx.sessionClock.now().toISOString(),
+      );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isFocusParityCommand(command)) {
+      // ADR 0029: binds the focus preference revision or the session revision.
+      const planned = previewFocusParity(
+        database,
+        ctx.sessionClock,
+        token.ownerId,
+        command,
       );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
@@ -1751,16 +1778,21 @@ export const handleAutomation: RouteHandler = async (
           : preview.operation === "notifications.update_preferences" ||
               preview.operation === "notifications.send_test"
             ? "notifications"
-            : undefined;
+            : preview.operation === "focus.update_preferences"
+              ? "focus"
+              : undefined;
       const preferenceCurrent =
         preferenceKind === undefined
           ? undefined
           : {
               id: token.ownerId,
-              revision: database.getPreferenceRevision(
-                token.ownerId,
-                preferenceKind,
-              ),
+              revision:
+                preferenceKind === "focus"
+                  ? database.focus.getRevision(token.ownerId)
+                  : database.getPreferenceRevision(
+                      token.ownerId,
+                      preferenceKind,
+                    ),
             };
       const current =
         preferenceCurrent ??
@@ -2014,6 +2046,40 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       applyLocalMutation = confirmation.apply;
+    } else if (isFocusParityCommand(command)) {
+      // ADR 0029: preferences nest in the confirmation transaction; an idle
+      // disposition commits its own session transition like focus commands.
+      if (command.operation === "focus.update_preferences")
+        applyLocalMutation = () =>
+          confirmFocusParity(
+            database,
+            ctx.sessionClock,
+            token.ownerId,
+            token.id,
+            internalKey,
+            requestHash,
+            command,
+          );
+      else
+        try {
+          result = confirmFocusParity(
+            database,
+            ctx.sessionClock,
+            token.ownerId,
+            token.id,
+            internalKey,
+            requestHash,
+            command,
+          );
+        } catch {
+          sendError(
+            response,
+            409,
+            "ACTIVE_SESSION_CONFLICT",
+            "Session changed; preview the idle disposition again",
+          );
+          return true;
+        }
     } else if (isCounterCommand(command)) {
       const confirmation = confirmCounter(
         database,

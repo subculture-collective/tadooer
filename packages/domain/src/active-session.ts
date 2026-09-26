@@ -2,7 +2,13 @@ export type ActiveSessionState = "running" | "paused" | "completed" | "expired";
 export type ActiveSessionPhase = "focus" | "break";
 export type IntervalKind = ActiveSessionPhase;
 export type IntervalCloseReason =
-  "pause" | "break" | "complete" | "takeover" | "expiry";
+  | "pause"
+  | "break"
+  | "complete"
+  | "takeover"
+  | "expiry"
+  /** ADR 0029: an owner's idle disposition trimmed or split the interval. */
+  | "idle";
 
 export interface SessionClock {
   now(): Date;

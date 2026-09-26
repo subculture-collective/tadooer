@@ -33,6 +33,7 @@ import {
   type ImportedAttachment,
   type ImportedIssueLink,
 } from "./super-productivity-links.ts";
+import { mapSuperProductivityFocusPreferences } from "./super-productivity-focus.ts";
 
 type Source = Record<string, unknown>;
 const object = (value: unknown): Source =>
@@ -122,6 +123,8 @@ export const superProductivityNonBlockingIssueCodes: ReadonlySet<string> =
     "plugin_data_preserved",
     // ADR 0027: Today and planner-day order entries that are not applied.
     "day_order_notice",
+    // ADR 0029: focus settings reported by name; nothing is dropped silently.
+    "focus_preference_notice",
   ]);
 
 /** Normalizes #rgb/#rrggbb to lowercase #rrggbb; anything else is undefined. */
@@ -791,6 +794,14 @@ export const prepareSuperProductivityImport = (
     notice: (sourceId, detail) =>
       issues.push({ code: "day_order_notice", sourceId, detail }),
   });
+  // ADR 0029: focus, idle, break and tracking-reminder settings map to the
+  // owner's focus preferences on first import; other globalConfig sections
+  // stay configuration (#67).
+  const focusPreferences = mapSuperProductivityFocusPreferences(
+    data.globalConfig,
+    (sourceId, detail) =>
+      issues.push({ code: "focus_preference_notice", sourceId, detail }),
+  );
   const reported = issues.map((issue) => ({
     ...issue,
     blocking: !superProductivityNonBlockingIssueCodes.has(issue.code),
@@ -812,5 +823,6 @@ export const prepareSuperProductivityImport = (
     evaluations: sourceInventory.evaluations,
     plugins: sourceInventory.plugins,
     dayOrders,
+    focusPreferences,
   };
 };
