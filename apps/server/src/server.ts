@@ -15,6 +15,10 @@ import { AuthService } from "./auth.ts";
 import { sendError } from "./http-utils.ts";
 import { BaikalConnectorService } from "./connector.ts";
 import { GoogleConnectorService } from "./google-connector.ts";
+import {
+  CalendarSubscriptionService,
+  type AddressLookup,
+} from "./calendar-subscriptions.ts";
 import { loadNtfyPublisherConfig, NtfyPublisher } from "./notifications.ts";
 import type { RouteContext } from "./routes/shared.ts";
 import { handleHealth } from "./routes/health.ts";
@@ -46,6 +50,7 @@ import { handleApplicationPreferences } from "./routes/application-preferences.t
 import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
+import { handleCalendarSubscriptions } from "./routes/calendar-subscriptions.ts";
 import { handleAutomation } from "./routes/automation.ts";
 import { handleNotifications } from "./routes/notifications.ts";
 import { handleHabits } from "./routes/habits.ts";
@@ -60,6 +65,9 @@ export interface RunningSuiteServer {
 export interface SuiteServerOptions {
   readonly connectorFetch?: typeof fetch;
   readonly googleFetch?: typeof fetch;
+  /** iCal subscription fetches (ADR 0032); tests supply fakes. */
+  readonly subscriptionFetch?: typeof fetch;
+  readonly subscriptionLookup?: AddressLookup;
   readonly sessionClock?: SessionClock;
   readonly notificationFetch?: typeof fetch;
   readonly notificationIntervalMs?: number;
@@ -85,6 +93,18 @@ export const startSuiteServer = async (
     config.googleOAuthConfigPath,
     options.googleFetch,
   );
+  const calendarSubscriptions = new CalendarSubscriptionService(
+    database,
+    config.credentialKeyPath,
+    {
+      ...(options.subscriptionFetch === undefined
+        ? {}
+        : { fetch: options.subscriptionFetch }),
+      ...(options.subscriptionLookup === undefined
+        ? {}
+        : { lookup: options.subscriptionLookup }),
+    },
+  );
   const requestCounts = new Map<number, number>();
   const notificationConfig = loadNtfyPublisherConfig(
     config.ntfyPublisherConfigPath,
@@ -109,6 +129,14 @@ export const startSuiteServer = async (
       });
     } catch {
       console.error("recurrence.generate_failed");
+    }
+    // ADR 0032: fetch due iCal subscriptions, then create today's tasks for
+    // auto-import subscriptions. Failures are recorded per subscription.
+    try {
+      await calendarSubscriptions.refreshDue(now);
+      calendarSubscriptions.autoImport(ownerId, now);
+    } catch {
+      console.error("calendar_subscriptions.tick_failed");
     }
     const preferences = database.getNotificationPreferences(ownerId);
     const tasks = database.listTasks(ownerId);
@@ -298,6 +326,7 @@ export const startSuiteServer = async (
     config,
     baikal: connector,
     google,
+    calendarSubscriptions,
     ntfy: notificationPublisher,
     sessionClock,
     requestCounts,
@@ -311,6 +340,7 @@ export const startSuiteServer = async (
     handleSync,
     handleActiveSession,
     handleCalendar,
+    handleCalendarSubscriptions,
     handleAutomation,
     handleNotifications,
     handleHabits,

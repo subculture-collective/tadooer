@@ -45,6 +45,7 @@ import type { AuthService } from "../auth.ts";
 import type { ServerConfig } from "../config.ts";
 import type { BaikalConnectorService, ConnectorFailure } from "../connector.ts";
 import type { GoogleConnectorService } from "../google-connector.ts";
+import type { CalendarSubscriptionService } from "../calendar-subscriptions.ts";
 import type { NtfyPublisher } from "../notifications.ts";
 import { mimeTypes, securityHeaders } from "../http-utils.ts";
 
@@ -61,6 +62,8 @@ export interface RouteContext {
   readonly config: ServerConfig;
   readonly baikal: BaikalConnectorService;
   readonly google: GoogleConnectorService;
+  /** Read-only iCal subscriptions (ADR 0032). */
+  readonly calendarSubscriptions: CalendarSubscriptionService;
   readonly ntfy: NtfyPublisher | undefined;
   readonly sessionClock: SessionClock;
   readonly requestCounts: Map<number, number>;

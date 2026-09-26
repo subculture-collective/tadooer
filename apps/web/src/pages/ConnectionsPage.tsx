@@ -10,6 +10,7 @@ import { CalendarMigration } from "../calendar-migration.tsx";
 import { AssistantAccess } from "../components/AssistantAccess.tsx";
 import { SuperProductivityImport } from "../components/SuperProductivityImport.tsx";
 import { ImportedPluginData } from "../components/ImportedPluginData.tsx";
+import { CalendarSubscriptions } from "../components/CalendarSubscriptions.tsx";
 import { Alert, AlertDescription } from "../components/ui/alert.tsx";
 import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
 import { EmptyState } from "../components/ui/empty-state.tsx";
@@ -87,6 +88,7 @@ export const ConnectionsPage = ({
             onSavePreferences={onSavePlanningPreferences}
           />
         )}
+      <CalendarSubscriptions csrfToken={csrfToken} />
       <Card aria-labelledby="connections-calendars-title">
         <CardHeader>
           <SectionHeading

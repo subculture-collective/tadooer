@@ -376,6 +376,31 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "calendar-subscriptions",
+      "action": "Read-only iCal subscriptions: list feeds and upcoming events, refresh a feed, convert an event to a task, hide an event; add, edit and remove subscriptions",
+      "webApi": [
+        "listCalendarSubscriptions",
+        "createCalendarSubscription",
+        "updateCalendarSubscription",
+        "deleteCalendarSubscription",
+        "refreshCalendarSubscription",
+        "listCalendarSubscriptionEvents",
+        "setCalendarSubscriptionEventHidden",
+        "convertCalendarSubscriptionEvent",
+        "dismissCalendarSubscriptionEvent"
+      ],
+      "catalog": [
+        "calendar_subscriptions.list",
+        "calendar_subscriptions.refresh",
+        "calendar_subscriptions.convert_event",
+        "calendar_subscriptions.hide_event"
+      ],
+      "status": "partial",
+      "issue": 91,
+      "authority": "schedule:read lists subscriptions by host and their events for a window; the feed address is never returned by any route, preview, resource or log. schedule:write refreshes a feed (revision-checked at confirmation) or hides an event; tasks:write converts an event, and a repeat conversion returns the existing task. Adding, editing, dismissing and removing subscriptions stay owner-only in the browser because the address may embed a token. Subscriptions never write upstream. Online-only (ADR 0032).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "plugin-data",
       "action": "Imported plugin data: list plugin IDs, keys, sizes and enabled flags; download an entry's data; delete an entry or enabled flag",
       "webApi": [

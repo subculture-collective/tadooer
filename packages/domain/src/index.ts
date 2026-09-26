@@ -54,3 +54,5 @@ export * from "./counters.ts";
 export * from "./day-order.ts";
 export * from "./boards.ts";
 export * from "./focus.ts";
+
+export * from "./ical-subscription.ts";

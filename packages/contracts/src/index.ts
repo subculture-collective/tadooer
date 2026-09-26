@@ -16,6 +16,7 @@ import {
   applicationPreferenceSnapshotSchema,
 } from "./application-preferences.ts";
 export * from "./capture.ts";
+export * from "./calendar-subscriptions.ts";
 import { z } from "zod";
 import { captureBatchMaxTasks, captureCreateFields } from "./capture.ts";
 import {
@@ -114,6 +115,16 @@ export const notificationReminderKindSchema = z.enum([
   "test",
   ...focusReminderKinds,
 ]);
+import {
+  automationCalendarSubscriptionEventInputSchema,
+  automationCalendarSubscriptionHideInputSchema,
+  automationCalendarSubscriptionRefreshInputSchema,
+  calendarSubscriptionEventMutationResponseSchema,
+  calendarSubscriptionEventSchema,
+  calendarSubscriptionRefreshResponseSchema,
+  calendarSubscriptionResourceInputSchema,
+  calendarSubscriptionResourceSchema,
+} from "./calendar-subscriptions.ts";
 
 export const serviceStatusSchema = z.enum(["ok", "not_ready"]);
 
@@ -245,6 +256,8 @@ export const calendarProviderKindSchema = z.enum([
   "baikal",
   "caldav",
   "google",
+  // Read-only iCal subscription (ADR 0032).
+  "ical",
 ]);
 
 export const clientIdentitySchema = z.object({
@@ -1797,6 +1810,10 @@ export const automationOperationSchema = z.enum([
   "sections.mutate",
   "task_views.set",
   "menu_folders.mutate",
+  // Read-only iCal subscriptions (ADR 0032): add/remove stay owner-only.
+  "calendar_subscriptions.refresh",
+  "calendar_subscriptions.convert_event",
+  "calendar_subscriptions.hide_event",
   "schedule.create_time_block",
   "focus.start",
   "focus.pause",
@@ -2055,6 +2072,18 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       input: focusIdleDispositionInputSchema,
     }),
     z.object({
+      operation: z.literal("calendar_subscriptions.refresh"),
+      input: automationCalendarSubscriptionRefreshInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_subscriptions.convert_event"),
+      input: automationCalendarSubscriptionEventInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_subscriptions.hide_event"),
+      input: automationCalendarSubscriptionHideInputSchema,
+    }),
+    z.object({
       operation: z.literal("projects.mutate"),
       input: automationProjectMutationInputSchema,
     }),
@@ -2308,6 +2337,21 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: focusIdleDispositionInputSchema,
     });
+  if (operation === "calendar_subscriptions.refresh")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarSubscriptionRefreshInputSchema,
+    });
+  if (operation === "calendar_subscriptions.convert_event")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarSubscriptionEventInputSchema,
+    });
+  if (operation === "calendar_subscriptions.hide_event")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarSubscriptionHideInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2536,8 +2580,20 @@ export const habitMutationResponseSchema = z
   })
   .strict();
 
+/** ADR 0032: the task made from a subscribed event; replayed when it existed. */
+export const calendarSubscriptionConversionResponseSchema = z
+  .object({
+    task: taskSchema,
+    event: calendarSubscriptionEventSchema,
+    replayed: z.boolean(),
+  })
+  .strict();
+
 export const automationExecutionResultSchema = z.union([
   notificationTestQueuedSchema,
+  calendarSubscriptionRefreshResponseSchema,
+  calendarSubscriptionEventMutationResponseSchema,
+  calendarSubscriptionConversionResponseSchema,
   z.object({ planningPreferences: planningPreferenceSnapshotSchema }).strict(),
   z
     .object({ applicationPreferences: applicationPreferenceSnapshotSchema })
@@ -2854,6 +2910,17 @@ export const automationCatalog = [
     outputSchema: focusPreferenceSnapshotSchema,
   },
   {
+    id: "calendar_subscriptions.list",
+    kind: "resource",
+    scopes: ["schedule:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/calendar-subscriptions",
+    mcpName: "suite.calendar_subscriptions.list",
+    mcpUri: "suite://v1/calendar-subscriptions{?from,to}",
+    inputSchema: calendarSubscriptionResourceInputSchema,
+    outputSchema: calendarSubscriptionResourceSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -2996,9 +3063,12 @@ export const automationCatalog = [
                               id === "boards.mutate" ||
                               id === "sections.mutate" ||
                               id === "task_views.set" ||
-                              id === "menu_folders.mutate"
+                              id === "menu_folders.mutate" ||
+                              id === "calendar_subscriptions.convert_event"
                             ? "tasks:write"
-                            : id === "schedule.create_time_block"
+                            : id === "schedule.create_time_block" ||
+                                id === "calendar_subscriptions.refresh" ||
+                                id === "calendar_subscriptions.hide_event"
                               ? "schedule:write"
                               : id.startsWith("templates.") ||
                                   id.startsWith("template_sets.")
@@ -3170,6 +3240,9 @@ export type TaskBatchMutationResponse = z.infer<
   typeof taskBatchMutationResponseSchema
 >;
 export type TaskMutationResponse = z.infer<typeof taskMutationResponseSchema>;
+export type CalendarSubscriptionConversionResponse = z.infer<
+  typeof calendarSubscriptionConversionResponseSchema
+>;
 export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
 export type HabitListResponse = z.infer<typeof habitListResponseSchema>;
 export type TaskPatchRequest = z.infer<typeof taskPatchRequestSchema>;
