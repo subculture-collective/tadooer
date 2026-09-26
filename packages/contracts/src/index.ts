@@ -17,6 +17,7 @@ import {
 } from "./application-preferences.ts";
 export * from "./capture.ts";
 export * from "./calendar-subscriptions.ts";
+export * from "./data-export.ts";
 import { z } from "zod";
 import { captureBatchMaxTasks, captureCreateFields } from "./capture.ts";
 import {

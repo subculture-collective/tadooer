@@ -133,8 +133,13 @@
     {
       "id": "tasks-create-many",
       "action": "Create several tasks from a pasted Markdown list or email",
-      "webApi": ["previewTaskCapture", "createTaskBatch"],
-      "catalog": ["tasks.create_many"],
+      "webApi": [
+        "previewTaskCapture",
+        "createTaskBatch"
+      ],
+      "catalog": [
+        "tasks.create_many"
+      ],
       "status": "covered",
       "issue": 90,
       "authority": "Preview resolves every item and child at once (at most 100 tasks), lists the tags the batch would create as affected objects and names each task in the summary; confirmation creates all of them in one transaction or none. The browser previews pasted text without side effects and requires a ticked consent box before new tags are created.",
@@ -143,7 +148,10 @@
     {
       "id": "capture-preferences",
       "action": "Capture URL behavior setting (keep, extract, keep and attach)",
-      "webApi": ["getCapturePreferences", "updateCapturePreferences"],
+      "webApi": [
+        "getCapturePreferences",
+        "updateCapturePreferences"
+      ],
       "catalog": [],
       "status": "owner-only",
       "issue": 90,
@@ -794,6 +802,20 @@
       "status": "owner-only",
       "issue": 34,
       "authority": "An assistant may not mint broader credentials or grant itself permissions. Owner consent remains independent.",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "data-export",
+      "action": "Download the owner's data export; preview and restore an export",
+      "webApi": [
+        "downloadDataExport",
+        "previewDataRestore",
+        "applyDataRestore"
+      ],
+      "catalog": [],
+      "status": "owner-only",
+      "issue": 93,
+      "authority": "A bearer credential must not obtain a complete copy of the owner's data or replace it. Export and restore need the browser session, same origin and the CSRF token; restore is previewed, bound to the previewed file hash and needs an explicit mode (empty account or replace). No secrets are in the file (ADR 0034).",
       "source": "apps/web/src/api.ts"
     },
     {

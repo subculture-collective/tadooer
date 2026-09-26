@@ -2757,6 +2757,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             focusBusy={focus.busy}
             applicationPreferences={appPreferences}
             projects={projects}
+            csrfToken={state.session.csrfToken}
+            onRestored={syncNow}
           />
         )}
       </AppShell>
