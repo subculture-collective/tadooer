@@ -588,6 +588,41 @@ describe("Suite contracts", () => {
         },
       }),
     ).toBeDefined();
+    // ADR 0037: move and remove bind the task revision the assistant read.
+    expect(
+      automationPreviewCommandSchema.parse({
+        operation: "schedule.move_time_block",
+        input: {
+          taskId: id,
+          expectedRevision: 3,
+          startsAt: "2026-08-06T19:00:00.000Z",
+          durationMinutes: 45,
+        },
+      }),
+    ).toBeDefined();
+    expect(
+      automationPreviewCommandSchema.parse({
+        operation: "schedule.remove_time_block",
+        input: { taskId: id, expectedRevision: 3 },
+      }),
+    ).toBeDefined();
+    expect(
+      automationPreviewCommandSchema.safeParse({
+        operation: "schedule.remove_time_block",
+        input: { taskId: id },
+      }).success,
+    ).toBe(false);
+    for (const operation of [
+      "schedule.create_time_block",
+      "schedule.move_time_block",
+      "schedule.remove_time_block",
+    ]) {
+      const entry = automationCatalog.find(
+        (candidate) => candidate.id === operation,
+      );
+      expect(entry?.scopes).toEqual(["schedule:write"]);
+      expect(entry?.mcpName).toBe(`suite.${operation}`);
+    }
     expect(
       automationFocusCommandInputSchema.parse({
         operation: "focus.takeover",
@@ -624,7 +659,7 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(86);
+    expect(automationCatalog).toHaveLength(88);
     expect(ids).toEqual(
       expect.arrayContaining([
         "tasks.update",

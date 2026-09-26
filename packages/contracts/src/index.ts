@@ -773,6 +773,20 @@ export const createTaskTimeBlockRequestSchema = z.object({
   durationMinutes: z.number().int().min(1).max(720),
 });
 
+/** ADR 0037: move an existing block; the calendar, when given, must match. */
+export const automationTimeBlockMoveInputSchema = z
+  .object({
+    taskId: entityIdSchema,
+    expectedRevision: revisionSchema,
+    calendarId: entityIdSchema.optional(),
+    startsAt: z.iso.datetime(),
+    durationMinutes: createTaskTimeBlockRequestSchema.shape.durationMinutes,
+  })
+  .strict();
+export const automationTimeBlockRemoveInputSchema = z
+  .object({ taskId: entityIdSchema, expectedRevision: revisionSchema })
+  .strict();
+
 export const taskEventMappingSchema = z.object({
   id: entityIdSchema,
   taskId: entityIdSchema,
@@ -1815,6 +1829,9 @@ export const automationOperationSchema = z.enum([
   "calendar_subscriptions.convert_event",
   "calendar_subscriptions.hide_event",
   "schedule.create_time_block",
+  // ADR 0037: move and remove an existing block with the task revision.
+  "schedule.move_time_block",
+  "schedule.remove_time_block",
   "focus.start",
   "focus.pause",
   "focus.resume",
@@ -2182,6 +2199,14 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
         .extend(createTaskTimeBlockRequestSchema.shape),
     }),
     z.object({
+      operation: z.literal("schedule.move_time_block"),
+      input: automationTimeBlockMoveInputSchema,
+    }),
+    z.object({
+      operation: z.literal("schedule.remove_time_block"),
+      input: automationTimeBlockRemoveInputSchema,
+    }),
+    z.object({
       operation: z.literal("templates.instantiate"),
       input: z.object({
         templateId: entityIdSchema,
@@ -2428,6 +2453,16 @@ const automationToolInputSchema = (
       input: z
         .object({ taskId: entityIdSchema })
         .extend(createTaskTimeBlockRequestSchema.shape),
+    });
+  if (operation === "schedule.move_time_block")
+    return z.object({
+      operation: z.literal("schedule.move_time_block"),
+      input: automationTimeBlockMoveInputSchema,
+    });
+  if (operation === "schedule.remove_time_block")
+    return z.object({
+      operation: z.literal("schedule.remove_time_block"),
+      input: automationTimeBlockRemoveInputSchema,
     });
   if (operation === "templates.instantiate")
     return z.object({
@@ -3066,7 +3101,7 @@ export const automationCatalog = [
                               id === "menu_folders.mutate" ||
                               id === "calendar_subscriptions.convert_event"
                             ? "tasks:write"
-                            : id === "schedule.create_time_block" ||
+                            : id.startsWith("schedule.") ||
                                 id === "calendar_subscriptions.refresh" ||
                                 id === "calendar_subscriptions.hide_event"
                               ? "schedule:write"
