@@ -11,9 +11,12 @@ upstream release. `deploy/verify-parity-reference.py` passed against these pins.
 
 - Source: Super Productivity **19.1.0**, tag `v19.1.0`, commit
   `42ded9f31a132bf92633b0c78ad4ebf1d87c0f71`; model-config cross-model version **4.5**.
-- Installed app: `~/.local/opt/super-productivity-19.1.0` on Kvant, used by the
-  launcher and the running process. `app.asar` SHA-256
-  `2133ce92480137f6637d8a23937770a1ec56dcc58dff769e42199f29bdbee0e4`. An exact
+- Installed app (re-pinned September 25): the local plugin-actions build of
+  upstream v19.1.0 at `~/.local/opt/super-productivity-19.1.0-plugin-actions`
+  on Kvant, used by the launcher. It adds plugin allowlist changes for
+  recurrence and issue providers and does not auto-update. `app.asar` SHA-256
+  `edecae404cc8bb5eee67421bab258c1e294ba13e5e1dc003dfb85733f8f9b2ba`; the
+  stock 19.1.0 artifact (`2133ce92…`) is the previous installed pin. An exact
   build-to-commit correspondence has **not** been established.
 - Previous pin (September 20): 18.16.0 custom fork `a4d74ea32`, recorded under
   `source.previous`. Between the two, `tracking-presence` was added and

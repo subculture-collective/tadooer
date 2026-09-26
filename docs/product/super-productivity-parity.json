@@ -5,7 +5,7 @@
     "commit": "42ded9f31a132bf92633b0c78ad4ebf1d87c0f71",
     "crossModelVersion": 4.5,
     "installedVersion": "19.1.0",
-    "installedAsarSha256": "2133ce92480137f6637d8a23937770a1ec56dcc58dff769e42199f29bdbee0e4",
+    "installedAsarSha256": "edecae404cc8bb5eee67421bab258c1e294ba13e5e1dc003dfb85733f8f9b2ba",
     "installedCommitVerified": false,
     "mcpCommit": "6dde7f75f1f79a064b7d59346259d55076a35eb4",
     "mcpProtocolVersion": "2.0",
@@ -23,7 +23,8 @@
       "installedVersion": "18.16.0",
       "installedAsarSha256": "200cd4e96904061f37c6f0f31a227b37d05175295e28b65b27159eeebcaba1d6",
       "note": "September 20 pin; the installed application moved to upstream 19.1.0 by September 24."
-    }
+    },
+    "installedNote": "September 25 local plugin-actions build of upstream v19.1.0 at ~/.local/opt/super-productivity-19.1.0-plugin-actions (plugin allowlist changes for recurrence and issue providers). The stock 19.1.0 artifact hash 2133ce92480137f6637d8a23937770a1ec56dcc58dff769e42199f29bdbee0e4 is the previous installed pin."
   },
   "sourceFeatureDirectories": [
     "add-tasks-for-tomorrow",
