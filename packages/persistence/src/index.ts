@@ -19,6 +19,24 @@ import { SqliteCredentialStore } from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 import { SqliteNoteStore } from "./note-store.ts";
 import { captureMigration, SqliteCaptureStore } from "./capture-store.ts";
+import {
+  DataRestoreError,
+  SqliteDataExportStore,
+  dataExportExcludedTables,
+  dataExportInventory,
+  type DataExportSource,
+  type DataRestoreOutcome,
+  type DataRestorePreviewRecord,
+} from "./data-export-store.ts";
+export {
+  DataRestoreError,
+  SqliteDataExportStore,
+  dataExportExcludedTables,
+  dataExportInventory,
+  type DataExportSource,
+  type DataRestoreOutcome,
+  type DataRestorePreviewRecord,
+};
 export type {
   CapturePreferencesRecord,
   CaptureUrlBehavior,
@@ -1629,9 +1647,12 @@ export class SuiteDatabase {
   readonly focus: SqliteFocusStore;
   readonly applicationPreferences: SqliteApplicationPreferencesStore;
   readonly calendarSubscriptions: SqliteCalendarSubscriptionStore;
+  /** ADR 0034: owner data export and restore. */
+  readonly dataExport: SqliteDataExportStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.dataExport = new SqliteDataExportStore(database);
     this.calendarSubscriptions = new SqliteCalendarSubscriptionStore(database);
     this.counters = new SqliteCounterStore(database);
     this.boards = new SqliteBoardStore(database, {

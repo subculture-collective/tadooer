@@ -8,6 +8,7 @@ import type {
 } from "@suite/contracts";
 import type { ApplicationPreferencesState } from "../application-preferences.tsx";
 import { ApplicationPreferencesSettings } from "../components/settings/ApplicationPreferencesSettings.tsx";
+import { DataExportRestore } from "../components/settings/DataExportRestore.tsx";
 import { GooglePlanning } from "../google-planning.tsx";
 import { NotificationSettings } from "../notification-settings.tsx";
 import { FocusSettings, type FocusSettingsProps } from "../focus-settings.tsx";
@@ -42,6 +43,9 @@ export interface SettingsPageProps {
   /** ADR 0030 application preferences and shortcuts. */
   readonly applicationPreferences?: ApplicationPreferencesState | undefined;
   readonly projects?: readonly Project[] | undefined;
+  /** ADR 0034 data export and restore; absent while signed out. */
+  readonly csrfToken?: string | undefined;
+  readonly onRestored?: (() => Promise<void>) | undefined;
 }
 
 export const SettingsPage = ({
@@ -66,6 +70,8 @@ export const SettingsPage = ({
   focusBusy = false,
   applicationPreferences,
   projects = [],
+  csrfToken,
+  onRestored,
 }: SettingsPageProps) => {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -121,6 +127,13 @@ export const SettingsPage = ({
           online={syncStatus === "online" && applicationPreferences.loaded}
           error={applicationPreferences.error}
           onSave={applicationPreferences.save}
+        />
+      )}
+      {csrfToken !== undefined && onRestored !== undefined && (
+        <DataExportRestore
+          csrfToken={csrfToken}
+          online={syncStatus === "online"}
+          onRestored={onRestored}
         />
       )}
       <Button

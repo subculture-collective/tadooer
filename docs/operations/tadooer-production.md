@@ -67,3 +67,20 @@ inside the encrypted Restic workflow.
 
 An acceptance restore always uses an isolated Compose project, isolated ports,
 a copied Baïkal backup, and no route to the production Baïkal service.
+
+## Owner data export versus operator backups
+
+Two copies exist, with different jobs (ADR 0034):
+
+|          | Operator backup pair                                                                                                                     | Owner data export                                                                                                                                      |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Made by  | `deploy/backup.sh` or `deploy/production/backup.sh` (container access)                                                                   | The owner in Settings, or `GET /api/data/export` with the browser session                                                                              |
+| Contents | The whole SQLite file: every owner, sessions, assistant tokens, encrypted connector credentials, iCal subscription addresses, sync state | The owner's rows of the included tables as one versioned JSON document; no secrets, sessions, connector or subscription credentials, sync state        |
+| Needs    | The paired `credential.key` from the same backup set                                                                                     | Nothing; portable between instances and credential keys                                                                                                |
+| Restores | The complete instance, by the operator, with the service stopped                                                                         | One owner's content through a preview and an explicit empty-account or replace choice; connectors, subscriptions and assistant tokens are set up again |
+
+Use the operator pair for disaster recovery and acceptance restores. Use the
+owner export to move data between instances, to keep a copy the owner
+controls, or to reset an account to a known state. Restoring an owner export
+starts a new sync epoch, so every signed-in device resynchronizes; unsynced
+offline changes on a device are not in the export.
