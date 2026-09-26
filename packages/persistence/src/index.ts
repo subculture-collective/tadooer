@@ -219,6 +219,27 @@ export interface TaskDeadline {
   readonly value: string;
 }
 
+/** Every field version a task carries (ADR 0010, 0017, 0033). */
+export type SyncedTaskField =
+  | "title"
+  | "notes"
+  | "status"
+  | "estimateMinutes"
+  | "projectId"
+  | "tagIds"
+  | "deadline"
+  | "plannedStart";
+const syncedTaskFields: readonly SyncedTaskField[] = [
+  "title",
+  "notes",
+  "status",
+  "estimateMinutes",
+  "projectId",
+  "tagIds",
+  "deadline",
+  "plannedStart",
+];
+
 const deadlineColumns = (deadline: TaskDeadline | null) => ({
   deadlineDate: deadline?.kind === "date" ? deadline.value : null,
   deadlineAt: deadline?.kind === "instant" ? deadline.value : null,
@@ -1600,6 +1621,27 @@ const migrations: readonly Migration[] = [
   applicationPreferencesMigration,
   captureMigration,
   calendarSubscriptionMigration,
+  {
+    // ADR 0033: one version for the exclusive planned start / planned day
+    // slot. Existing clients replace their cache once from a snapshot.
+    id: "0037_sync_v2_planned_start_epoch_reset",
+    sql: `
+      CREATE TABLE task_field_versions_v3 (
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        field TEXT NOT NULL CHECK(field IN ('title','notes','status','deadline','estimateMinutes','projectId','tagIds','plannedStart')),
+        version INTEGER NOT NULL CHECK(version > 0), PRIMARY KEY(task_id, field)
+      ) STRICT;
+      INSERT INTO task_field_versions_v3 (task_id,field,version)
+        SELECT task_id,field,version FROM task_field_versions;
+      INSERT INTO task_field_versions_v3 (task_id,field,version)
+        SELECT id,'plannedStart',revision FROM tasks;
+      DROP TABLE task_field_versions;
+      ALTER TABLE task_field_versions_v3 RENAME TO task_field_versions;
+      DELETE FROM sync_changes;
+      UPDATE sync_owner_state
+        SET epoch=lower(hex(randomblob(16))),next_sequence=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
+    `,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -2962,11 +3004,11 @@ export class SuiteDatabase {
           released.ownerId,
           released.id,
         );
-      this.#database
-        .prepare(
-          "INSERT INTO task_field_versions (task_id,field,version) VALUES (?, 'estimateMinutes', ?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
-        )
-        .run(released.id, released.revision);
+      const releasedVersion = this.#database.prepare(
+        "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
+      );
+      releasedVersion.run(released.id, "estimateMinutes", released.revision);
+      releasedVersion.run(released.id, "plannedStart", released.revision);
       this.#appendSyncChangeInTransaction(
         input.ownerId,
         "task",
@@ -3186,11 +3228,11 @@ export class SuiteDatabase {
           task.ownerId,
           task.id,
         );
-      this.#database
-        .prepare(
-          "INSERT INTO task_field_versions (task_id,field,version) VALUES (?, 'estimateMinutes', ?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
-        )
-        .run(task.id, task.revision);
+      const reservedVersion = this.#database.prepare(
+        "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
+      );
+      reservedVersion.run(task.id, "estimateMinutes", task.revision);
+      reservedVersion.run(task.id, "plannedStart", task.revision);
       this.#appendSyncChangeInTransaction(
         input.ownerId,
         "task",
@@ -3920,15 +3962,7 @@ export class SuiteDatabase {
       const initialFieldVersion = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id, field, version) VALUES (?, ?, 1)",
       );
-      for (const field of [
-        "title",
-        "notes",
-        "status",
-        "estimateMinutes",
-        "projectId",
-        "tagIds",
-        "deadline",
-      ])
+      for (const field of syncedTaskFields)
         initialFieldVersion.run(created.id, field);
       const insertTag = this.#database.prepare(
         "INSERT INTO task_tags (task_id, tag_id) VALUES (?, ?)",
@@ -6559,17 +6593,16 @@ export class SuiteDatabase {
     readonly operationId: string;
     readonly requestHash: string;
     readonly taskId: string;
-    readonly baseVersions: Readonly<
-      Partial<
-        Record<
-          "title" | "notes" | "status" | "estimateMinutes" | "deadline",
-          number
-        >
-      >
-    >;
+    readonly baseVersions: Readonly<Partial<Record<SyncedTaskField, number>>>;
     readonly patch: Partial<
       Pick<TaskRecord, "title" | "notes" | "status" | "estimateMinutes">
-    > & { readonly deadline?: TaskDeadline | null };
+    > & {
+      readonly deadline?: TaskDeadline | null;
+      readonly plannedStart?: string | null;
+      readonly plannedDay?: string | null;
+      readonly projectId?: string | null;
+      readonly tagIds?: readonly string[];
+    };
     readonly now: string;
   }): {
     readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
@@ -6609,9 +6642,7 @@ export class SuiteDatabase {
         this.#database.exec("COMMIT;");
         return { kind: "conflict", fields: ["task"] };
       }
-      // Archived history is read-only (ADR 0022): an offline edit queued
-      // before the archive becomes a visible, replay-stable conflict.
-      if (task.archivedAt != null) {
+      const recordConflict = (fields: readonly string[]) => {
         this.#database
           .prepare(
             "INSERT INTO sync_operation_outcomes (owner_id,client_id,operation_id,request_hash,state,entity_id,revision,conflict_fields,created_at) VALUES (?,?,?,?, 'conflict',?,?,?,?)",
@@ -6623,48 +6654,90 @@ export class SuiteDatabase {
             input.requestHash,
             input.taskId,
             task.revision,
-            JSON.stringify(["archivedAt"]),
+            JSON.stringify(fields),
             input.now,
           );
         this.#database.exec("COMMIT;");
-        return { kind: "conflict", fields: ["archivedAt"], task };
-      }
-      const fields = Object.keys(
-        input.patch,
-      ) as (keyof typeof input.baseVersions)[];
+        return { kind: "conflict" as const, fields, task };
+      };
+      // Archived history is read-only (ADR 0022): an offline edit queued
+      // before the archive becomes a visible, replay-stable conflict.
+      if (task.archivedAt != null) return recordConflict(["archivedAt"]);
+      const planningChange =
+        input.patch.plannedStart !== undefined ||
+        input.patch.plannedDay !== undefined;
+      const fields = [
+        ...new Set(
+          Object.keys(input.patch).map((field) =>
+            field === "plannedDay" ? "plannedStart" : field,
+          ),
+        ),
+      ] as SyncedTaskField[];
       const rows = this.#database
         .prepare(
           "SELECT field, version FROM task_field_versions WHERE task_id = ?",
         )
         .all(input.taskId) as unknown as readonly {
-        field: keyof typeof input.baseVersions;
+        field: SyncedTaskField;
         version: number;
       }[];
       const versions = new Map(rows.map((row) => [row.field, row.version]));
       const conflicts = fields.filter(
-        (field) => versions.get(field) !== input.baseVersions[field],
+        (field) =>
+          (versions.get(field) ?? task.revision) !== input.baseVersions[field],
       );
-      if (conflicts.length > 0) {
+      if (conflicts.length > 0) return recordConflict(conflicts);
+      // ADR 0033: a calendar block owns the planned start (ADR 0009). The
+      // owner changes it through the planner; nothing is queued for Baikal.
+      if (
+        planningChange &&
+        this.getTaskCalendarBlock(input.ownerId, input.taskId) !== undefined
+      )
+        return recordConflict(["calendarBlock"]);
+      if (
+        input.patch.projectId != null &&
         this.#database
           .prepare(
-            "INSERT INTO sync_operation_outcomes (owner_id,client_id,operation_id,request_hash,state,entity_id,revision,conflict_fields,created_at) VALUES (?,?,?,?, 'conflict',?,?,?,?)",
+            "SELECT 1 FROM projects WHERE id=? AND owner_id=? AND archived_at IS NULL",
           )
-          .run(
-            input.ownerId,
-            input.clientId,
-            input.operationId,
-            input.requestHash,
-            input.taskId,
-            task.revision,
-            JSON.stringify(conflicts),
-            input.now,
+          .get(input.patch.projectId, input.ownerId) === undefined
+      )
+        return recordConflict(["project"]);
+      if (input.patch.tagIds !== undefined) {
+        const tagIds = input.patch.tagIds;
+        const valid =
+          tagIds.length <= 25 &&
+          new Set(tagIds).size === tagIds.length &&
+          tagIds.every(
+            (tagId) =>
+              this.#database
+                .prepare(
+                  "SELECT 1 FROM tags WHERE id=? AND owner_id=? AND archived_at IS NULL",
+                )
+                .get(tagId, input.ownerId) !== undefined,
           );
-        this.#database.exec("COMMIT;");
-        return { kind: "conflict", task, fields: conflicts };
+        if (!valid) return recordConflict(["tag"]);
       }
       const next = {
         ...task,
-        ...input.patch,
+        ...(input.patch.title === undefined
+          ? {}
+          : { title: input.patch.title }),
+        ...(input.patch.notes === undefined
+          ? {}
+          : { notes: input.patch.notes }),
+        ...(input.patch.status === undefined
+          ? {}
+          : { status: input.patch.status }),
+        ...(input.patch.estimateMinutes === undefined
+          ? {}
+          : { estimateMinutes: input.patch.estimateMinutes }),
+        ...(input.patch.projectId === undefined
+          ? {}
+          : { projectId: input.patch.projectId }),
+        ...(input.patch.tagIds === undefined
+          ? {}
+          : { tagIds: input.patch.tagIds }),
         ...(input.patch.deadline === undefined
           ? {}
           : deadlineColumns(input.patch.deadline)),
@@ -6674,12 +6747,35 @@ export class SuiteDatabase {
               completedAt:
                 input.patch.status === "completed" ? input.now : null,
             }),
+        // The planning slot is exclusive (ADR 0020): setting one side clears
+        // the other, exactly as the conditional task API does.
+        ...(input.patch.plannedStart === undefined
+          ? input.patch.plannedDay === undefined
+            ? {}
+            : {
+                plannedDay: input.patch.plannedDay,
+                ...(input.patch.plannedDay === null
+                  ? {}
+                  : { plannedStart: null }),
+              }
+          : {
+              plannedStart: input.patch.plannedStart,
+              plannedDay:
+                input.patch.plannedStart === null
+                  ? (input.patch.plannedDay ?? task.plannedDay ?? null)
+                  : null,
+            }),
         revision: task.revision + 1,
         updatedAt: input.now,
       };
+      if (planningChange)
+        writeTaskPlanning(this.#database, input.ownerId, input.taskId, {
+          ...readTaskPlanning(this.#database, input.ownerId, input.taskId),
+          plannedDay: null,
+        });
       this.#database
         .prepare(
-          "UPDATE tasks SET title=?,notes=?,status=?,completed_at=?,estimate_minutes=?,deadline_date=?,deadline_at=?,revision=?,updated_at=? WHERE owner_id=? AND id=?",
+          "UPDATE tasks SET title=?,notes=?,status=?,completed_at=?,estimate_minutes=?,deadline_date=?,deadline_at=?,planned_start=?,project_id=?,revision=?,updated_at=? WHERE owner_id=? AND id=?",
         )
         .run(
           next.title,
@@ -6689,10 +6785,36 @@ export class SuiteDatabase {
           next.estimateMinutes,
           next.deadlineDate ?? null,
           next.deadlineAt ?? null,
+          next.plannedStart,
+          next.projectId ?? null,
           next.revision,
           next.updatedAt,
           input.ownerId,
           input.taskId,
+        );
+      if (planningChange)
+        writeTaskPlanning(this.#database, input.ownerId, input.taskId, {
+          ...readTaskPlanning(this.#database, input.ownerId, input.taskId),
+          plannedDay: next.plannedDay ?? null,
+        });
+      if (input.patch.tagIds !== undefined) {
+        this.#database
+          .prepare("DELETE FROM task_tags WHERE task_id = ?")
+          .run(input.taskId);
+        const insert = this.#database.prepare(
+          "INSERT INTO task_tags (task_id, tag_id) VALUES (?, ?)",
+        );
+        for (const tagId of input.patch.tagIds) insert.run(input.taskId, tagId);
+      }
+      if (
+        input.patch.projectId !== undefined &&
+        input.patch.projectId !== (task.projectId ?? null)
+      )
+        this.#leaveProjectBacklog(
+          input.ownerId,
+          input.taskId,
+          input.patch.projectId,
+          input.now,
         );
       const update = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?) ON CONFLICT(task_id,field) DO UPDATE SET version=excluded.version",
@@ -6712,41 +6834,313 @@ export class SuiteDatabase {
           next.revision,
           input.now,
         );
-      let sync = this.#database
-        .prepare(
-          "SELECT epoch,next_sequence FROM sync_owner_state WHERE owner_id=?",
+      this.#appendSyncChangeInTransaction(
+        input.ownerId,
+        "task",
+        input.taskId,
+        "upsert",
+        next.revision,
+        input.now,
+      );
+      this.#database.exec("COMMIT;");
+      const stored = this.getTask(input.ownerId, input.taskId, true);
+      return { kind: "applied", task: stored ?? next };
+    } catch (error) {
+      this.#database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  /** Leaving a project also leaves that project's backlog (ADR 0019). */
+  #leaveProjectBacklog(
+    ownerId: string,
+    taskId: string,
+    projectId: string | null,
+    now: string,
+  ): void {
+    const backlog = this.#database
+      .prepare(
+        "SELECT project_id FROM project_backlog_tasks WHERE owner_id=? AND task_id=?",
+      )
+      .get(ownerId, taskId) as { project_id: string } | undefined;
+    if (backlog === undefined || backlog.project_id === projectId) return;
+    this.#database
+      .prepare(
+        "DELETE FROM project_backlog_tasks WHERE owner_id=? AND task_id=?",
+      )
+      .run(ownerId, taskId);
+    this.#database
+      .prepare(
+        "UPDATE projects SET revision=revision+1, updated_at=? WHERE owner_id=? AND id=?",
+      )
+      .run(now, ownerId, backlog.project_id);
+    const previous = this.#project(ownerId, backlog.project_id);
+    if (previous !== undefined)
+      this.#appendSyncChangeInTransaction(
+        ownerId,
+        "project",
+        previous.id,
+        "upsert",
+        previous.revision,
+        now,
+      );
+  }
+
+  /**
+   * ADR 0033: project and tag create/patch from the outbox. Records keep one
+   * revision, so every failure is a replay-stable resource conflict.
+   */
+  applyOrganizationSync(input: {
+    readonly ownerId: string;
+    readonly clientId: string;
+    readonly operationId: string;
+    readonly requestHash: string;
+    readonly kind: "project" | "tag";
+    readonly id: string;
+    /** Null creates the record; otherwise the expected current revision. */
+    readonly baseRevision: number | null;
+    readonly fields: OrganizationFields;
+    readonly now: string;
+  }): {
+    readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
+    readonly record?: ProjectRecord | TagRecord;
+    readonly fields?: readonly string[];
+  } {
+    return this.#applySyncOperation(input, () => {
+      const current =
+        input.kind === "project"
+          ? this.#project(input.ownerId, input.id)
+          : this.#tag(input.ownerId, input.id);
+      const failure = (fields: readonly string[]) => ({
+        kind: "conflict" as const,
+        fields,
+        revision: current?.revision ?? null,
+        record: current,
+      });
+      if (input.baseRevision === null) {
+        if (current !== undefined) return failure(["record"]);
+      } else if (current?.revision !== input.baseRevision)
+        return failure(["revision"]);
+      let record: ProjectRecord | TagRecord | undefined;
+      try {
+        record = this.mutateOrganization(
+          input.kind,
+          input.ownerId,
+          input.id,
+          input.baseRevision,
+          input.fields,
+          input.now,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes("UNIQUE constraint failed")
         )
-        .get(input.ownerId) as unknown as
-        { epoch: string; next_sequence: number } | undefined;
-      if (sync === undefined) {
-        sync = { epoch: randomUUID(), next_sequence: 1 };
-        this.#database
-          .prepare(
-            "INSERT INTO sync_owner_state (owner_id,epoch,next_sequence,updated_at) VALUES (?,?,?,?)",
-          )
-          .run(input.ownerId, sync.epoch, 1, input.now);
+          return failure(["name"]);
+        throw error;
       }
+      if (record === undefined) return failure(["fields"]);
+      return { kind: "applied", record, revision: record.revision };
+    });
+  }
+
+  /** ADR 0033: checklist create, patch and delete from the outbox. */
+  applyChecklistSync(input: {
+    readonly ownerId: string;
+    readonly clientId: string;
+    readonly operationId: string;
+    readonly requestHash: string;
+    readonly command:
+      | {
+          readonly action: "create";
+          readonly id: string;
+          readonly taskId: string;
+          readonly title: string;
+          readonly position: number;
+        }
+      | {
+          readonly action: "update";
+          readonly id: string;
+          readonly baseRevision: number;
+          readonly patch: Partial<
+            Pick<SubtaskRecord, "title" | "completed" | "position">
+          >;
+        }
+      | {
+          readonly action: "delete";
+          readonly id: string;
+          readonly baseRevision: number;
+        };
+    readonly now: string;
+  }): {
+    readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
+    readonly record?: SubtaskRecord;
+    readonly fields?: readonly string[];
+  } {
+    const { command } = input;
+    return this.#applySyncOperation(
+      { ...input, id: command.id, kind: "subtask" },
+      () => {
+        const current = this.getSubtask(input.ownerId, command.id);
+        const failure = (fields: readonly string[]) => ({
+          kind: "conflict" as const,
+          fields,
+          revision: current?.revision ?? null,
+          record: current,
+        });
+        if (command.action === "create") {
+          if (current !== undefined) return failure(["record"]);
+          if (this.getTask(input.ownerId, command.taskId) === undefined)
+            return failure(["task"]);
+        } else if (current === undefined) {
+          // A deleted item cannot be told from a never-created one; both
+          // are resource conflicts that change nothing.
+          return failure(["record"]);
+        } else if (current.revision !== command.baseRevision)
+          return failure(["revision"]);
+        const taskId =
+          command.action === "create" ? command.taskId : current?.taskId;
+        if (taskId === undefined) return failure(["task"]);
+        const items = this.mutateChecklist(
+          input.ownerId,
+          command.action === "create"
+            ? {
+                action: "create",
+                taskId,
+                id: command.id,
+                title: command.title,
+                position: command.position,
+              }
+            : command.action === "update"
+              ? {
+                  action: "update",
+                  taskId,
+                  id: command.id,
+                  expectedRevision: command.baseRevision,
+                  patch: command.patch,
+                }
+              : {
+                  action: "delete",
+                  taskId,
+                  id: command.id,
+                  expectedRevision: command.baseRevision,
+                },
+          input.now,
+        );
+        if (items === undefined) return failure(["fields"]);
+        const record = items.find((item) => item.id === command.id);
+        return {
+          kind: "applied",
+          record,
+          revision:
+            record?.revision ??
+            (command.action === "delete" ? command.baseRevision + 1 : 1),
+        };
+      },
+    );
+  }
+
+  /**
+   * Shared idempotent envelope for non-task outbox operations: a stored
+   * outcome replays (or reports an idempotency conflict), otherwise the
+   * body runs inside one transaction and its outcome is recorded.
+   */
+  #applySyncOperation<Entity>(
+    input: {
+      readonly ownerId: string;
+      readonly clientId: string;
+      readonly operationId: string;
+      readonly requestHash: string;
+      readonly kind: "project" | "tag" | "subtask";
+      readonly id: string;
+      readonly now: string;
+    },
+    body: () =>
+      | {
+          readonly kind: "applied";
+          readonly record: Entity | undefined;
+          readonly revision: number;
+        }
+      | {
+          readonly kind: "conflict";
+          readonly fields: readonly string[];
+          readonly revision: number | null;
+          readonly record: Entity | undefined;
+        },
+  ): {
+    readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
+    readonly record?: Entity;
+    readonly fields?: readonly string[];
+  } {
+    const load = (): Entity | undefined =>
+      (input.kind === "project"
+        ? this.#project(input.ownerId, input.id)
+        : input.kind === "tag"
+          ? this.#tag(input.ownerId, input.id)
+          : this.getSubtask(input.ownerId, input.id)) as Entity | undefined;
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      const previous = this.#database
+        .prepare(
+          "SELECT request_hash,state,conflict_fields FROM sync_operation_outcomes WHERE owner_id=? AND client_id=? AND operation_id=?",
+        )
+        .get(input.ownerId, input.clientId, input.operationId) as
+        | {
+            request_hash: string;
+            state: string;
+            conflict_fields: string | null;
+          }
+        | undefined;
+      if (previous !== undefined) {
+        this.#database.exec("COMMIT;");
+        if (previous.request_hash !== input.requestHash)
+          return { kind: "idempotency-conflict" };
+        const record = load();
+        return {
+          kind: previous.state === "conflict" ? "conflict" : "replayed",
+          ...(record === undefined ? {} : { record }),
+          ...(previous.state === "conflict"
+            ? {
+                fields: JSON.parse(
+                  previous.conflict_fields ?? "[]",
+                ) as string[],
+              }
+            : {}),
+        };
+      }
+      const result = body();
       this.#database
         .prepare(
-          "INSERT INTO sync_changes (owner_id,epoch,sequence,entity_type,entity_id,kind,revision,created_at) VALUES (?,?,?,?,?,?,?,?)",
+          "INSERT INTO sync_operation_outcomes (owner_id,client_id,operation_id,request_hash,state,entity_id,revision,conflict_fields,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
         )
         .run(
           input.ownerId,
-          sync.epoch,
-          sync.next_sequence,
-          "task",
-          input.taskId,
-          "task.patch",
-          next.revision,
+          input.clientId,
+          input.operationId,
+          input.requestHash,
+          result.kind,
+          input.id,
+          result.revision,
+          result.kind === "conflict" ? JSON.stringify(result.fields) : null,
           input.now,
         );
-      this.#database
-        .prepare(
-          "UPDATE sync_owner_state SET next_sequence=?,updated_at=? WHERE owner_id=?",
-        )
-        .run(sync.next_sequence + 1, input.now, input.ownerId);
+      // The client applied the change optimistically; re-send the canonical
+      // record so a rejected write does not linger in its cache.
+      if (result.kind === "conflict" && result.record !== undefined)
+        this.#appendSyncChangeInTransaction(
+          input.ownerId,
+          input.kind,
+          input.id,
+          "upsert",
+          result.revision ?? 1,
+          input.now,
+        );
       this.#database.exec("COMMIT;");
-      return { kind: "applied", task: next };
+      return {
+        kind: result.kind,
+        ...(result.record === undefined ? {} : { record: result.record }),
+        ...(result.kind === "conflict" ? { fields: result.fields } : {}),
+      };
     } catch (error) {
       this.#database.exec("ROLLBACK;");
       throw error;
@@ -6870,15 +7264,7 @@ export class SuiteDatabase {
       const field = this.#database.prepare(
         "INSERT INTO task_field_versions (task_id,field,version) VALUES (?,?,?)",
       );
-      for (const name of [
-        "title",
-        "notes",
-        "status",
-        "estimateMinutes",
-        "projectId",
-        "tagIds",
-        "deadline",
-      ])
+      for (const name of syncedTaskFields)
         field.run(task.id, name, task.revision);
       this.#database
         .prepare(
@@ -7111,6 +7497,12 @@ export class SuiteDatabase {
         current.deadlineAt !== next.deadlineAt
       )
         fieldVersions.run(taskId, "deadline", next.revision);
+      // ADR 0033: the planning slot has one version for start and day.
+      if (
+        current.plannedStart !== next.plannedStart ||
+        (current.plannedDay ?? null) !== (next.plannedDay ?? null)
+      )
+        fieldVersions.run(taskId, "plannedStart", next.revision);
       this.#applyHierarchyLifecycle(ownerId, current, next.deletedAt, now);
       this.#appendSyncChangeInTransaction(
         ownerId,
@@ -7441,16 +7833,7 @@ export class SuiteDatabase {
           template.estimateMinutes,
           input.destinationProjectId,
         );
-        for (const field of [
-          "title",
-          "notes",
-          "status",
-          "estimateMinutes",
-          "projectId",
-          "tagIds",
-          "deadline",
-        ])
-          insertField.run(taskId, field);
+        for (const field of syncedTaskFields) insertField.run(taskId, field);
         for (const tagId of template.tagIds) insertTag.run(taskId, tagId);
         for (const blueprint of this.listTemplateSubtaskBlueprints(
           template.id,

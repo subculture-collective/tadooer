@@ -48,6 +48,12 @@ const attemptedValue = (review: TaskConflictReview, field: CoreTaskField) => {
   return (fields as Readonly<Record<CoreTaskField, unknown>>)[field];
 };
 
+const entityLabel: Record<string, string> = {
+  project: "Project",
+  tag: "Tag",
+  subtask: "Checklist item",
+};
+
 export const SyncConflictReview = ({
   reviews,
   busy,
@@ -60,6 +66,44 @@ export const SyncConflictReview = ({
       <h2 id="sync-conflicts-title">Sync conflicts need review</h2>
       <div className="grid gap-3">
         {reviews.map((review) => {
+          const entityKind = review.conflict.entityKind ?? "task";
+          if (entityKind !== "task")
+            // ADR 0033: record conflicts are dismissed once the canonical
+            // record has been pulled; nothing is retried locally.
+            return (
+              <Card key={review.conflict.operationId}>
+                <CardHeader>
+                  <CardTitle>{entityLabel[entityKind]} conflict</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <Alert variant="warning">
+                    <AlertTitle>The local change was not applied</AlertTitle>
+                    <AlertDescription>
+                      The record changed elsewhere, was already created, or its
+                      name is taken. The current record has been refreshed; make
+                      the change again if it still applies.
+                    </AlertDescription>
+                  </Alert>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() =>
+                        void onResolve({
+                          operationId: review.conflict.operationId,
+                          choice: "keep-current",
+                          reviewedTaskRevision: review.conflict.taskRevision,
+                          reviewedFieldVersions: {},
+                        })
+                      }
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
           const fields = fieldsFor(review);
           const canonical = review.canonical;
           const attemptedFields = Object.keys(

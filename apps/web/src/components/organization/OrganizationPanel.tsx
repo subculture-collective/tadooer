@@ -20,6 +20,27 @@ import { NativeSelect } from "../ui/native-select.tsx";
 import { SectionHeading } from "../ui/section-heading.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { NoteMarkdown } from "../notes/NoteMarkdown.tsx";
+import type { LocalOrganizationPatch } from "../../local-store.ts";
+
+/** ADR 0033: lifecycle and appearance edits that the offline outbox accepts. */
+export interface OrganizationQueue {
+  readonly patchProject: (
+    project: Project,
+    fields: LocalOrganizationPatch,
+  ) => Promise<void>;
+  readonly patchTag: (
+    tag: Tag,
+    fields: LocalOrganizationPatch,
+  ) => Promise<void>;
+}
+
+const queueableKeys = new Set([
+  "title",
+  "archived",
+  "completed",
+  "color",
+  "icon",
+]);
 
 export interface OrganizationPanelProps {
   readonly projects: readonly Project[];
@@ -29,6 +50,8 @@ export interface OrganizationPanelProps {
   readonly online: boolean;
   readonly onProjectsChange: (projects: readonly Project[]) => void;
   readonly onTagsChange: (tags: readonly Tag[]) => void;
+  /** When present, lifecycle and appearance changes queue offline. */
+  readonly queue?: OrganizationQueue;
 }
 
 const move = <T,>(items: readonly T[], index: number, offset: -1 | 1): T[] => {
@@ -83,6 +106,7 @@ export const OrganizationPanel = ({
   online,
   onProjectsChange,
   onTagsChange,
+  queue,
 }: OrganizationPanelProps) => {
   const [notes, setNotes] = useState<readonly Note[]>([]);
   const [notesLoaded, setNotesLoaded] = useState(false);
@@ -120,12 +144,20 @@ export const OrganizationPanel = ({
     }
   };
   const disabled = busy || !online;
+  const lifecycleDisabled = busy || (!online && queue === undefined);
+  const queueable = (input: object): boolean =>
+    queue !== undefined &&
+    Object.keys(input).every((key) => queueableKeys.has(key));
 
   const updateProject = (
     project: Project,
     input: Parameters<typeof patchProject>[2],
   ) =>
     run(async () => {
+      if (queue !== undefined && queueable(input)) {
+        await queue.patchProject(project, input as LocalOrganizationPatch);
+        return;
+      }
       onProjectsChange(
         replace(
           projects,
@@ -135,6 +167,10 @@ export const OrganizationPanel = ({
     });
   const updateTag = (tag: Tag, input: Parameters<typeof patchTag>[2]) =>
     run(async () => {
+      if (queue !== undefined && queueable(input)) {
+        await queue.patchTag(tag, input as LocalOrganizationPatch);
+        return;
+      }
       onTagsChange(
         replace(tags, await patchTag(tag.id, tag.revision, input, csrfToken)),
       );
@@ -194,8 +230,9 @@ export const OrganizationPanel = ({
       <CardContent className="organization-manager">
         {!online && (
           <p role="status">
-            Organization changes and notes need a connection. Notes are not
-            available offline.
+            {queue === undefined
+              ? "Organization changes and notes need a connection. Notes are not available offline."
+              : "Completion, archive, restore and appearance changes are saved locally and sync later. Reorder, menu visibility, backlog and notes need a connection."}
           </p>
         )}
         {error !== null && <p role="alert">{error}</p>}
@@ -275,7 +312,7 @@ export const OrganizationPanel = ({
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={disabled}
+                        disabled={lifecycleDisabled}
                         onClick={() =>
                           void updateProject(project, { completed: true })
                         }
@@ -287,7 +324,7 @@ export const OrganizationPanel = ({
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={disabled}
+                        disabled={lifecycleDisabled}
                         onClick={() =>
                           void updateProject(project, { completed: false })
                         }
@@ -299,7 +336,7 @@ export const OrganizationPanel = ({
                       type="button"
                       size="sm"
                       variant="outline"
-                      disabled={disabled}
+                      disabled={lifecycleDisabled}
                       onClick={() =>
                         void updateProject(project, {
                           archived: project.archivedAt === null,
@@ -364,7 +401,7 @@ export const OrganizationPanel = ({
                         defaultValue={project.icon ?? ""}
                       />
                     </label>
-                    <Button size="sm" disabled={disabled}>
+                    <Button size="sm" disabled={lifecycleDisabled}>
                       Save appearance
                     </Button>
                   </form>
@@ -484,7 +521,7 @@ export const OrganizationPanel = ({
                     type="button"
                     size="sm"
                     variant="outline"
-                    disabled={disabled}
+                    disabled={lifecycleDisabled}
                     onClick={() =>
                       void updateTag(tag, { archived: tag.archivedAt === null })
                     }
@@ -517,7 +554,7 @@ export const OrganizationPanel = ({
                       defaultValue={tag.icon ?? ""}
                     />
                   </label>
-                  <Button size="sm" disabled={disabled}>
+                  <Button size="sm" disabled={lifecycleDisabled}>
                     Save appearance
                   </Button>
                 </form>
