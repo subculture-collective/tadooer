@@ -19,6 +19,7 @@ import {
   CalendarSubscriptionService,
   type AddressLookup,
 } from "./calendar-subscriptions.ts";
+import { CalendarBridgeService } from "./calendar-bridge/service.ts";
 import { loadNtfyPublisherConfig, NtfyPublisher } from "./notifications.ts";
 import type { RouteContext } from "./routes/shared.ts";
 import { handleHealth } from "./routes/health.ts";
@@ -51,6 +52,7 @@ import { handleTemplates } from "./routes/templates.ts";
 import { handleChoicePools } from "./routes/choice-pools.ts";
 import { handleCalendar } from "./routes/calendar.ts";
 import { handleCalendarSubscriptions } from "./routes/calendar-subscriptions.ts";
+import { handleCalendarBridge } from "./routes/calendar-bridge.ts";
 import { handleAutomation } from "./routes/automation.ts";
 import { handleNotifications } from "./routes/notifications.ts";
 import { handleHabits } from "./routes/habits.ts";
@@ -105,6 +107,8 @@ export const startSuiteServer = async (
         : { lookup: options.subscriptionLookup }),
     },
   );
+  // ADR 0041: no timer here; #46 schedules passes through runOnce.
+  const calendarBridge = new CalendarBridgeService(database, connector, google);
   const requestCounts = new Map<number, number>();
   const notificationConfig = loadNtfyPublisherConfig(
     config.ntfyPublisherConfigPath,
@@ -327,6 +331,7 @@ export const startSuiteServer = async (
     baikal: connector,
     google,
     calendarSubscriptions,
+    calendarBridge,
     ntfy: notificationPublisher,
     sessionClock,
     requestCounts,
@@ -341,6 +346,7 @@ export const startSuiteServer = async (
     handleActiveSession,
     handleCalendar,
     handleCalendarSubscriptions,
+    handleCalendarBridge,
     handleAutomation,
     handleNotifications,
     handleHabits,

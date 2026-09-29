@@ -301,3 +301,238 @@ export const syncGoogleEvents = async (
     ? { kind: "failed", status: 502 }
     : { kind: "ok", events, nextSyncToken: finalSyncToken };
 };
+
+/**
+ * Calendar bridge adapter (ADR 0041). The bridge needs event write access;
+ * #36 owns asking for it. These functions never retry and never write
+ * without a precondition: inserts use a client-reserved event ID, updates
+ * and deletes send `If-Match` with the observed ETag.
+ */
+export const googleBridgeScope =
+  "https://www.googleapis.com/auth/calendar.events";
+
+export type GoogleBridgeFailure =
+  | "unauthorized"
+  | "forbidden"
+  | "unavailable"
+  | "outcome-unknown"
+  | "invalid-response";
+
+export interface GoogleEventResource {
+  readonly id: string;
+  readonly etag: string;
+  readonly cancelled: boolean;
+  /** Provider JSON, kept for normalization; never logged. */
+  readonly raw: Readonly<Record<string, unknown>>;
+}
+
+export type GoogleEventChangesResult =
+  | {
+      readonly kind: "ok";
+      readonly events: readonly GoogleEventResource[];
+      readonly nextSyncToken: string;
+    }
+  | { readonly kind: "reset-required" }
+  | { readonly kind: "failed"; readonly reason: GoogleBridgeFailure };
+
+export type GoogleEventReadResult =
+  | { readonly kind: "found"; readonly event: GoogleEventResource }
+  | { readonly kind: "gone" }
+  | { readonly kind: "failed"; readonly reason: GoogleBridgeFailure };
+
+export type GoogleEventWriteResult =
+  | { readonly kind: "ok"; readonly event: GoogleEventResource }
+  | { readonly kind: "precondition-failed" }
+  | { readonly kind: "exists" }
+  | { readonly kind: "gone" }
+  | { readonly kind: "failed"; readonly reason: GoogleBridgeFailure };
+
+const eventsUrl = (calendarId: string, eventId?: string): URL =>
+  new URL(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events${
+      eventId === undefined ? "" : `/${encodeURIComponent(eventId)}`
+    }`,
+  );
+
+const eventResource = (value: unknown): GoogleEventResource | undefined => {
+  const item = record(value);
+  const id = string(item?.id);
+  const etag = string(item?.etag);
+  if (item === undefined || !id || !etag) return undefined;
+  return { id, etag, cancelled: item.status === "cancelled", raw: item };
+};
+
+const readFailure = (status: number): GoogleBridgeFailure =>
+  status === 401
+    ? "unauthorized"
+    : status === 403
+      ? "forbidden"
+      : "unavailable";
+
+const send = async (
+  fetcher: typeof fetch,
+  url: URL,
+  init: RequestInit,
+): Promise<Response | undefined> => {
+  try {
+    return await fetcher(url, { ...init, redirect: "manual" });
+  } catch {
+    return undefined;
+  }
+};
+
+/** Complete change listing: every page is read before the token is returned. */
+export const listGoogleEventChanges = async (
+  accessToken: string,
+  calendarId: string,
+  syncToken: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GoogleEventChangesResult> => {
+  const events: GoogleEventResource[] = [];
+  let pageToken: string | undefined;
+  let nextSyncToken: string | undefined;
+  do {
+    const url = eventsUrl(calendarId);
+    url.searchParams.set("maxResults", "2500");
+    url.searchParams.set("showDeleted", "true");
+    if (syncToken !== null) url.searchParams.set("syncToken", syncToken);
+    if (pageToken !== undefined) url.searchParams.set("pageToken", pageToken);
+    const response = await send(fetcher, url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (response === undefined)
+      return { kind: "failed", reason: "unavailable" };
+    if (response.status === 410) return { kind: "reset-required" };
+    if (!response.ok)
+      return { kind: "failed", reason: readFailure(response.status) };
+    let body: Record<string, unknown> | undefined;
+    try {
+      body = record(await boundedJson(response));
+    } catch {
+      return { kind: "failed", reason: "invalid-response" };
+    }
+    const items = body?.items;
+    if (!Array.isArray(items))
+      return { kind: "failed", reason: "invalid-response" };
+    for (const item of items) {
+      const event = eventResource(item);
+      // An unreadable item would silently hide a change; fail the read.
+      if (event === undefined)
+        return { kind: "failed", reason: "invalid-response" };
+      events.push(event);
+    }
+    pageToken = string(body?.nextPageToken);
+    nextSyncToken = string(body?.nextSyncToken) ?? nextSyncToken;
+  } while (pageToken !== undefined);
+  return nextSyncToken === undefined
+    ? { kind: "failed", reason: "invalid-response" }
+    : { kind: "ok", events, nextSyncToken };
+};
+
+export const getGoogleEvent = async (
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<GoogleEventReadResult> => {
+  const response = await send(fetcher, eventsUrl(calendarId, eventId), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (response === undefined) return { kind: "failed", reason: "unavailable" };
+  if (response.status === 404 || response.status === 410)
+    return { kind: "gone" };
+  if (!response.ok)
+    return { kind: "failed", reason: readFailure(response.status) };
+  try {
+    const event = eventResource(await boundedJson(response));
+    return event === undefined
+      ? { kind: "failed", reason: "invalid-response" }
+      : { kind: "found", event };
+  } catch {
+    return { kind: "failed", reason: "invalid-response" };
+  }
+};
+
+const writeOutcome = async (
+  response: Response | undefined,
+): Promise<GoogleEventWriteResult> => {
+  // A lost response or server error may have committed; the caller must read.
+  if (response === undefined || response.status >= 500)
+    return { kind: "failed", reason: "outcome-unknown" };
+  if (response.status === 412) return { kind: "precondition-failed" };
+  if (response.status === 409) return { kind: "exists" };
+  if (response.status === 404 || response.status === 410)
+    return { kind: "gone" };
+  if (response.status === 429) return { kind: "failed", reason: "unavailable" };
+  if (!response.ok)
+    return { kind: "failed", reason: readFailure(response.status) };
+  if (response.status === 204)
+    return {
+      kind: "ok",
+      event: { id: "", etag: "", cancelled: true, raw: {} },
+    };
+  try {
+    const event = eventResource(await boundedJson(response));
+    return event === undefined
+      ? { kind: "failed", reason: "outcome-unknown" }
+      : { kind: "ok", event };
+  } catch {
+    return { kind: "failed", reason: "outcome-unknown" };
+  }
+};
+
+/** Inserts with a client-chosen ID so an ambiguous outcome can be read back. */
+export const insertGoogleEvent = async (
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  body: Readonly<Record<string, unknown>>,
+  fetcher: typeof fetch = fetch,
+): Promise<GoogleEventWriteResult> =>
+  writeOutcome(
+    await send(fetcher, eventsUrl(calendarId), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ...body, id: eventId }),
+    }),
+  );
+
+export const updateGoogleEvent = async (
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  expectedEtag: string,
+  body: Readonly<Record<string, unknown>>,
+  fetcher: typeof fetch = fetch,
+): Promise<GoogleEventWriteResult> =>
+  writeOutcome(
+    await send(fetcher, eventsUrl(calendarId, eventId), {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "If-Match": expectedEtag,
+      },
+      body: JSON.stringify(body),
+    }),
+  );
+
+export const deleteGoogleEvent = async (
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  expectedEtag: string,
+  fetcher: typeof fetch = fetch,
+): Promise<GoogleEventWriteResult> =>
+  writeOutcome(
+    await send(fetcher, eventsUrl(calendarId, eventId), {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "If-Match": expectedEtag,
+      },
+    }),
+  );

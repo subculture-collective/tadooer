@@ -345,6 +345,34 @@ export class BaikalConnectorService {
     );
   }
 
+  /**
+   * Credentials for the calendar bridge (ADR 0041). The password stays in
+   * memory for one pass and is never returned by a route or logged.
+   */
+  bridgeAccess(
+    ownerId: string,
+    calendarId: string,
+  ):
+    | {
+        readonly ok: true;
+        readonly collectionUrl: URL;
+        readonly username: string;
+        readonly password: string;
+        readonly fetch: typeof fetch;
+      }
+    | { readonly ok: false; readonly reason: CalendarOperationFailure } {
+    const access = this.#calendarAccess(ownerId, calendarId);
+    return access.ok
+      ? {
+          ok: true,
+          collectionUrl: access.collectionUrl,
+          username: access.connector.username,
+          password: access.password,
+          fetch: this.fetcher,
+        }
+      : access;
+  }
+
   async #discover(
     username: string,
     password: string,

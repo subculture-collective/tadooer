@@ -817,3 +817,139 @@ export const deleteCalDavEvent = (
   options.expectedEtag === undefined
     ? Promise.resolve({ ok: false, reason: "invalid-protocol" })
     : writeCalendarResource("DELETE", options);
+
+/**
+ * Calendar bridge reads (ADR 0041). Unlike the bounded projection reader,
+ * these return raw resources without parsing, so a recurring or otherwise
+ * unsupported event is reported to the bridge instead of failing the read.
+ */
+export interface CalDavRawResource {
+  readonly href: string;
+  readonly etag: string;
+  readonly rawIcs: string;
+}
+
+export type CalDavResourceReadResult =
+  | { readonly ok: true; readonly value: CalDavRawResource | "gone" }
+  | { readonly ok: false; readonly reason: CalDavEventFailure };
+
+export interface CalDavResourceOptions {
+  readonly collectionUrl: URL;
+  readonly username: string;
+  readonly password: string;
+  readonly href: string;
+  readonly fetch?: typeof fetch;
+  readonly signal?: AbortSignal;
+}
+
+/** Reads one member by href; 404 is returned as `gone` (deletion proof). */
+export const readCalDavResource = async (
+  options: CalDavResourceOptions,
+): Promise<CalDavResourceReadResult> => {
+  const url = directMemberUrl(options.href, options.collectionUrl);
+  if (
+    url === undefined ||
+    !safeUrl(options.collectionUrl, options.collectionUrl.origin)
+  )
+    return { ok: false, reason: "unsafe-remote-url" };
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)(url, {
+      method: "GET",
+      redirect: "manual",
+      headers: {
+        Authorization: authorizationFor(options.username, options.password),
+        Accept: "text/calendar",
+      },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch {
+    return { ok: false, reason: "transport-failed" };
+  }
+  if (response.url !== "" && response.url !== url.href)
+    return { ok: false, reason: "unsafe-remote-url" };
+  if (response.status === 404 || response.status === 410)
+    return { ok: true, value: "gone" };
+  const failure = responseFailure(response);
+  if (failure !== undefined) return { ok: false, reason: failure };
+  const etag = response.headers.get("etag");
+  if (response.status !== 200 || etag === null || !strongEtag.test(etag))
+    return { ok: false, reason: "invalid-protocol" };
+  try {
+    const rawIcs = await readBoundedText(response);
+    return rawIcs === undefined
+      ? { ok: false, reason: "invalid-protocol" }
+      : { ok: true, value: { href: options.href, etag, rawIcs } };
+  } catch {
+    return { ok: false, reason: "invalid-protocol" };
+  }
+};
+
+/** Lists every VEVENT member in a window (at most 366 days) with its body. */
+export const listCalDavResources = async (
+  options: Omit<CalDavEventReadOptions, "fetch"> & {
+    readonly fetch?: typeof fetch;
+  },
+): Promise<CalDavEventResult<readonly CalDavRawResource[]>> => {
+  if (
+    !safeUrl(options.collectionUrl, options.collectionUrl.origin) ||
+    !validInstant(options.startsAt) ||
+    !validInstant(options.endsAt) ||
+    Date.parse(options.endsAt) <= Date.parse(options.startsAt) ||
+    Date.parse(options.endsAt) - Date.parse(options.startsAt) > 366 * 86_400_000
+  )
+    return { ok: false, reason: "invalid-protocol" };
+  const fetcher = options.fetch ?? fetch;
+  let response: Response;
+  try {
+    response = await fetcher(options.collectionUrl, {
+      method: "REPORT",
+      redirect: "manual",
+      headers: {
+        Authorization: authorizationFor(options.username, options.password),
+        Depth: "1",
+        "Content-Type": "application/xml; charset=utf-8",
+      },
+      body: calendarQuery(options.startsAt, options.endsAt),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch {
+    return { ok: false, reason: "transport-failed" };
+  }
+  if (response.url !== "" && response.url !== options.collectionUrl.href)
+    return { ok: false, reason: "unsafe-remote-url" };
+  const failure = responseFailure(response);
+  if (failure !== undefined) return { ok: false, reason: failure };
+  if (
+    response.status !== 207 ||
+    !response.headers.get("content-type")?.toLowerCase().includes("xml")
+  )
+    return { ok: false, reason: "invalid-protocol" };
+  let document: XmlDocument | undefined;
+  try {
+    const text = await readBoundedText(response);
+    document = text === undefined ? undefined : parseMultiStatus(text);
+  } catch {
+    document = undefined;
+  }
+  const members =
+    document === undefined
+      ? undefined
+      : eventMembers(document, options.collectionUrl);
+  if (members === undefined) return { ok: false, reason: "invalid-protocol" };
+  const resources: CalDavRawResource[] = [];
+  for (const member of members) {
+    const read = await readCalDavResource({
+      collectionUrl: options.collectionUrl,
+      username: options.username,
+      password: options.password,
+      href: member.href,
+      fetch: fetcher,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    if (!read.ok) return read;
+    // Deleted between the listing and the read: absent, not a deletion proof.
+    if (read.value !== "gone") resources.push(read.value);
+  }
+  return { ok: true, value: resources };
+};
