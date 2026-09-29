@@ -20,6 +20,14 @@ export * from "./capture.ts";
 export * from "./calendar-subscriptions.ts";
 export * from "./data-export.ts";
 import { z } from "zod";
+import {
+  automationCalendarBridgeDeletionInputSchema,
+  automationCalendarBridgeResolveInputSchema,
+  automationCalendarBridgeResourceInputSchema,
+  automationCalendarBridgeResourceSchema,
+  calendarBridgeLinkSchema,
+  calendarBridgeOperationSchema,
+} from "./calendar-bridge.ts";
 import { captureBatchMaxTasks, captureCreateFields } from "./capture.ts";
 import {
   automationNoteMutationInputSchema,
@@ -2286,6 +2294,11 @@ export const automationTokenScopeSchema = z.enum([
   "imports:write",
   "publication:read",
   "publication:write",
+  // Calendar bridge review (ADR 0044): status reads, deletion decisions and
+  // conflict resolution. Mapping creation, pause, removal and passes stay
+  // owner-only.
+  "calendar_bridge:read",
+  "calendar_bridge:review",
 ]);
 
 /**
@@ -2396,6 +2409,9 @@ export const automationOperationSchema = z.enum([
   "imports.apply",
   "calendar_feeds.revoke",
   "connectors.resync",
+  // ADR 0044: revision-bound bridge review decisions.
+  "calendar_bridge.decide_deletion",
+  "calendar_bridge.resolve_conflict",
   "schedule.create_time_block",
   // ADR 0037: move and remove an existing block with the task revision.
   "schedule.move_time_block",
@@ -2684,6 +2700,14 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     z.object({
       operation: z.literal("connectors.resync"),
       input: automationConnectorResyncInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_bridge.decide_deletion"),
+      input: automationCalendarBridgeDeletionInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_bridge.resolve_conflict"),
+      input: automationCalendarBridgeResolveInputSchema,
     }),
     z.object({
       operation: z.literal("projects.mutate"),
@@ -2993,6 +3017,16 @@ const automationToolCommandSchema = (
       operation: z.literal(operation),
       input: automationConnectorResyncInputSchema,
     });
+  if (operation === "calendar_bridge.decide_deletion")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarBridgeDeletionInputSchema,
+    });
+  if (operation === "calendar_bridge.resolve_conflict")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarBridgeResolveInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -3251,6 +3285,14 @@ export const automationConfirmationRules: Readonly<
   "imports.apply": consequentialRule("bulk"),
   "calendar_feeds.revoke": consequentialRule("irreversible"),
   "connectors.resync": ordinaryRule,
+  // #48: approving lets the next pass delete the other copy; keeping writes
+  // nothing. A resolution overwrites or deletes the other side's version.
+  "calendar_bridge.decide_deletion": byActionRule(["decision"], {
+    approve: "deletion",
+  }),
+  "calendar_bridge.resolve_conflict": consequentialRule(
+    "destructive_replacement",
+  ),
   // #57: an update replaces the pool's whole item list, like tasks.set_tags.
   "templates.mutate": ordinaryRule,
   "template_sets.create": ordinaryRule,
@@ -3368,6 +3410,10 @@ export const automationAffectedEntitySchema = z
       "calendar_import",
       "calendar_feed",
       "connector",
+      // ADR 0044: confirmation repeats the link revision check in the store.
+      "calendar_bridge_mapping",
+      "calendar_bridge_link",
+      "calendar_bridge_conflict",
     ]),
     entityId: entityIdSchema,
   })
@@ -3477,6 +3523,9 @@ export const automationExecutionResultSchema = z.union([
   automationCalendarImportApplyResponseSchema,
   automationCalendarFeedRevocationResponseSchema,
   automationConnectorResyncResponseSchema,
+  // ADR 0044: the decided link, or the enqueued resolution write.
+  z.object({ link: calendarBridgeLinkSchema }).strict(),
+  z.object({ operation: calendarBridgeOperationSchema }).strict(),
   calendarSubscriptionRefreshResponseSchema,
   calendarSubscriptionEventMutationResponseSchema,
   calendarSubscriptionConversionResponseSchema,
@@ -3867,6 +3916,18 @@ export const automationCatalog = [
     outputSchema: automationCalendarImportResourceSchema,
   },
   {
+    id: "calendar_bridge.status",
+    kind: "resource",
+    scopes: ["calendar_bridge:read"],
+    confirmationRequired: false,
+    confirmation: { kind: "none" },
+    apiPath: "/api/automation/v1/resources/calendar-bridge",
+    mcpName: "suite.calendar_bridge.status",
+    mcpUri: "suite://v1/calendar-bridge{?mappingId}",
+    inputSchema: automationCalendarBridgeResourceInputSchema,
+    outputSchema: automationCalendarBridgeResourceSchema,
+  },
+  {
     id: "calendar_feeds.list",
     kind: "resource",
     scopes: ["publication:read"],
@@ -4015,56 +4076,60 @@ export const automationCatalog = [
     id,
     kind: "tool" as const,
     scopes: [
-      id === "imports.apply"
-        ? "imports:write"
-        : id === "calendar_feeds.revoke"
-          ? "publication:write"
-          : id === "connectors.resync"
-            ? "connectors:recover"
-            : id === "notifications.send_test"
-              ? "notifications:test"
-              : id === "planning.update_preferences"
-                ? "planning:write"
-                : id === "application.update_preferences"
-                  ? "application:write"
-                  : id === "notifications.update_preferences"
-                    ? "notifications:write"
-                    : id.startsWith("projects.")
-                      ? "projects:write"
-                      : id.startsWith("tags.")
-                        ? "tags:write"
-                        : id === "notes.mutate"
-                          ? "notes:write"
-                          : id === "task_links.mutate"
-                            ? "task_links:write"
-                            : id === "habits.mutate"
-                              ? "habits:write"
-                              : id.startsWith("counters.") ||
-                                  id === "evaluations.write"
-                                ? "metrics:write"
-                                : id.startsWith("tasks.") ||
-                                    id.startsWith("recurrence.") ||
-                                    id === "subtasks.mutate" ||
-                                    id === "time_entries.mutate" ||
-                                    id === "day_order.reorder" ||
-                                    id === "boards.mutate" ||
-                                    id === "sections.mutate" ||
-                                    id === "task_views.set" ||
-                                    id === "menu_folders.mutate" ||
-                                    id ===
-                                      "calendar_subscriptions.convert_event"
-                                  ? "tasks:write"
-                                  : id.startsWith("schedule.") ||
-                                      id === "calendar_subscriptions.refresh" ||
-                                      id === "calendar_subscriptions.hide_event"
-                                    ? "schedule:write"
-                                    : id.startsWith("templates.") ||
-                                        id.startsWith("template_sets.")
-                                      ? "templates:write"
-                                      : id.startsWith("placeholders.") ||
-                                          id.startsWith("pools.")
-                                        ? "pools:write"
-                                        : "focus:write",
+      id.startsWith("calendar_bridge.")
+        ? "calendar_bridge:review"
+        : id === "imports.apply"
+          ? "imports:write"
+          : id === "calendar_feeds.revoke"
+            ? "publication:write"
+            : id === "connectors.resync"
+              ? "connectors:recover"
+              : id === "notifications.send_test"
+                ? "notifications:test"
+                : id === "planning.update_preferences"
+                  ? "planning:write"
+                  : id === "application.update_preferences"
+                    ? "application:write"
+                    : id === "notifications.update_preferences"
+                      ? "notifications:write"
+                      : id.startsWith("projects.")
+                        ? "projects:write"
+                        : id.startsWith("tags.")
+                          ? "tags:write"
+                          : id === "notes.mutate"
+                            ? "notes:write"
+                            : id === "task_links.mutate"
+                              ? "task_links:write"
+                              : id === "habits.mutate"
+                                ? "habits:write"
+                                : id.startsWith("counters.") ||
+                                    id === "evaluations.write"
+                                  ? "metrics:write"
+                                  : id.startsWith("tasks.") ||
+                                      id.startsWith("recurrence.") ||
+                                      id === "subtasks.mutate" ||
+                                      id === "time_entries.mutate" ||
+                                      id === "day_order.reorder" ||
+                                      id === "boards.mutate" ||
+                                      id === "sections.mutate" ||
+                                      id === "task_views.set" ||
+                                      id === "menu_folders.mutate" ||
+                                      id ===
+                                        "calendar_subscriptions.convert_event"
+                                    ? "tasks:write"
+                                    : id.startsWith("schedule.") ||
+                                        id ===
+                                          "calendar_subscriptions.refresh" ||
+                                        id ===
+                                          "calendar_subscriptions.hide_event"
+                                      ? "schedule:write"
+                                      : id.startsWith("templates.") ||
+                                          id.startsWith("template_sets.")
+                                        ? "templates:write"
+                                        : id.startsWith("placeholders.") ||
+                                            id.startsWith("pools.")
+                                          ? "pools:write"
+                                          : "focus:write",
     ] as const,
     confirmationRequired: true,
     confirmation: automationConfirmationRules[id],
@@ -4095,6 +4160,7 @@ export const automationCatalog = [
       "imports:write",
       "publication:write",
       "connectors:recover",
+      "calendar_bridge:review",
     ],
     confirmationRequired: false,
     confirmation: { kind: "none" },

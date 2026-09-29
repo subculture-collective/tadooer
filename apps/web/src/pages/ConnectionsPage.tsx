@@ -11,6 +11,7 @@ import { AssistantAccess } from "../components/AssistantAccess.tsx";
 import { SuperProductivityImport } from "../components/SuperProductivityImport.tsx";
 import { ImportedPluginData } from "../components/ImportedPluginData.tsx";
 import { CalendarSubscriptions } from "../components/CalendarSubscriptions.tsx";
+import { CalendarBridge } from "../components/CalendarBridge.tsx";
 import { Alert, AlertDescription } from "../components/ui/alert.tsx";
 import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
 import { EmptyState } from "../components/ui/empty-state.tsx";
@@ -99,6 +100,14 @@ export const ConnectionsPage = ({
                 })}
           />
         )}
+      {/* ADR 0044: needs a connected Google account and Baikal. */}
+      {google?.connected === true && baikal.connected && (
+        <CalendarBridge
+          csrfToken={csrfToken}
+          google={google}
+          baikalCalendars={baikal.calendars}
+        />
+      )}
       <CalendarSubscriptions csrfToken={csrfToken} />
       <Card aria-labelledby="connections-calendars-title">
         <CardHeader>

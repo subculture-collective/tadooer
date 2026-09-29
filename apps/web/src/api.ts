@@ -245,6 +245,25 @@ import {
   type CalendarSubscriptionPatchRequest,
   type CalendarSubscriptionRefreshResponse,
 } from "@suite/contracts";
+import {
+  calendarBridgeLinkSchema,
+  calendarBridgeMappingCreateRequestSchema,
+  calendarBridgeMappingPreviewResponseSchema,
+  calendarBridgeMappingSchema,
+  calendarBridgeOperationSchema,
+  calendarBridgeOverviewResponseSchema,
+  calendarBridgeReviewResponseSchema,
+  calendarBridgeRunResponseSchema,
+  type CalendarBridgeLink,
+  type CalendarBridgeMapping,
+  type CalendarBridgeMappingCreateRequest,
+  type CalendarBridgeMappingPreviewResponse,
+  type CalendarBridgeOperation,
+  type CalendarBridgeOverviewResponse,
+  type CalendarBridgeReviewResponse,
+  type CalendarBridgeRunResponse,
+  type CalendarBridgeSide,
+} from "@suite/contracts";
 import { z } from "zod";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
@@ -2120,6 +2139,132 @@ export const dismissCalendarSubscriptionEvent = (
       body: JSON.stringify(event),
     },
   );
+
+// Google-Baikal calendar bridge controls (ADR 0041, ADR 0044). Online-only
+// and owner-only; no response carries a credential or raw iCalendar.
+const bridgePath = "/api/calendar-bridge";
+const bridgeMappingPath = (id: string): string =>
+  `${bridgePath}/mappings/${encodeURIComponent(id)}`;
+
+export const getCalendarBridgeOverview =
+  (): Promise<CalendarBridgeOverviewResponse> =>
+    request(`${bridgePath}/overview`, calendarBridgeOverviewResponseSchema);
+
+export const previewCalendarBridgeMapping = (
+  input: CalendarBridgeMappingCreateRequest,
+  csrfToken: string,
+): Promise<CalendarBridgeMappingPreviewResponse> =>
+  request(
+    `${bridgePath}/mappings/preview`,
+    calendarBridgeMappingPreviewResponseSchema,
+    {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(
+        calendarBridgeMappingCreateRequestSchema.parse(input),
+      ),
+    },
+  );
+
+export const createCalendarBridgeMapping = async (
+  input: CalendarBridgeMappingCreateRequest,
+  csrfToken: string,
+): Promise<CalendarBridgeMapping> =>
+  (
+    await request(
+      `${bridgePath}/mappings`,
+      z.object({ mapping: calendarBridgeMappingSchema }),
+      {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken },
+        body: JSON.stringify(
+          calendarBridgeMappingCreateRequestSchema.parse(input),
+        ),
+      },
+    )
+  ).mapping;
+
+export const setCalendarBridgeMappingEnabled = async (
+  id: string,
+  revision: number,
+  enabled: boolean,
+  csrfToken: string,
+): Promise<CalendarBridgeMapping> =>
+  (
+    await request(
+      bridgeMappingPath(id),
+      z.object({ mapping: calendarBridgeMappingSchema }),
+      {
+        method: "PATCH",
+        headers: conditionalHeaders(revision, csrfToken),
+        body: JSON.stringify({ enabled }),
+      },
+    )
+  ).mapping;
+
+/** Never deletes events; pending writes are discarded only when asked. */
+export const removeCalendarBridgeMapping = (
+  id: string,
+  revision: number,
+  cancelPendingWork: boolean,
+  csrfToken: string,
+): Promise<void> =>
+  requestEmpty(
+    `${bridgeMappingPath(id)}${cancelPendingWork ? "?pendingWork=cancel" : ""}`,
+    { method: "DELETE", headers: conditionalHeaders(revision, csrfToken) },
+  );
+
+export const runCalendarBridgeMapping = (
+  id: string,
+  csrfToken: string,
+): Promise<CalendarBridgeRunResponse> =>
+  request(`${bridgeMappingPath(id)}/run`, calendarBridgeRunResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+
+export const getCalendarBridgeReview = (
+  id: string,
+): Promise<CalendarBridgeReviewResponse> =>
+  request(
+    `${bridgeMappingPath(id)}/review`,
+    calendarBridgeReviewResponseSchema,
+  );
+
+/** `approve` lets the next pass delete the other copy; `keep` unlinks it. */
+export const decideCalendarBridgeDeletion = async (
+  mappingId: string,
+  linkId: string,
+  linkRevision: number,
+  decision: "approve" | "decline",
+  csrfToken: string,
+): Promise<CalendarBridgeLink> =>
+  (
+    await request(
+      `${bridgeMappingPath(mappingId)}/links/${encodeURIComponent(linkId)}/${decision}-deletion`,
+      z.object({ link: calendarBridgeLinkSchema }),
+      { method: "POST", headers: conditionalHeaders(linkRevision, csrfToken) },
+    )
+  ).link;
+
+export const resolveCalendarBridgeConflict = async (
+  mappingId: string,
+  conflictId: string,
+  linkRevision: number,
+  keep: CalendarBridgeSide,
+  csrfToken: string,
+): Promise<CalendarBridgeOperation> =>
+  (
+    await request(
+      `${bridgeMappingPath(mappingId)}/conflicts/${encodeURIComponent(conflictId)}/resolve`,
+      z.object({ operation: calendarBridgeOperationSchema }),
+      {
+        method: "POST",
+        headers: conditionalHeaders(linkRevision, csrfToken),
+        body: JSON.stringify({ keep }),
+      },
+    )
+  ).operation;
 
 /**
  * Owner data export and restore (issue #93, ADR 0034). Owner session only;

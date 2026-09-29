@@ -678,7 +678,10 @@
         "createTemplatePoolSlot",
         "createTemplateSet"
       ],
-      "catalog": ["templates.mutate", "template_sets.create"],
+      "catalog": [
+        "templates.mutate",
+        "template_sets.create"
+      ],
       "status": "covered",
       "issue": 57,
       "authority": "Library/source revisions, atomic membership and explicit archive approval.",
@@ -858,13 +861,48 @@
       "source": "docs/superpowers/plans/2026-09-20-parity-and-calendar-hub.md"
     },
     {
+      "id": "calendar-bridge-review",
+      "action": "Calendar bridge status, pending writes, blocked events, conflicts and deletion decisions",
+      "webApi": [
+        "getCalendarBridgeOverview",
+        "getCalendarBridgeReview",
+        "decideCalendarBridgeDeletion",
+        "resolveCalendarBridgeConflict"
+      ],
+      "catalog": [
+        "calendar_bridge.status",
+        "calendar_bridge.decide_deletion",
+        "calendar_bridge.resolve_conflict"
+      ],
+      "status": "covered",
+      "issue": 48,
+      "authority": "calendar_bridge:read returns mapping summaries and, per mapping, blocked events, conflicts with both retained versions and unfinished writes; never a credential or raw iCalendar. calendar_bridge:review decides one deletion or conflict bound to the link revision: approving a deletion and resolving a conflict are consequential, keeping the other copy is ordinary (ADR 0044).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
+      "id": "calendar-bridge-mappings",
+      "action": "Preview, create, pause/resume, remove and run a calendar mapping",
+      "webApi": [
+        "previewCalendarBridgeMapping",
+        "createCalendarBridgeMapping",
+        "setCalendarBridgeMappingEnabled",
+        "removeCalendarBridgeMapping",
+        "runCalendarBridgeMapping"
+      ],
+      "catalog": [],
+      "status": "owner-only",
+      "issue": 48,
+      "authority": "Choosing which calendars exchange events, discarding pending writes and sending queued writes to both providers stay with the owner in the browser (ADR 0044).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "future-bridge",
-      "action": "Calendar mapping/conflict/background bridge controls",
+      "action": "Background calendar bridge passes",
       "webApi": [],
       "catalog": [],
       "status": "future",
-      "issue": 48,
-      "authority": "Require explicit mapped writable calendars and scoped consequential-action approval; no broad provider token reuse.",
+      "issue": 46,
+      "authority": "A scheduled worker runs passes; until then the owner runs them. Require explicit mapped writable calendars and scoped consequential-action approval; no broad provider token reuse.",
       "source": "docs/discovery/2026-09-20-parity-assistants-calendar-hub.md"
     },
     {
