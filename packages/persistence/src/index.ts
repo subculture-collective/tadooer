@@ -512,6 +512,8 @@ export interface AutomationTokenRecord {
   readonly label: string;
   readonly secretHash: string;
   readonly scopes: readonly string[];
+  /** ADR 0035: `confirm_all` or `execute_ordinary`; immutable like scopes. */
+  readonly confirmationPolicy: string;
   readonly createdAt: string;
   readonly lastUsedAt: string | null;
   readonly expiresAt: string | null;
@@ -1660,6 +1662,16 @@ const migrations: readonly Migration[] = [
         SET epoch=lower(hex(randomblob(16))),next_sequence=1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
     `,
   },
+  {
+    // ADR 0035: the owner-chosen token confirmation policy. Existing tokens
+    // keep the previous behaviour (every mutation is confirmed separately).
+    id: "0039_automation_token_confirmation_policy",
+    sql: `
+      ALTER TABLE automation_tokens ADD COLUMN confirmation_policy TEXT NOT NULL
+        DEFAULT 'confirm_all'
+        CHECK (confirmation_policy IN ('confirm_all', 'execute_ordinary'));
+    `,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -2286,6 +2298,46 @@ export class SuiteDatabase {
       )
       .run(partial ? "partial" : "applied", now, ownerId, jobId);
     return this.getCalendarImportJob(ownerId, jobId);
+  }
+
+  /** ADR 0038: every import job of the owner, newest first. */
+  listCalendarImportJobs(ownerId: string): readonly CalendarImportJobRecord[] {
+    const rows = this.#database
+      .prepare(
+        "SELECT id FROM calendar_import_jobs WHERE owner_id=? ORDER BY created_at DESC, id",
+      )
+      .all(ownerId) as unknown as readonly { id: string }[];
+    return rows.flatMap((row) => {
+      const job = this.getCalendarImportJob(ownerId, row.id);
+      return job === undefined ? [] : [job];
+    });
+  }
+
+  /**
+   * ADR 0038: Super Productivity import provenance per entity kind. The
+   * export itself is not stored; this counts what earlier imports recorded.
+   */
+  summarizeTaskImportSources(ownerId: string): readonly {
+    readonly entityKind: string;
+    readonly count: number;
+    readonly lastImportedAt: string;
+  }[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT entity_kind, COUNT(*) AS count, MAX(imported_at) AS last_imported_at
+         FROM task_import_sources WHERE owner_id=? AND source_kind='super_productivity'
+         GROUP BY entity_kind ORDER BY entity_kind`,
+      )
+      .all(ownerId) as unknown as readonly {
+      entity_kind: string;
+      count: number;
+      last_imported_at: string;
+    }[];
+    return rows.map((row) => ({
+      entityKind: row.entity_kind,
+      count: row.count,
+      lastImportedAt: row.last_imported_at,
+    }));
   }
 
   listPublishedCalendarRaw(
@@ -2983,7 +3035,9 @@ export class SuiteDatabase {
     readonly expectedBlockRevision: number;
     readonly now: string;
   }): TaskRecord | undefined {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    // ADR 0037: a savepoint lets the automation confirmation release the
+    // block inside its own receipt transaction; outside one it commits alone.
+    this.#database.exec("SAVEPOINT release_task_block;");
     try {
       const task = this.getTask(input.ownerId, input.taskId);
       const block = this.getTaskCalendarBlock(input.ownerId, input.taskId);
@@ -2993,7 +3047,7 @@ export class SuiteDatabase {
         task.revision !== input.expectedTaskRevision ||
         block.revision !== input.expectedBlockRevision
       ) {
-        this.#database.exec("COMMIT;");
+        this.#database.exec("RELEASE SAVEPOINT release_task_block;");
         return undefined;
       }
       this.#database
@@ -3038,10 +3092,12 @@ export class SuiteDatabase {
         released.revision,
         input.now,
       );
-      this.#database.exec("COMMIT;");
+      this.#database.exec("RELEASE SAVEPOINT release_task_block;");
       return released;
     } catch (error: unknown) {
-      this.#database.exec("ROLLBACK;");
+      this.#database.exec(
+        "ROLLBACK TO SAVEPOINT release_task_block; RELEASE SAVEPOINT release_task_block;",
+      );
       throw error;
     }
   }
@@ -4439,8 +4495,8 @@ export class SuiteDatabase {
     this.#database
       .prepare(
         `INSERT INTO automation_tokens
-          (id,owner_id,label,secret_hash,scopes_json,created_at,last_used_at,expires_at,revoked_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+          (id,owner_id,label,secret_hash,scopes_json,confirmation_policy,created_at,last_used_at,expires_at,revoked_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         record.id,
@@ -4448,6 +4504,7 @@ export class SuiteDatabase {
         record.label,
         record.secretHash,
         JSON.stringify([...record.scopes].sort()),
+        record.confirmationPolicy,
         record.createdAt,
         record.lastUsedAt,
         record.expiresAt,
@@ -4797,10 +4854,34 @@ export class SuiteDatabase {
       label: String(row.label),
       secretHash: String(row.secret_hash),
       scopes: JSON.parse(String(row.scopes_json)) as string[],
+      confirmationPolicy: row.confirmation_policy ?? "confirm_all",
       createdAt: String(row.created_at),
       lastUsedAt: row.last_used_at ?? null,
       expiresAt: row.expires_at ?? null,
       revokedAt: row.revoked_at ?? null,
+    };
+  }
+
+  /**
+   * ADR 0036: store methods that the assistant confirmation runs inside its
+   * receipt transaction cannot open a second transaction, so they start one
+   * only when none is open and use a savepoint otherwise.
+   */
+  #beginWrite(): { commit(): void; rollback(): void } {
+    if (this.#database.isTransaction) {
+      this.#database.exec("SAVEPOINT nested_write;");
+      return {
+        commit: () => this.#database.exec("RELEASE SAVEPOINT nested_write;"),
+        rollback: () =>
+          this.#database.exec(
+            "ROLLBACK TO SAVEPOINT nested_write; RELEASE SAVEPOINT nested_write;",
+          ),
+      };
+    }
+    this.#database.exec("BEGIN IMMEDIATE;");
+    return {
+      commit: () => this.#database.exec("COMMIT;"),
+      rollback: () => this.#database.exec("ROLLBACK;"),
     };
   }
 
@@ -4812,7 +4893,7 @@ export class SuiteDatabase {
     revision: number,
     now: string,
   ): SyncChangeRecord {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       const change = this.#appendSyncChangeInTransaction(
         ownerId,
@@ -4822,10 +4903,10 @@ export class SuiteDatabase {
         revision,
         now,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return change;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -5829,7 +5910,7 @@ export class SuiteDatabase {
       >[];
     },
   ): TaskTemplateRecord {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       if (
         input.suggestedProjectId !== null &&
@@ -5894,13 +5975,13 @@ export class SuiteDatabase {
         input.revision,
         input.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       const created = this.getTaskTemplate(input.ownerId, input.id);
       if (created === undefined)
         throw new Error("Created task template could not be read");
       return created;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -6005,11 +6086,11 @@ export class SuiteDatabase {
     >[];
     readonly now: string;
   }): TaskTemplateRecord | undefined {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       const current = this.getTaskTemplate(input.ownerId, input.id);
       if (current?.revision !== input.expectedRevision) {
-        this.#database.exec("COMMIT;");
+        write.commit();
         return undefined;
       }
       if (
@@ -6020,7 +6101,7 @@ export class SuiteDatabase {
           )
           .get(input.suggestedProjectId, input.ownerId) === undefined
       ) {
-        this.#database.exec("ROLLBACK;");
+        write.rollback();
         return undefined;
       }
       if (
@@ -6033,7 +6114,7 @@ export class SuiteDatabase {
             .get(input.ownerId, ...input.tagIds) as unknown as { count: number }
         ).count !== input.tagIds.length
       ) {
-        this.#database.exec("ROLLBACK;");
+        write.rollback();
         return undefined;
       }
       const revision = current.revision + 1;
@@ -6081,13 +6162,13 @@ export class SuiteDatabase {
         revision,
         input.now,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       const updated = this.getTaskTemplate(input.ownerId, input.id);
       if (updated === undefined)
         throw new Error("Updated task template could not be read");
       return updated;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -6210,7 +6291,7 @@ export class SuiteDatabase {
     record: TemplateSetRecord,
     members: readonly TemplateSetMemberRecord[],
   ): void {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       if (
         members.length === 0 ||
@@ -6255,9 +6336,9 @@ export class SuiteDatabase {
         record.revision,
         record.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -7971,7 +8052,7 @@ export class SuiteDatabase {
     pool: ChoicePoolRecord,
     items: readonly ChoicePoolItemRecord[],
   ): ChoicePoolRecord {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       if (
         items.length < pool.pickCount ||
@@ -8019,10 +8100,10 @@ export class SuiteDatabase {
         pool.revision,
         pool.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return pool;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -8037,14 +8118,14 @@ export class SuiteDatabase {
     readonly items: readonly { readonly id?: string; readonly title: string }[];
     readonly now: string;
   }): ChoicePoolRecord | undefined {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       const current = this.getChoicePool(input.ownerId, input.id);
       if (
         current?.revision !== input.expectedRevision ||
         input.items.length < input.pickCount
       ) {
-        this.#database.exec("COMMIT;");
+        write.commit();
         return undefined;
       }
       const existing = this.listChoicePoolItems(input.id, true);
@@ -8120,10 +8201,10 @@ export class SuiteDatabase {
         input.expectedRevision + 1,
         input.now,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return this.getChoicePool(input.ownerId, input.id, true);
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -8239,7 +8320,7 @@ export class SuiteDatabase {
       this.listChoicePoolItems(record.poolId, false).length < record.pickCount
     )
       return undefined;
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       this.#database
         .prepare(
@@ -8266,10 +8347,10 @@ export class SuiteDatabase {
         record.revision,
         record.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return record;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }

@@ -268,8 +268,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 37,
-        expectedMigrationCount: 37,
+        appliedMigrationCount: 38,
+        expectedMigrationCount: 38,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -288,8 +288,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(37);
-      expect(reopenedState.expectedMigrationCount).toBe(37);
+      expect(reopenedState.appliedMigrationCount).toBe(38);
+      expect(reopenedState.expectedMigrationCount).toBe(38);
     });
   });
 
@@ -572,6 +572,7 @@ describe("SuiteDatabase", () => {
         ownerId: "owner-automation",
         label: "Quick add",
         secretHash: "secret-digest-active",
+        confirmationPolicy: "confirm_all",
         scopes: ["tasks.write", "tasks.read"],
         createdAt: "2026-08-06T00:00:00.000Z",
         lastUsedAt: null,
@@ -583,6 +584,7 @@ describe("SuiteDatabase", () => {
         ownerId: "owner-automation",
         label: "Expired",
         secretHash: "secret-digest-expired",
+        confirmationPolicy: "confirm_all",
         scopes: ["tasks.read"],
         createdAt: "2026-08-06T00:00:00.000Z",
         lastUsedAt: null,
@@ -1847,5 +1849,56 @@ describe("SuiteDatabase", () => {
       ).toMatchObject({ pendingCount: 2, failedCount: 0 });
       database.close();
     });
+  });
+});
+
+it("persists the ADR 0035 token confirmation policy and rejects unknown values", async () => {
+  await withTemporaryDirectory((directory) => {
+    const path = join(directory, "suite.sqlite");
+    const database = SuiteDatabase.open(path);
+    database.createOwner({
+      id: "owner-policy",
+      username: "policy-owner",
+      displayName: "Policy Owner",
+      passwordHash: "not-a-real-hash",
+      createdAt: "2026-09-25T00:00:00.000Z",
+    });
+    const token = {
+      id: "automation-token-policy",
+      ownerId: "owner-policy",
+      label: "Execute ordinary",
+      secretHash: "secret-digest-policy",
+      confirmationPolicy: "execute_ordinary",
+      scopes: ["tasks:write"],
+      createdAt: "2026-09-25T00:00:00.000Z",
+      lastUsedAt: null,
+      expiresAt: "2026-09-26T00:00:00.000Z",
+      revokedAt: null,
+    };
+    database.createAutomationToken(token);
+    expect(() =>
+      database.createAutomationToken({
+        ...token,
+        id: "automation-token-invalid",
+        secretHash: "secret-digest-invalid",
+        confirmationPolicy: "auto",
+      }),
+    ).toThrow();
+    database.close();
+    const reopened = SuiteDatabase.open(path);
+    expect(reopened.listAutomationTokens("owner-policy")).toEqual([
+      expect.objectContaining({
+        id: "automation-token-policy",
+        confirmationPolicy: "execute_ordinary",
+      }),
+    ]);
+    expect(
+      reopened.authenticateAutomationToken(
+        "automation-token-policy",
+        "secret-digest-policy",
+        "2026-09-25T00:01:00.000Z",
+      )?.confirmationPolicy,
+    ).toBe("execute_ordinary");
+    reopened.close();
   });
 });

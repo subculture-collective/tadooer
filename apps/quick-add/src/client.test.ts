@@ -44,6 +44,11 @@ describe("quick-add automation HTTP client", () => {
                 affected: [],
                 baseRevisions: [],
                 expiresAt: "2026-08-06T16:10:00.000Z",
+                confirmation: {
+                  policy: "ordinary",
+                  category: null,
+                  tokenPolicy: "confirm_all",
+                },
                 requiresConfirmation: true,
               },
             }),
@@ -96,6 +101,11 @@ describe("quick-add automation HTTP client", () => {
       affected: [{ entityKind: "tag", entityId: id }],
       baseRevisions: [],
       expiresAt: "2026-08-06T16:10:00.000Z",
+      confirmation: {
+        policy: "ordinary",
+        category: null,
+        tokenPolicy: "confirm_all",
+      },
       requiresConfirmation: true,
     };
     const calls: string[] = [];
