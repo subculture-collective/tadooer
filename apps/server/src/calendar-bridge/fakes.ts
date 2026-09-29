@@ -3,7 +3,10 @@
  * They implement the conditional semantics the adapters rely on: ETags,
  * If-Match/If-None-Match, client-chosen Google IDs (409 on reuse), cancelled
  * Google events, sync tokens with 410 expiry, and commit-then-lose-response.
- * No network access: each exposes a `fetch` function.
+ * The Google fake also models recurring series (ADR 0042): exception events
+ * under instance IDs `<master>_<basic original start>`, readable before they
+ * exist, listing by `iCalUID`, and cancelling a master cancels its
+ * exceptions. No network access: each exposes a `fetch` function.
  */
 
 const requestUrl = (input: string | URL | Request): URL =>
@@ -24,9 +27,25 @@ export interface FakeGoogleCalendar {
   readonly fetch: typeof fetch;
   readonly calendarId: string;
   readonly events: Map<string, GoogleEvent>;
-  readonly writes: { method: string; id: string }[];
+  readonly writes: { method: string; id: string; sendUpdates: string | null }[];
   /** Owner edits made directly in Google. */
   userCreate(id: string, fields: Record<string, unknown>): GoogleEvent;
+  /**
+   * Modifies one instance of a series, as the Google UI does: an exception
+   * event with `recurringEventId` and `originalStartTime`.
+   */
+  userEditInstance(
+    masterId: string,
+    suffix: string,
+    originalStartTime: Record<string, unknown>,
+    fields: Record<string, unknown>,
+  ): GoogleEvent;
+  /** Deletes one instance: a cancelled exception event. */
+  userCancelInstance(
+    masterId: string,
+    suffix: string,
+    originalStartTime: Record<string, unknown>,
+  ): GoogleEvent;
   userUpdate(id: string, fields: Record<string, unknown>): GoogleEvent;
   userDelete(id: string): void;
   userRestore(id: string): void;
@@ -43,7 +62,8 @@ export const createFakeGoogleCalendar = (
 ): FakeGoogleCalendar => {
   const events = new Map<string, GoogleEvent>();
   const changeSequence = new Map<string, number>();
-  const writes: { method: string; id: string }[] = [];
+  const writes: { method: string; id: string; sendUpdates: string | null }[] =
+    [];
   let sequence = 0;
   let etagVersion = 0;
   let loseResponse = false;
@@ -85,12 +105,71 @@ export const createFakeGoogleCalendar = (
     return copy;
   };
 
+  /** Master of an instance ID, when it names a series in this calendar. */
+  const masterOf = (id: string): GoogleEvent | undefined => {
+    const cut = id.lastIndexOf("_");
+    if (cut < 1 || !/^\d{8}(T\d{6}Z)?$/.test(id.slice(cut + 1)))
+      return undefined;
+    const master = events.get(id.slice(0, cut));
+    return Array.isArray(master?.recurrence) ? master : undefined;
+  };
+
+  /** An exception event for a series instance. */
+  const instanceOf = (
+    master: GoogleEvent,
+    id: string,
+    fields: Record<string, unknown>,
+  ): GoogleEvent => ({
+    ...base(id),
+    iCalUID: master.iCalUID,
+    created: master.created,
+    recurringEventId: master.id,
+    ...fields,
+  });
+
+  /** A generated instance read by ID before it has any exception. */
+  const virtualInstance = (master: GoogleEvent, id: string): GoogleEvent => ({
+    ...base(id),
+    iCalUID: master.iCalUID,
+    recurringEventId: master.id,
+    summary: master.summary,
+    etag: `"v${master.etag.replaceAll('"', "")}-${id}"`,
+  });
+
   const fake: FakeGoogleCalendar = {
     calendarId,
     events,
     writes,
     grantScopes: [],
     userCreate: (id, fields) => touch({ ...base(id), ...fields }),
+    userEditInstance: (masterId, suffix, originalStartTime, fields) => {
+      const master = events.get(masterId);
+      if (master === undefined) throw new Error(`No Google event ${masterId}`);
+      const id = `${masterId}_${suffix}`;
+      return touch(
+        instanceOf(master, id, {
+          summary: master.summary,
+          start: master.start,
+          end: master.end,
+          ...events.get(id),
+          originalStartTime,
+          ...fields,
+          status: "confirmed",
+        }),
+      );
+    },
+    userCancelInstance: (masterId, suffix, originalStartTime) => {
+      const master = events.get(masterId);
+      if (master === undefined) throw new Error(`No Google event ${masterId}`);
+      const id = `${masterId}_${suffix}`;
+      return touch(
+        instanceOf(master, id, {
+          ...events.get(id),
+          originalStartTime,
+          status: "cancelled",
+        }),
+      );
+    },
     userUpdate: (id, fields) => {
       const existing = events.get(id);
       if (existing === undefined) throw new Error(`No Google event ${id}`);
@@ -175,8 +254,11 @@ export const createFakeGoogleCalendar = (
           if (!Number.isInteger(since) || since < tokenFloor)
             return new Response("", { status: 410 });
         }
+        const uid = url.searchParams.get("iCalUID");
         const items = [...events.values()].filter(
-          (event) => (changeSequence.get(event.id) ?? 0) > since,
+          (event) =>
+            (changeSequence.get(event.id) ?? 0) > since &&
+            (uid === null || event.iCalUID === uid),
         );
         return Response.json({ items, nextSyncToken: `s${String(sequence)}` });
       }
@@ -193,12 +275,19 @@ export const createFakeGoogleCalendar = (
         if (!/^[a-v0-9]{5,1024}$/.test(id))
           return new Response("", { status: 400 });
         if (events.has(id)) return new Response("", { status: 409 });
-        writes.push({ method, id });
+        writes.push({
+          method,
+          id,
+          sendUpdates: url.searchParams.get("sendUpdates"),
+        });
         const created = touch({ ...base(id), ...accept(body) });
         return respond(Response.json(created));
       }
       if (eventId === undefined) return new Response("", { status: 405 });
-      const existing = events.get(eventId);
+      const master = masterOf(eventId);
+      const existing =
+        events.get(eventId) ??
+        (master === undefined ? undefined : virtualInstance(master, eventId));
       if (method === "GET")
         return existing === undefined
           ? new Response("", { status: 404 })
@@ -206,13 +295,18 @@ export const createFakeGoogleCalendar = (
       if (existing === undefined) return new Response("", { status: 404 });
       const ifMatch = headers.get("if-match");
       if (ifMatch !== existing.etag) return new Response("", { status: 412 });
-      writes.push({ method, id: eventId });
+      writes.push({
+        method,
+        id: eventId,
+        sendUpdates: url.searchParams.get("sendUpdates"),
+      });
       if (method === "PUT") {
         const body = JSON.parse(bodyText(init)) as Record<string, unknown>;
         const replaced: GoogleEvent = {
           ...base(eventId),
           iCalUID: existing.iCalUID,
           created: existing.created,
+          ...(master === undefined ? {} : { recurringEventId: master.id }),
           ...accept(body),
         };
         return respond(Response.json(touch(replaced)));
@@ -221,6 +315,13 @@ export const createFakeGoogleCalendar = (
         if (existing.status === "cancelled")
           return new Response("", { status: 410 });
         touch({ ...existing, status: "cancelled" });
+        // Deleting a master cancels the whole series.
+        for (const event of [...events.values()])
+          if (
+            event.recurringEventId === eventId &&
+            event.status !== "cancelled"
+          )
+            touch({ ...event, status: "cancelled" });
         return respond(new Response(null, { status: 204 }));
       }
       return new Response("", { status: 405 });

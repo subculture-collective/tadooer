@@ -21,7 +21,7 @@ const input = (
   google: present("base", '"g1"'),
   writable: { baikal: true, google: true },
   unsupportedFields: [],
-  invitationEffect: false,
+  invitation: { baikal: false, google: false },
   deletionApproved: false,
   ...patch,
 });
@@ -94,7 +94,13 @@ it.each([
   [{ enabled: false }, "disabled"],
   [{ google: { kind: "unavailable" } }, "unavailable"],
   [{ unsupportedFields: ["unknown-vendor-field"] }, "unsupported"],
-  [{ invitationEffect: true }, "invitation"],
+  [
+    {
+      invitation: { baikal: true, google: false },
+      google: present("new", '"g2"'),
+    },
+    "invitation",
+  ],
   [
     {
       writable: { baikal: false, google: true },
@@ -160,7 +166,6 @@ const fresh = (
   source: "google",
   initialExclusion: false,
   unsupportedFields: [],
-  invitationEffect: false,
   identityCollision: false,
   ...patch,
 });
@@ -189,9 +194,32 @@ it.each([
     { unsupportedFields: ["recurrence"] },
     { kind: "blocked", reason: "unsupported" },
   ],
-  [{ invitationEffect: true }, { kind: "blocked", reason: "invitation" }],
 ] as const)("never creates unsafe copies: %j", (patch, decision) => {
   expect(decideCalendarBridgeNewEvent(fresh(patch))).toEqual(decision);
+});
+// Invitation events are mirrored read-only (ADR 0042).
+it("never writes the side that carries an invitation", () => {
+  const invitation = { baikal: false, google: true } as const;
+  // Organizer's content change reaches the copy.
+  expect(
+    decide(input({ invitation, google: present("new", '"g2"') })),
+  ).toMatchObject({ kind: "propagate", target: "baikal" });
+  // An edit of the copy is not sent back.
+  expect(decide(input({ invitation, baikal: present("new", '"b2"') }))).toEqual(
+    { kind: "blocked", reason: "invitation" },
+  );
+  // Nor is a deletion of the copy, even when approved.
+  expect(
+    decide(
+      input({
+        invitation,
+        baikal: { kind: "deleted", proof: "gone" },
+        deletionApproved: true,
+      }),
+    ),
+  ).toEqual({ kind: "blocked", reason: "invitation" });
+  // Attendee-only changes do not reach the bridge digest: nothing to do.
+  expect(decide(input({ invitation })).kind).toBe("settled");
 });
 it("derives writable sides from the mapping direction", () => {
   expect(calendarBridgeWritableSides("two_way")).toEqual({

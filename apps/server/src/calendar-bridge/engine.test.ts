@@ -255,6 +255,7 @@ describe("calendar bridge passes", () => {
       expect(h.google.writes.at(-1)).toEqual({
         method: "PUT",
         id: "evtupdate1",
+        sendUpdates: "none",
       });
       const writes = h.writes();
       await h.run();
@@ -479,11 +480,11 @@ describe("calendar bridge passes", () => {
       const h = harness(directory, { direction: "google_to_baikal" });
       h.google.userCreate("evtrecurring", {
         ...googleTimed("Weekly"),
-        recurrence: ["RRULE:FREQ=WEEKLY"],
+        recurrence: ["EXRULE:FREQ=WEEKLY"],
       });
-      h.google.userCreate("evtinvite", {
-        ...googleTimed("Invite"),
-        attendees: [{ email: "guest@example.test" }],
+      h.google.userCreate("evtvendor", {
+        ...googleTimed("Vendor"),
+        extendedProperties: { private: { app: "1" } },
       });
       h.google.userCreate("evtsame", {
         ...googleTimed("Same UID"),
@@ -503,7 +504,7 @@ describe("calendar bridge passes", () => {
       );
       expect(reasons).toMatchObject({
         evtrecurring: "unsupported",
-        evtinvite: "unsupported",
+        evtvendor: "unsupported",
         evtsame: "identity-collision",
         [`${calDavCollectionPath}local.ics`]: "direction",
       });
