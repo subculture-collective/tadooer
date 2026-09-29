@@ -24,6 +24,10 @@ import {
   checklistResourceInputSchema,
   createAutomationTokenRequestSchema,
   automationPreviewCommandSchema,
+  automationPreviewExecuteSchema,
+  automationApprovalExpiryMinutes,
+  automationTokenConfirmationPolicySchema,
+  classifyAutomationCommand,
   automationConfirmRequestSchema,
   automationFocusCommandInputSchema,
   plannerWindowSchema,
@@ -47,7 +51,11 @@ import {
 } from "@suite/domain";
 import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
-import type { SuiteDatabase } from "@suite/persistence";
+import type {
+  AutomationPreviewRecord,
+  AutomationTokenRecord,
+  SuiteDatabase,
+} from "@suite/persistence";
 import {
   confirmOrganizationParity,
   isOrganizationParityCommand,
@@ -312,6 +320,7 @@ export const handleAutomation: RouteHandler = async (
         label: parsed.data.label,
         secretHash: createHash("sha256").update(secret).digest("base64url"),
         scopes: parsed.data.scopes,
+        confirmationPolicy: parsed.data.confirmationPolicy,
         createdAt,
         lastUsedAt: null,
         expiresAt: parsed.data.expiresAt,
@@ -818,10 +827,18 @@ export const handleAutomation: RouteHandler = async (
   if (method === "POST" && url.pathname === automationPreviewPath) {
     const token = authenticateAutomation(request, response, database);
     if (token === undefined) return true;
-    const parsed = automationPreviewCommandSchema.safeParse(
-      await readJson(request),
-    );
-    if (!parsed.success) {
+    const rawBody: unknown = await readJson(request);
+    const parsed = automationPreviewCommandSchema.safeParse(rawBody);
+    // ADR 0035: `execute` is parsed beside the command and never enters the
+    // input hash, so a preview and its executed twin share one hash.
+    const executeParsed = automationPreviewExecuteSchema
+      .optional()
+      .safeParse(
+        typeof rawBody === "object" && rawBody !== null && "execute" in rawBody
+          ? rawBody.execute
+          : undefined,
+      );
+    if (!parsed.success || !executeParsed.success) {
       sendError(
         response,
         400,
@@ -830,6 +847,7 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
+    const execute = executeParsed.data;
     let command = parsed.data;
     const scope = automationScopeFor(command.operation);
     if (!token.scopes.includes(scope)) {
@@ -1821,6 +1839,10 @@ export const handleAutomation: RouteHandler = async (
       .update(JSON.stringify(command))
       .digest("hex");
     const now = new Date();
+    const classification = classifyAutomationCommand(command);
+    const tokenPolicy = automationTokenConfirmationPolicySchema.parse(
+      token.confirmationPolicy,
+    );
     const preview = {
       id: randomUUID(),
       operation: command.operation,
@@ -1830,8 +1852,15 @@ export const handleAutomation: RouteHandler = async (
         `Confirm ${command.operation} affecting ${String(affected.length)} resource(s)`,
       affected,
       baseRevisions,
-      expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
-      requiresConfirmation: true as const,
+      expiresAt: new Date(
+        now.getTime() + automationApprovalExpiryMinutes * 60 * 1000,
+      ).toISOString(),
+      confirmation: {
+        policy: classification.policy,
+        category: classification.category,
+        tokenPolicy,
+      },
+      requiresConfirmation: true,
     };
     database.createAutomationPreview({
       ...preview,
@@ -1858,47 +1887,75 @@ export const handleAutomation: RouteHandler = async (
       requestHash: inputHash,
       createdAt: now.toISOString(),
     });
-    sendJson(response, 201, { preview });
-    return true;
-  }
-
-  // POST /api/automation/v1/previews/:id/confirm
-  if (automationConfirmPath === undefined) return false;
-  const automationConfirmPattern = new RegExp(
-    `^${automationConfirmPath.replace("{previewId}", "([0-9a-f-]{36})")}$`,
-  );
-  const automationConfirm = automationConfirmPattern.exec(url.pathname);
-  if (automationConfirm !== null && method === "POST") {
-    const token = authenticateAutomation(request, response, database);
-    if (token === undefined) return true;
-    const parsed = automationConfirmRequestSchema.safeParse(
-      await readJson(request),
-    );
-    const previewId = automationConfirm[1] ?? "";
-    const preview = database.getAutomationPreview(previewId);
+    if (execute === undefined) {
+      sendJson(response, 201, { preview });
+      return true;
+    }
+    // ADR 0035: apply in the same call only for an ordinary command under an
+    // execute_ordinary token. A denial has no effect; the preview stays valid
+    // for automation.confirm and the ledger records why execution was refused.
+    const executeRequestHash = createHash("sha256")
+      .update(`${command.operation}:${inputHash}:${execute.idempotencyKey}`)
+      .digest("hex");
     if (
-      !parsed.success ||
-      preview?.ownerId !== token.ownerId ||
-      preview.tokenId !== token.id
+      classification.policy === "consequential" ||
+      tokenPolicy !== "execute_ordinary"
     ) {
+      database.appendAutomationAudit({
+        id: randomUUID(),
+        ownerId: token.ownerId,
+        tokenId: token.id,
+        operation: command.operation,
+        phase: "confirm",
+        outcome: "denied",
+        errorCode: "AUTOMATION_CONFIRMATION_REQUIRED",
+        previewId: preview.id,
+        affectedIds: preview.affected.map(({ entityId }) => entityId),
+        requestHash: executeRequestHash,
+        createdAt: new Date().toISOString(),
+      });
       sendError(
         response,
-        404,
-        "AUTOMATION_PREVIEW_NOT_FOUND",
-        "Automation preview not found",
+        409,
+        "AUTOMATION_CONFIRMATION_REQUIRED",
+        classification.policy === "consequential"
+          ? `Preview ${preview.id} is a consequential ${classification.category ?? "action"} and needs explicit confirmation`
+          : `Preview ${preview.id} needs a separate confirmation under this token's confirm_all policy`,
       );
       return true;
     }
+    const stored = database.getAutomationPreview(preview.id);
+    if (stored === undefined) throw new Error("Automation preview missing");
+    const executed = await confirmAutomationPreview(
+      token,
+      stored,
+      execute.idempotencyKey,
+    );
+    if (executed === undefined) return true;
+    sendJson(response, 201, {
+      preview: { ...preview, requiresConfirmation: false },
+      executed,
+    });
+    return true;
+  }
+
+  // ADR 0035: one confirmation path for POST /previews/{id}/confirm and for an
+  // ordinary command applied in the preview call. Scope, binding, expiry,
+  // input-hash, base-revision, replay and conflict checks are identical.
+  // Returns the response body, or undefined after sending an error.
+  async function confirmAutomationPreview(
+    token: AutomationTokenRecord,
+    preview: AutomationPreviewRecord,
+    idempotencyKey: string,
+  ): Promise<AutomationConfirmationResponse | undefined> {
     const requestHash = createHash("sha256")
-      .update(
-        `${preview.operation}:${preview.inputHash}:${parsed.data.idempotencyKey}`,
-      )
+      .update(`${preview.operation}:${preview.inputHash}:${idempotencyKey}`)
       .digest("hex");
     const prior = database.getAutomationOutcome(
       token.ownerId,
       token.id,
       preview.operation,
-      parsed.data.idempotencyKey,
+      idempotencyKey,
     );
     if (prior !== undefined) {
       if (prior.requestHash !== requestHash) {
@@ -1908,7 +1965,7 @@ export const handleAutomation: RouteHandler = async (
           "IDEMPOTENCY_CONFLICT",
           "Idempotency key was used for another confirmation",
         );
-        return true;
+        return undefined;
       }
       database.appendAutomationAudit({
         id: randomUUID(),
@@ -1923,11 +1980,10 @@ export const handleAutomation: RouteHandler = async (
         requestHash,
         createdAt: new Date().toISOString(),
       });
-      sendJson(response, 200, {
-        ...(prior.response as object),
+      return {
+        ...(prior.response as AutomationConfirmationResponse),
         replayed: true,
-      });
-      return true;
+      };
     }
     if (
       preview.consumedAt !== null ||
@@ -1952,7 +2008,7 @@ export const handleAutomation: RouteHandler = async (
         "AUTOMATION_CONFIRMATION_EXPIRED",
         "Preview is expired or already consumed",
       );
-      return true;
+      return undefined;
     }
     const habitAlreadyApplied =
       preview.operation === "habits.mutate" &&
@@ -2040,11 +2096,11 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           "A previewed resource changed before confirmation",
         );
-        return true;
+        return undefined;
       }
     }
     const command = automationPreviewCommandSchema.parse(preview.input);
-    const internalKey = `automation.${token.id}.${parsed.data.idempotencyKey}`;
+    const internalKey = `automation.${token.id}.${idempotencyKey}`;
     let result: AutomationConfirmationResponse["result"] | undefined;
     let applyLocalMutation:
       (() => AutomationConfirmationResponse["result"]) | undefined;
@@ -2056,7 +2112,7 @@ export const handleAutomation: RouteHandler = async (
           "NTFY_NOT_CONFIGURED",
           "Notification delivery is unavailable",
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = () => {
         const delivery = database.queueNotificationTest(
@@ -2126,7 +2182,7 @@ export const handleAutomation: RouteHandler = async (
             "AUTOMATION_PREVIEW_STALE",
             "Checklist membership changed before confirmation",
           );
-          return true;
+          return undefined;
         }
       }
       if (
@@ -2139,7 +2195,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           "Checklist item already exists",
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = () => {
         const input = command.input.command;
@@ -2191,7 +2247,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (isRecurrenceCommand(command)) {
@@ -2208,7 +2264,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (isApplicationPreferencesCommand(command)) {
@@ -2225,7 +2281,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (isDayOrderCommand(command)) {
@@ -2242,7 +2298,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (isBoardCommand(command)) {
@@ -2260,7 +2316,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (isCalendarSubscriptionCommand(command)) {
@@ -2278,7 +2334,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       if ("result" in confirmation) result = confirmation.result;
       else applyLocalMutation = confirmation.apply;
@@ -2296,7 +2352,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (isFocusParityCommand(command)) {
@@ -2331,7 +2387,7 @@ export const handleAutomation: RouteHandler = async (
             "ACTIVE_SESSION_CONFLICT",
             "Session changed; preview the idle disposition again",
           );
-          return true;
+          return undefined;
         }
     } else if (isCounterCommand(command)) {
       const confirmation = confirmCounter(
@@ -2347,7 +2403,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (isTaskArchiveCommand(command)) {
@@ -2364,7 +2420,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (command.operation === "tasks.hierarchy") {
@@ -2459,7 +2515,7 @@ export const handleAutomation: RouteHandler = async (
           "AUTOMATION_PREVIEW_STALE",
           confirmation.message,
         );
-        return true;
+        return undefined;
       }
       applyLocalMutation = confirmation.apply;
     } else if (
@@ -2469,7 +2525,7 @@ export const handleAutomation: RouteHandler = async (
       const current = database.getTask(token.ownerId, command.input.taskId);
       if (current === undefined) {
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
-        return true;
+        return undefined;
       }
       result = { task: taskResponse(current), replayed: false };
       applyLocalMutation = () => {
@@ -2525,13 +2581,13 @@ export const handleAutomation: RouteHandler = async (
       );
       if (current === undefined) {
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
-        return true;
+        return undefined;
       }
       if (
         command.operation === "tasks.delete" &&
         deletionBlocked(token.ownerId, current.id)
       )
-        return true;
+        return undefined;
       result = { task: taskResponse(current), replayed: false };
       // Execute inside the confirmation transaction so task, sync change,
       // consumed preview, audit, and replay response commit or roll back together.
@@ -2607,7 +2663,7 @@ export const handleAutomation: RouteHandler = async (
           "INVALID_HABIT",
           "Habit mutation cannot be applied",
         );
-        return true;
+        return undefined;
       }
       result = {
         habit: applied.habit,
@@ -2631,7 +2687,7 @@ export const handleAutomation: RouteHandler = async (
       } catch (error) {
         if (!(error instanceof StructuredCaptureError)) throw error;
         sendError(response, 400, "INVALID_TASK", error.message);
-        return true;
+        return undefined;
       }
       if (created.kind === "conflict") {
         sendError(
@@ -2640,7 +2696,7 @@ export const handleAutomation: RouteHandler = async (
           "IDEMPOTENCY_CONFLICT",
           "Operation key conflict",
         );
-        return true;
+        return undefined;
       }
       result = {
         task: taskResponse(created.task),
@@ -2662,7 +2718,7 @@ export const handleAutomation: RouteHandler = async (
       } catch (error) {
         if (!(error instanceof StructuredCaptureError)) throw error;
         sendError(response, 400, "INVALID_TASK", error.message);
-        return true;
+        return undefined;
       }
       if (batch.kind === "conflict") {
         sendError(
@@ -2671,7 +2727,7 @@ export const handleAutomation: RouteHandler = async (
           "IDEMPOTENCY_CONFLICT",
           "Operation key conflict",
         );
-        return true;
+        return undefined;
       }
       result = batch.result;
     } else if (command.operation === "schedule.create_time_block") {
@@ -2684,11 +2740,11 @@ export const handleAutomation: RouteHandler = async (
       );
       if (task === undefined || taskRevision === undefined) {
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
-        return true;
+        return undefined;
       }
       if (calendar?.supportsEvents !== true) {
         sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
-        return true;
+        return undefined;
       }
       const existingBlock = database.getTaskCalendarBlock(
         token.ownerId,
@@ -2704,7 +2760,7 @@ export const handleAutomation: RouteHandler = async (
           "TIME_BLOCK_CALENDAR_FIXED",
           "Remove the existing block before changing calendars",
         );
-        return true;
+        return undefined;
       }
       const uid = existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;
       const href =
@@ -2736,7 +2792,7 @@ export const handleAutomation: RouteHandler = async (
             : "AUTOMATION_PREVIEW_STALE",
           "Scheduling operation conflicted",
         );
-        return true;
+        return undefined;
       }
       if (
         reservation.kind === "task-not-found" ||
@@ -2750,7 +2806,7 @@ export const handleAutomation: RouteHandler = async (
             : "CALENDAR_NOT_FOUND",
           "Scheduling resource not found",
         );
-        return true;
+        return undefined;
       }
       if (
         reservation.kind === "replayed" &&
@@ -2768,7 +2824,7 @@ export const handleAutomation: RouteHandler = async (
             "CALENDAR_WRITE_RECONCILIATION_REQUIRED",
             "Completed scheduling state could not be reconstructed",
           );
-          return true;
+          return undefined;
         }
         result = {
           task: taskResponse(replayedTask),
@@ -2846,7 +2902,7 @@ export const handleAutomation: RouteHandler = async (
             "CALENDAR_WRITE_RECONCILIATION_REQUIRED",
             "Calendar write could not be safely reconciled",
           );
-          return true;
+          return undefined;
         }
         const remoteEvent = remote.value;
         const completed = database.completeCalendarWrite({
@@ -2926,7 +2982,7 @@ export const handleAutomation: RouteHandler = async (
           "IDEMPOTENCY_CONFLICT",
           "Operation key conflict",
         );
-        return true;
+        return undefined;
       }
       if (instantiated.kind === "project-not-found") {
         sendError(
@@ -2935,7 +2991,7 @@ export const handleAutomation: RouteHandler = async (
           "PROJECT_NOT_FOUND",
           "Destination project not found",
         );
-        return true;
+        return undefined;
       }
       if (instantiated.kind === "not-found") {
         sendError(
@@ -2946,7 +3002,7 @@ export const handleAutomation: RouteHandler = async (
             : "TEMPLATE_SET_NOT_FOUND",
           "Reusable work source not found",
         );
-        return true;
+        return undefined;
       }
       result = templateInstantiationResponse(instantiated);
     } else if (command.operation === "placeholders.resolve") {
@@ -2962,7 +3018,7 @@ export const handleAutomation: RouteHandler = async (
           "PLANNING_PLACEHOLDER_NOT_FOUND",
           "Planning placeholder not found",
         );
-        return true;
+        return undefined;
       }
       const evaluated = choiceSuggestion(
         database,
@@ -2995,7 +3051,7 @@ export const handleAutomation: RouteHandler = async (
           "POOL_ITEM_INELIGIBLE",
           `Selection is unavailable: ${selection.reason ?? "unknown"}`,
         );
-        return true;
+        return undefined;
       }
       const resolved = database.resolvePlanningPlaceholderIdempotently({
         ownerId: token.ownerId,
@@ -3018,7 +3074,7 @@ export const handleAutomation: RouteHandler = async (
             : "IDEMPOTENCY_CONFLICT",
           "Placeholder resolution conflicted",
         );
-        return true;
+        return undefined;
       }
       if (resolved.kind === "not-found") {
         sendError(
@@ -3027,7 +3083,7 @@ export const handleAutomation: RouteHandler = async (
           "PLANNING_PLACEHOLDER_NOT_FOUND",
           "Planning placeholder not found",
         );
-        return true;
+        return undefined;
       }
       result = placeholderResolutionResponse(resolved);
     } else {
@@ -3054,7 +3110,7 @@ export const handleAutomation: RouteHandler = async (
             "ACTIVE_SESSION_NOT_FOUND",
             "Active session not found",
           );
-          return true;
+          return undefined;
         }
         const transition = transitionActiveSession(
           activeFromRecord(before, database),
@@ -3079,7 +3135,7 @@ export const handleAutomation: RouteHandler = async (
             "ACTIVE_SESSION_CONFLICT",
             transition.reason,
           );
-          return true;
+          return undefined;
         }
         next = transition.session;
         expected = before.revision;
@@ -3096,7 +3152,7 @@ export const handleAutomation: RouteHandler = async (
       });
       if (applied.kind === "conflict" || applied.kind === "stale") {
         sendError(response, 409, "ACTIVE_SESSION_CONFLICT", "Session changed");
-        return true;
+        return undefined;
       }
       result = {
         session: activeResponse(next),
@@ -3122,7 +3178,7 @@ export const handleAutomation: RouteHandler = async (
         ownerId: token.ownerId,
         tokenId: token.id,
         operation: command.operation,
-        idempotencyKey: parsed.data.idempotencyKey,
+        idempotencyKey: idempotencyKey,
         requestHash,
         previewId: preview.id,
         response: body,
@@ -3154,14 +3210,13 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         token.id,
         preview.operation,
-        parsed.data.idempotencyKey,
+        idempotencyKey,
       );
       if (replay?.requestHash === requestHash) {
-        sendJson(response, 200, {
-          ...(replay.response as object),
+        return {
+          ...(replay.response as AutomationConfirmationResponse),
           replayed: true,
-        });
-        return true;
+        };
       }
       sendError(
         response,
@@ -3169,10 +3224,45 @@ export const handleAutomation: RouteHandler = async (
         "AUTOMATION_CONFIRMATION_EXPIRED",
         "Preview could not be consumed",
       );
-      return true;
+      return undefined;
     }
     if (body === undefined) throw new Error("Confirmation result missing");
-    sendJson(response, 200, body);
+    return body;
+  }
+
+  // POST /api/automation/v1/previews/:id/confirm
+  if (automationConfirmPath === undefined) return false;
+  const automationConfirmPattern = new RegExp(
+    `^${automationConfirmPath.replace("{previewId}", "([0-9a-f-]{36})")}$`,
+  );
+  const automationConfirm = automationConfirmPattern.exec(url.pathname);
+  if (automationConfirm !== null && method === "POST") {
+    const token = authenticateAutomation(request, response, database);
+    if (token === undefined) return true;
+    const parsed = automationConfirmRequestSchema.safeParse(
+      await readJson(request),
+    );
+    const previewId = automationConfirm[1] ?? "";
+    const preview = database.getAutomationPreview(previewId);
+    if (
+      !parsed.success ||
+      preview?.ownerId !== token.ownerId ||
+      preview.tokenId !== token.id
+    ) {
+      sendError(
+        response,
+        404,
+        "AUTOMATION_PREVIEW_NOT_FOUND",
+        "Automation preview not found",
+      );
+      return true;
+    }
+    const body = await confirmAutomationPreview(
+      token,
+      preview,
+      parsed.data.idempotencyKey,
+    );
+    if (body !== undefined) sendJson(response, 200, body);
     return true;
   }
 

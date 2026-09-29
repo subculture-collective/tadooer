@@ -473,6 +473,8 @@ export interface AutomationTokenRecord {
   readonly label: string;
   readonly secretHash: string;
   readonly scopes: readonly string[];
+  /** ADR 0035: `confirm_all` or `execute_ordinary`; immutable like scopes. */
+  readonly confirmationPolicy: string;
   readonly createdAt: string;
   readonly lastUsedAt: string | null;
   readonly expiresAt: string | null;
@@ -1600,6 +1602,16 @@ const migrations: readonly Migration[] = [
   applicationPreferencesMigration,
   captureMigration,
   calendarSubscriptionMigration,
+  {
+    // ADR 0035: the owner-chosen token confirmation policy. Existing tokens
+    // keep the previous behaviour (every mutation is confirmed separately).
+    id: "0039_automation_token_confirmation_policy",
+    sql: `
+      ALTER TABLE automation_tokens ADD COLUMN confirmation_policy TEXT NOT NULL
+        DEFAULT 'confirm_all'
+        CHECK (confirmation_policy IN ('confirm_all', 'execute_ordinary'));
+    `,
+  },
 ];
 
 const checksum = (sql: string): string =>
@@ -4384,8 +4396,8 @@ export class SuiteDatabase {
     this.#database
       .prepare(
         `INSERT INTO automation_tokens
-          (id,owner_id,label,secret_hash,scopes_json,created_at,last_used_at,expires_at,revoked_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+          (id,owner_id,label,secret_hash,scopes_json,confirmation_policy,created_at,last_used_at,expires_at,revoked_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         record.id,
@@ -4393,6 +4405,7 @@ export class SuiteDatabase {
         record.label,
         record.secretHash,
         JSON.stringify([...record.scopes].sort()),
+        record.confirmationPolicy,
         record.createdAt,
         record.lastUsedAt,
         record.expiresAt,
@@ -4742,6 +4755,7 @@ export class SuiteDatabase {
       label: String(row.label),
       secretHash: String(row.secret_hash),
       scopes: JSON.parse(String(row.scopes_json)) as string[],
+      confirmationPolicy: row.confirmation_policy ?? "confirm_all",
       createdAt: String(row.created_at),
       lastUsedAt: row.last_used_at ?? null,
       expiresAt: row.expires_at ?? null,

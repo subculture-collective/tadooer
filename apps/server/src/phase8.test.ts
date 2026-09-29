@@ -29,14 +29,14 @@ describe("Phase 8 operations surface", () => {
         ).toMatchObject({ version: "8.0.0-test", revision: "abcdef8" });
         expect(
           await (await fetch(`${server.baseUrl}/api/ready`)).json(),
-        ).toMatchObject({ status: "ok", migrationCount: 36 });
+        ).toMatchObject({ status: "ok", migrationCount: 37 });
         const metricsResponse = await fetch(`${server.baseUrl}/api/metrics`);
         const metrics = await metricsResponse.text();
         expect(metricsResponse.headers.get("content-type")).toContain(
           "text/plain",
         );
         expect(metrics).toContain("suite_uptime_seconds");
-        expect(metrics).toContain("suite_database_migrations 36");
+        expect(metrics).toContain("suite_database_migrations 37");
         expect(metrics).toContain('suite_http_requests_total{status="200"} 2');
         expect(metrics).not.toContain("owner");
       } finally {

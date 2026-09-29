@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { automationCatalog } from "@suite/contracts";
-import { loadMcpCatalog } from "./catalog.ts";
+import { describeCatalogEntry, loadMcpCatalog } from "./catalog.ts";
 
 describe("shared automation catalog mapping", () => {
   it("exposes every shared tool and read-only resource without a second declaration", () => {
@@ -64,5 +64,35 @@ describe("shared automation catalog mapping", () => {
     expect(setInstantiateSchema).toContain("template_sets.instantiate");
     expect(setInstantiateSchema).toContain("setId");
     expect(setInstantiateSchema).not.toContain("templates.instantiate");
+  });
+
+  it("states the ADR 0035 confirmation rule in every tool description", () => {
+    const catalog = loadMcpCatalog();
+    const description = (name: string) =>
+      catalog.tools.find((tool) => tool.name === name)?.description ?? "";
+    expect(description("suite.tasks.update")).toContain("ordinary edit");
+    expect(description("suite.tasks.update")).toContain(
+      "execute.idempotencyKey",
+    );
+    expect(description("suite.tasks.delete")).toContain(
+      "consequential (deletion)",
+    );
+    expect(description("suite.tasks.delete")).not.toContain("execute.");
+    expect(description("suite.tasks.create_many")).toContain(
+      "At most 100 tasks",
+    );
+    expect(description("suite.subtasks.mutate")).toContain(
+      "Except delete (deletion)",
+    );
+    expect(description("suite.recurrence.set_state")).toContain(
+      "end (irreversible)",
+    );
+    expect(description("suite.tasks.list")).toBe("tasks.list: read-only.");
+    expect(description("suite.confirm")).toContain("5 minutes");
+    expect(
+      catalog.resources.find((r) => r.name === "suite.tasks.list")?.description,
+    ).toBe("tasks.list: read-only.");
+    for (const entry of automationCatalog)
+      expect(describeCatalogEntry(entry).startsWith(`${entry.id}:`)).toBe(true);
   });
 });
