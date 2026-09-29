@@ -49,8 +49,11 @@ export type BridgeWriteResult =
   | { readonly kind: "uncertain"; readonly reason: string };
 
 /**
- * Provider side of a mapping (ADR 0041). Implementations perform exactly one
- * request per call, never retry, and send every write conditionally.
+ * Provider side of a mapping (ADR 0041). Implementations never retry and
+ * send every write conditionally. A write is one request, except a Google
+ * recurring series (ADR 0042): the master and each changed instance are
+ * separate conditional requests, and a failure after the first committed
+ * one is reported as `uncertain`.
  */
 export interface BridgeSide {
   readonly name: BridgeSideName;

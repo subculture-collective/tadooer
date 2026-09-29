@@ -154,9 +154,9 @@ direction, initialSync }`. Requires the Google `calendar.events` scope on
 
 ## Limits
 
-No live-provider qualification (#50), no background scheduling, and no
-recurrence, attendee, alarm or `TZID` propagation. Such events are blocked and
-visible. Baikal changes are read by windowed listing plus per-link reads, not
+No live-provider qualification (#50) and no background scheduling. Alarms and
+vendor fields are blocked and visible. [ADR 0042](0042-bridge-event-semantics.md)
+(#45) adds recurring series, time zones and read-only invitation mirrors. Baikal changes are read by windowed listing plus per-link reads, not
 WebDAV sync-collection. Restoring a Suite backup restores mappings, links,
 tombstones and the outbox. The first pass after a restore reconciles
 uncertain work before sending anything. It cannot undo Google writes made
