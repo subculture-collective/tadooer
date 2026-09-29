@@ -34,4 +34,47 @@ describe("production server configuration", () => {
       );
     },
   );
+
+  it("enables the calendar bridge worker with bounded defaults (ADR 0043)", () => {
+    expect(loadConfig({}).calendarBridgeWorker).toEqual({
+      enabled: true,
+      bridgeIntervalMs: 300_000,
+      projectionIntervalMs: 900_000,
+      maxBackoffMs: 3_600_000,
+      concurrency: 2,
+      ownerConcurrency: 1,
+      shutdownGraceMs: 8_000,
+    });
+    expect(
+      loadConfig({
+        SUITE_CALENDAR_BRIDGE_WORKER: "false",
+        SUITE_CALENDAR_BRIDGE_INTERVAL_SECONDS: "600",
+        SUITE_CALENDAR_BRIDGE_PROJECTION_INTERVAL_SECONDS: "0",
+        SUITE_CALENDAR_BRIDGE_CONCURRENCY: "4",
+        SUITE_CALENDAR_BRIDGE_OWNER_CONCURRENCY: "2",
+        SUITE_CALENDAR_BRIDGE_MAX_BACKOFF_SECONDS: "7200",
+        SUITE_CALENDAR_BRIDGE_SHUTDOWN_GRACE_SECONDS: "0",
+      }).calendarBridgeWorker,
+    ).toEqual({
+      enabled: false,
+      bridgeIntervalMs: 600_000,
+      projectionIntervalMs: 0,
+      maxBackoffMs: 7_200_000,
+      concurrency: 4,
+      ownerConcurrency: 2,
+      shutdownGraceMs: 0,
+    });
+  });
+
+  it.each([
+    ["SUITE_CALENDAR_BRIDGE_WORKER", "off"],
+    ["SUITE_CALENDAR_BRIDGE_INTERVAL_SECONDS", "10"],
+    ["SUITE_CALENDAR_BRIDGE_INTERVAL_SECONDS", "0"],
+    ["SUITE_CALENDAR_BRIDGE_PROJECTION_INTERVAL_SECONDS", "30"],
+    ["SUITE_CALENDAR_BRIDGE_CONCURRENCY", "0"],
+    ["SUITE_CALENDAR_BRIDGE_OWNER_CONCURRENCY", "1.5"],
+    ["SUITE_CALENDAR_BRIDGE_MAX_BACKOFF_SECONDS", "999999"],
+  ])("rejects an invalid worker setting: %s=%s", (name, value) => {
+    expect(() => loadConfig({ [name]: value })).toThrow(name);
+  });
 });

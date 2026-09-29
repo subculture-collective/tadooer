@@ -140,6 +140,13 @@ import {
   isRecoveryCommand,
   previewRecovery,
 } from "./automation-recovery.ts";
+import {
+  bridgeResourceBody,
+  confirmBridge,
+  isBridgeCommand,
+  previewBridge,
+} from "./automation-calendar-bridge.ts";
+import { automationCalendarBridgeResourceInputSchema } from "@suite/contracts";
 import { automationCalendarImportResourceInputSchema } from "@suite/contracts";
 import {
   confirmAuthoring,
@@ -737,6 +744,37 @@ export const handleAutomation: RouteHandler = async (
         return true;
       }
       body = imports.body;
+    } else if (resource === "calendar_bridge.status") {
+      // ADR 0044: mapping summaries; with mappingId, that mapping's blocked
+      // events, conflicts with both versions and unfinished writes.
+      const input = automationCalendarBridgeResourceInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_BRIDGE_MAPPING_ID",
+          "Provide a calendar mapping ID or omit it",
+        );
+        return true;
+      }
+      const bridge = bridgeResourceBody(
+        { database, google: ctx.google },
+        token.ownerId,
+        input.data.mappingId,
+        ctx.sessionClock.now(),
+      );
+      if (!bridge.ok) {
+        sendError(
+          response,
+          404,
+          "BRIDGE_MAPPING_NOT_FOUND",
+          "Calendar mapping not found",
+        );
+        return true;
+      }
+      body = bridge.body;
     } else if (resource === "calendar_feeds.list")
       // ADR 0038: feed capabilities and publication counts; never the secret.
       body = feedResourceBody(database, token.ownerId);
@@ -1058,7 +1096,10 @@ export const handleAutomation: RouteHandler = async (
         | "habit"
         | "calendar_import"
         | "calendar_feed"
-        | "connector";
+        | "connector"
+        | "calendar_bridge_mapping"
+        | "calendar_bridge_link"
+        | "calendar_bridge_conflict";
       entityId: string;
     }[] = [];
     const baseRevisions: {
@@ -1360,6 +1401,15 @@ export const handleAutomation: RouteHandler = async (
         token.ownerId,
         command,
       );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      taskSummary = planned.summary;
+    } else if (isBridgeCommand(command)) {
+      // ADR 0044: binds the link revision; the store checks it again.
+      const planned = previewBridge(database, token.ownerId, command);
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -2498,6 +2548,20 @@ export const handleAutomation: RouteHandler = async (
       }
       if ("result" in confirmation) result = confirmation.result;
       else applyLocalMutation = confirmation.apply;
+    } else if (isBridgeCommand(command)) {
+      const confirmation = confirmBridge(database, token.ownerId, command, () =>
+        ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return undefined;
+      }
+      applyLocalMutation = confirmation.apply;
     } else if (isRecoveryCommand(command)) {
       const confirmation = await confirmRecovery(
         database,

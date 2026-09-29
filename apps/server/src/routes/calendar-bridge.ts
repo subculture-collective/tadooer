@@ -18,6 +18,11 @@ import {
   sendError,
   sendJson,
 } from "../http-utils.ts";
+import {
+  bridgeOverview,
+  bridgeReview,
+  previewBridgeMapping,
+} from "../calendar-bridge/controls.ts";
 import { sendEmpty, type RouteHandler } from "./shared.ts";
 
 /**
@@ -31,7 +36,14 @@ import { sendEmpty, type RouteHandler } from "./shared.ts";
  *   POST   /api/calendar-bridge/mappings/:id/run              one pass
  *   GET    /api/calendar-bridge/mappings/:id/links
  *   POST   /api/calendar-bridge/mappings/:id/links/:linkId/approve-deletion  If-Match
- *   POST   /api/calendar-bridge/mappings/:id/conflicts/:conflictId/resolve   { keep }
+ *   POST   /api/calendar-bridge/mappings/:id/conflicts/:conflictId/resolve   { keep } [If-Match: link]
+ *
+ * Bridge controls (issue #48, ADR 0044), additive:
+ *
+ *   GET    /api/calendar-bridge/overview                     mapping summaries
+ *   POST   /api/calendar-bridge/mappings/preview             what a mapping would copy
+ *   GET    /api/calendar-bridge/mappings/:id/review          blocked, conflicts, writes
+ *   POST   /api/calendar-bridge/mappings/:id/links/:linkId/decline-deletion  If-Match
  */
 
 const mappingResponse = (mapping: CalendarBridgeMappingRecord) => ({
@@ -133,11 +145,13 @@ export const handleCalendarBridge: RouteHandler = async (
   const { auth, calendarBridge: service, sessionClock, stores } = ctx;
   const method = request.method ?? "GET";
   const collection = url.pathname === "/api/calendar-bridge/mappings";
+  const overview = url.pathname === "/api/calendar-bridge/overview";
+  const preview = url.pathname === "/api/calendar-bridge/mappings/preview";
   const item =
-    /^\/api\/calendar-bridge\/mappings\/([0-9a-f-]{36})(?:\/(run|links)|\/links\/([0-9a-f-]{36})\/approve-deletion|\/conflicts\/([0-9a-f-]{36})\/resolve)?$/.exec(
+    /^\/api\/calendar-bridge\/mappings\/([0-9a-f-]{36})(?:\/(run|links|review)|\/links\/([0-9a-f-]{36})\/(approve|decline)-deletion|\/conflicts\/([0-9a-f-]{36})\/resolve)?$/.exec(
       url.pathname,
     );
-  if (!collection && item === null) return false;
+  if (!collection && !overview && !preview && item === null) return false;
   const reading = method === "GET";
   const session = auth.authenticate(request, !reading);
   if (session === undefined) {
@@ -162,6 +176,37 @@ export const handleCalendarBridge: RouteHandler = async (
       "CSRF_REQUIRED",
       "Same-origin session and CSRF token required",
     );
+    return true;
+  }
+
+  const controls = { database: stores, google: ctx.google };
+  if (overview) {
+    if (method === "GET")
+      sendJson(response, 200, bridgeOverview(controls, ownerId, now));
+    else sendError(response, 405, "METHOD_NOT_ALLOWED", "Method not allowed");
+    return true;
+  }
+  if (preview) {
+    if (method !== "POST") {
+      sendError(response, 405, "METHOD_NOT_ALLOWED", "Method not allowed");
+      return true;
+    }
+    const parsed = calendarBridgeMappingCreateRequestSchema.safeParse(
+      await readJson(request),
+    );
+    if (!parsed.success)
+      sendError(
+        response,
+        400,
+        "INVALID_BRIDGE_MAPPING",
+        "Calendar mapping input is invalid",
+      );
+    else
+      sendJson(
+        response,
+        200,
+        previewBridgeMapping(controls, ownerId, parsed.data),
+      );
     return true;
   }
 
@@ -234,7 +279,8 @@ export const handleCalendarBridge: RouteHandler = async (
   const mappingId = item?.[1] ?? "";
   const action = item?.[2];
   const linkId = item?.[3];
-  const conflictId = item?.[4];
+  const linkDecision = item?.[4];
+  const conflictId = item?.[5];
   const mapping = store.getMapping(ownerId, mappingId);
   if (mapping === undefined) {
     notFound(response);
@@ -249,6 +295,11 @@ export const handleCalendarBridge: RouteHandler = async (
         .listUnfinishedOperations(mapping.id)
         .map(operationResponse),
     });
+    return true;
+  }
+
+  if (action === "review" && method === "GET") {
+    sendJson(response, 200, bridgeReview(controls, ownerId, mapping.id, now));
     return true;
   }
 
@@ -280,6 +331,42 @@ export const handleCalendarBridge: RouteHandler = async (
           : null,
       mapping: mappingResponse(current),
     });
+    return true;
+  }
+
+  if (linkId !== undefined && linkDecision === "decline" && method === "POST") {
+    const revision = expectedRevision(request, response);
+    if (revision === undefined) return true;
+    const declined = store.declineDeletion({
+      ownerId,
+      mappingId: mapping.id,
+      linkId,
+      expectedRevision: revision,
+      now: now.toISOString(),
+    });
+    if (declined.kind === "declined")
+      sendJson(
+        response,
+        200,
+        { link: linkResponse(declined.link) },
+        { ETag: `"${String(declined.link.revision)}"` },
+      );
+    else if (declined.kind === "not-found")
+      sendError(response, 404, "BRIDGE_LINK_NOT_FOUND", "Event link not found");
+    else if (declined.kind === "conflict")
+      sendError(
+        response,
+        412,
+        "BRIDGE_REVISION_CONFLICT",
+        "The event link changed; reload before trying again",
+      );
+    else
+      sendError(
+        response,
+        409,
+        "BRIDGE_NO_PENDING_DELETION",
+        "This event has no deletion waiting for approval",
+      );
     return true;
   }
 
@@ -320,6 +407,13 @@ export const handleCalendarBridge: RouteHandler = async (
   }
 
   if (conflictId !== undefined && method === "POST") {
+    // ADR 0044: an optional link If-Match binds the reviewed revision.
+    const linkRevision =
+      request.headers["if-match"] === undefined
+        ? undefined
+        : expectedRevision(request, response);
+    if (request.headers["if-match"] !== undefined && linkRevision === undefined)
+      return true;
     const parsed = calendarBridgeConflictResolveRequestSchema.safeParse(
       await readJson(request),
     );
@@ -339,6 +433,9 @@ export const handleCalendarBridge: RouteHandler = async (
       keep: parsed.data.keep,
       operationId: randomUUID(),
       now: now.toISOString(),
+      ...(linkRevision === undefined
+        ? {}
+        : { expectedLinkRevision: linkRevision }),
     });
     if (resolved.kind === "resolved")
       sendJson(response, 200, {
@@ -350,6 +447,13 @@ export const handleCalendarBridge: RouteHandler = async (
         404,
         "BRIDGE_CONFLICT_NOT_FOUND",
         "Open conflict not found",
+      );
+    else if (resolved.kind === "conflict")
+      sendError(
+        response,
+        412,
+        "BRIDGE_REVISION_CONFLICT",
+        "The event changed; reload before trying again",
       );
     else if (resolved.kind === "busy")
       sendError(

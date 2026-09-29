@@ -50,3 +50,24 @@ groups:
           severity: critical
         annotations:
           summary: Tadooer has no successful backup in 36 hours
+      - alert: TadooerCalendarBridgeFailing
+        expr: sum(suite_calendar_bridge_jobs_failing{job="tadooer"}) > 0
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: A Tadooer calendar bridge job has failed for two hours
+      - alert: TadooerCalendarBridgeGrantExpired
+        expr: sum(suite_calendar_bridge_jobs_failing{job="tadooer",class="grant-expired"}) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Tadooer calendar bridge needs a Google or Baikal reconnect
+      - alert: TadooerCalendarBridgeStuckOperations
+        expr: suite_calendar_bridge_stuck_operations{job="tadooer"} > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Tadooer calendar bridge operations are retrying repeatedly

@@ -68,6 +68,45 @@ inside the encrypted Restic workflow.
 An acceptance restore always uses an isolated Compose project, isolated ports,
 a copied Baïkal backup, and no route to the production Baïkal service.
 
+## Background calendar bridge worker
+
+The Suite process runs Google/Baïkal bridge passes and Google projection syncs
+on a schedule (ADR 0043), so synchronization continues with no browser open.
+It does nothing until the owner creates and enables a bridge mapping. The
+environment toggles below go in the `suite` service `environment` block; the
+defaults apply when a variable is unset.
+
+| Variable                                            | Default | Effect                                                                                        |
+| --------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `SUITE_CALENDAR_BRIDGE_WORKER`                      | `true`  | `false` stops all background bridge work in this process. Manual runs from the UI still work. |
+| `SUITE_CALENDAR_BRIDGE_INTERVAL_SECONDS`            | `300`   | Bridge pass interval per mapping, ±20% jitter. Minimum 60.                                    |
+| `SUITE_CALENDAR_BRIDGE_PROJECTION_INTERVAL_SECONDS` | `900`   | Google projection sync interval for owners with an enabled mapping. `0` disables it.          |
+| `SUITE_CALENDAR_BRIDGE_MAX_BACKOFF_SECONDS`         | `3600`  | Upper bound of the exponential retry delay after failures.                                    |
+| `SUITE_CALENDAR_BRIDGE_CONCURRENCY`                 | `2`     | Jobs running at once in this process (1–16).                                                  |
+| `SUITE_CALENDAR_BRIDGE_OWNER_CONCURRENCY`           | `1`     | Jobs running at once for one owner (1–16).                                                    |
+| `SUITE_CALENDAR_BRIDGE_SHUTDOWN_GRACE_SECONDS`      | `8`     | How long shutdown waits for an in-flight pass. Keep it below the Docker stop timeout (10 s).  |
+
+To pause synchronization for one owner, disable the mapping in the UI. To stop
+it for the installation, set `SUITE_CALENDAR_BRIDGE_WORKER=false` and recreate
+the container. The schedule, leases, outbox and conflicts stay in the
+database; re-enabling resumes overdue work on the first tick, about 30 seconds
+after start.
+
+`/api/ready` reports `checks.calendarBridge` as `disabled`, `idle`, `ok` or
+`degraded`. It never makes the service unready. `/api/metrics` exports
+`suite_calendar_bridge_*` aggregates: failing jobs by class (`rate-limited`,
+`grant-expired`, `provider-offline`, `ambiguous-write`, `configuration`,
+`internal`), age of the stalest last success, outbox backlog by state, stuck
+operations, open conflicts and the Google cooldown. They contain no IDs,
+calendar names or event content. `grant-expired` needs the owner to reconnect
+Google or fix the Baïkal credential. `ambiguous-write` resolves itself on the
+next pass, which reads the target before any resend. Open conflicts wait for
+owner review.
+
+Two Suite processes on the same database (for example during a restart
+overlap) exclude each other through leases in SQLite. A crashed process's lease
+expires after 10 minutes.
+
 ## Owner data export versus operator backups
 
 Two copies exist, with different jobs (ADR 0034):

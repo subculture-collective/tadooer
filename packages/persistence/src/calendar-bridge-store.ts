@@ -320,6 +320,8 @@ export type CalendarBridgeConflictResolveResult =
     }
   | { readonly kind: "not-found" }
   | { readonly kind: "busy" }
+  /** The link changed since the owner reviewed it (ADR 0044). */
+  | { readonly kind: "conflict" }
   | { readonly kind: "unresolvable" };
 
 interface MappingRow {
@@ -544,6 +546,20 @@ export class SqliteCalendarBridgeStore {
   }
 
   #transaction<T>(run: () => T): T {
+    // Nested inside a caller's transaction (an assistant confirmation, ADR
+    // 0044), the work joins it through a savepoint.
+    if (this.#database.isTransaction) {
+      this.#database.exec("SAVEPOINT calendar_bridge;");
+      try {
+        const result = run();
+        this.#database.exec("RELEASE SAVEPOINT calendar_bridge;");
+        return result;
+      } catch (error: unknown) {
+        this.#database.exec("ROLLBACK TO SAVEPOINT calendar_bridge;");
+        this.#database.exec("RELEASE SAVEPOINT calendar_bridge;");
+        throw error;
+      }
+    }
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
       const result = run();
@@ -1021,6 +1037,49 @@ export class SqliteCalendarBridgeStore {
     });
   }
 
+  /**
+   * The owner keeps the surviving copy (ADR 0044): the link leaves the bridge
+   * as `excluded` with reason `deletion-declined`, so the observed deletion
+   * is never propagated. Nothing is written to either calendar.
+   */
+  declineDeletion(input: {
+    readonly ownerId: string;
+    readonly mappingId: string;
+    readonly linkId: string;
+    readonly expectedRevision: number;
+    readonly now: string;
+  }):
+    | {
+        readonly kind: "declined";
+        readonly link: CalendarBridgeLinkRecord;
+      }
+    | { readonly kind: "not-found" | "conflict" | "not-pending" } {
+    return this.#transaction(() => {
+      const link = this.getLink(input.linkId);
+      if (link?.ownerId !== input.ownerId || link.mappingId !== input.mappingId)
+        return { kind: "not-found" } as const;
+      if (link.revision !== input.expectedRevision)
+        return { kind: "conflict" } as const;
+      if (
+        link.status !== "blocked" ||
+        link.statusReason !== "deletion-approval" ||
+        this.unfinishedOperationForLink(link.id) !== undefined
+      )
+        return { kind: "not-pending" } as const;
+      this.#database
+        .prepare(
+          `UPDATE calendar_bridge_links SET status = 'excluded',
+             status_reason = 'deletion-declined', deletion_approval_side = NULL,
+             deletion_approval_proof = NULL, revision = revision + 1,
+             updated_at = ? WHERE id = ?`,
+        )
+        .run(input.now, link.id);
+      const updated = this.getLink(link.id);
+      if (updated === undefined) throw new Error("Link disappeared");
+      return { kind: "declined", link: updated } as const;
+    });
+  }
+
   // ---- Outbox -------------------------------------------------------------
 
   #insertOperation(
@@ -1349,6 +1408,8 @@ export class SqliteCalendarBridgeStore {
     readonly keep: CalendarBridgeSideName;
     readonly operationId: string;
     readonly now: string;
+    /** ADR 0044: optional binding to the link revision the owner reviewed. */
+    readonly expectedLinkRevision?: number;
   }): CalendarBridgeConflictResolveResult {
     return this.#transaction(() => {
       const row = this.#database
@@ -1364,6 +1425,11 @@ export class SqliteCalendarBridgeStore {
       const conflict = conflictFromRow(row);
       const link = this.getLink(conflict.linkId);
       if (link === undefined) return { kind: "not-found" } as const;
+      if (
+        input.expectedLinkRevision !== undefined &&
+        link.revision !== input.expectedLinkRevision
+      )
+        return { kind: "conflict" } as const;
       if (this.unfinishedOperationForLink(link.id) !== undefined)
         return { kind: "busy" } as const;
       const target = input.keep === "google" ? "baikal" : "google";

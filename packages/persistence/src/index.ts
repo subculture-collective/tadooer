@@ -196,6 +196,18 @@ export {
   type CalendarBridgeSideName,
   type CalendarBridgeSideState,
 } from "./calendar-bridge-store.ts";
+import {
+  SqliteCalendarBridgeWorkerStore,
+  calendarBridgeWorkerMigration,
+} from "./calendar-bridge-worker-store.ts";
+export {
+  SqliteCalendarBridgeWorkerStore,
+  calendarBridgeStuckAttempts,
+  type CalendarBridgeHealthSnapshot,
+  type CalendarBridgeJobKind,
+  type CalendarBridgeJobRecord,
+  type CalendarBridgeJobTarget,
+} from "./calendar-bridge-worker-store.ts";
 import { SqliteDayOrderStore, dayOrderMigration } from "./day-order-store.ts";
 import {
   SqliteBoardStore,
@@ -1712,6 +1724,8 @@ const migrations: readonly Migration[] = [
   googleWriteConsentMigration,
   // ADR 0041: Google-Baikal bridge mappings, links, outbox and conflicts.
   calendarBridgeMigration,
+  // ADR 0043: bridge worker schedule and cross-process leases.
+  calendarBridgeWorkerMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1745,12 +1759,15 @@ export class SuiteDatabase {
   readonly dataExport: SqliteDataExportStore;
   /** ADR 0041: Google-Baikal bridge state; provider I/O is in the server. */
   readonly calendarBridge: SqliteCalendarBridgeStore;
+  /** ADR 0043: bridge worker schedule, leases and health aggregates. */
+  readonly calendarBridgeWorker: SqliteCalendarBridgeWorkerStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.dataExport = new SqliteDataExportStore(database);
     this.calendarSubscriptions = new SqliteCalendarSubscriptionStore(database);
     this.calendarBridge = new SqliteCalendarBridgeStore(database);
+    this.calendarBridgeWorker = new SqliteCalendarBridgeWorkerStore(database);
     this.counters = new SqliteCounterStore(database);
     this.boards = new SqliteBoardStore(database, {
       setTags: (ownerId, taskId, tagIds, revision, now) =>

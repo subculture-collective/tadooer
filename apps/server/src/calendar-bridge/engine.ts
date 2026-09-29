@@ -12,7 +12,12 @@ import type {
   CalendarBridgeSideState,
   SqliteCalendarBridgeStore,
 } from "@suite/persistence";
-import { parseEnvelope, serializeEnvelope } from "./envelope.ts";
+import {
+  parseEnvelope,
+  projectEnvelope,
+  serializeEnvelope,
+  type BridgeEnvelope,
+} from "./envelope.ts";
 import type {
   BridgeObservation,
   BridgeReadResult,
@@ -103,10 +108,23 @@ const fromState = (
       envelope,
       digest: state.digest,
       unsupportedFields: Object.keys(envelope.unsupported).toSorted(),
-      invitationEffect: false,
+      invitationEffect: envelope.invitation !== null,
     },
   };
 };
+
+/**
+ * Payload written to the other side: never organizer or attendees, so a
+ * copy cannot send invitations or claim organizer rights (ADR 0042).
+ */
+const payloadOf = (envelope: BridgeEnvelope): string =>
+  serializeEnvelope(projectEnvelope(envelope));
+
+/** True when a side was last observed carrying an invitation. */
+const invitationObserved = (state: CalendarBridgeSideState): boolean =>
+  state.kind === "present" &&
+  state.snapshot !== null &&
+  (parseEnvelope(state.snapshot)?.invitation ?? null) !== null;
 
 const policyObservation = (observation: BridgeReadResult): PolicyObservation =>
   observation.kind === "present"
@@ -307,7 +325,7 @@ export const runBridgeOnce = async (
         expectedRevision: null,
         sourceSide: link.origin,
         sourceRevision: source.revision,
-        payload: serializeEnvelope(source.event.envelope),
+        payload: payloadOf(source.event.envelope),
         payloadDigest: source.event.digest,
         reason: "create",
       },
@@ -345,7 +363,6 @@ export const runBridgeOnce = async (
         source: current.origin,
         initialExclusion: false,
         unsupportedFields: source.event.unsupportedFields,
-        invitationEffect: source.event.invitationEffect,
         identityCollision: current.statusReason === "identity-collision",
       });
       if (decision.kind === "create") enqueueCreate(current, source);
@@ -382,9 +399,11 @@ export const runBridgeOnce = async (
       unsupportedFields: presentEvents.flatMap(
         (value) => value.event.unsupportedFields,
       ),
-      invitationEffect: presentEvents.some(
-        (value) => value.event.invitationEffect,
-      ),
+      // An invitation side is mirrored read-only and never written.
+      invitation: {
+        google: google.kind === "present" && google.event.invitationEffect,
+        baikal: baikal.kind === "present" && baikal.event.invitationEffect,
+      },
       deletionApproved:
         approval !== null &&
         approvedObservation?.kind === "deleted" &&
@@ -407,7 +426,7 @@ export const runBridgeOnce = async (
             ? {
                 kind: "present",
                 digest: decision.accepted.digest,
-                snapshot: serializeEnvelope(present.event.envelope),
+                snapshot: payloadOf(present.event.envelope),
               }
             : { kind: "deleted" },
           now,
@@ -434,7 +453,7 @@ export const runBridgeOnce = async (
               source.kind === "present" ? source.revision : source.proof,
             payload:
               source.kind === "present"
-                ? serializeEnvelope(source.event.envelope)
+                ? payloadOf(source.event.envelope)
                 : null,
             payloadDigest:
               source.kind === "present" ? source.event.digest : null,
@@ -501,7 +520,6 @@ export const runBridgeOnce = async (
         source: side,
         initialExclusion,
         unsupportedFields: observation.event.unsupportedFields,
-        invitationEffect: observation.event.invitationEffect,
         identityCollision,
       });
       const linkId = newId();
@@ -562,7 +580,7 @@ export const runBridgeOnce = async (
           expectedRevision: null,
           sourceSide: side,
           sourceRevision: observation.revision,
-          payload: serializeEnvelope(observation.event.envelope),
+          payload: payloadOf(observation.event.envelope),
           payloadDigest: observation.event.digest,
           reason: "create",
         },
@@ -590,6 +608,20 @@ export const runBridgeOnce = async (
       operation.payload === null ? undefined : parseEnvelope(operation.payload);
     if (operation.action !== "delete" && envelope === undefined) {
       store.failOperation(operation.id, "invalid-payload", now);
+      counts.failed += 1;
+      continue;
+    }
+    // Never change an event that carries an invitation (ADR 0042), for
+    // example when a conflict resolution keeps the copy's content. The
+    // conditional write targets the observed revision, so the observed
+    // state is the one the write would replace.
+    const targetLink = store.getLink(operation.linkId);
+    if (
+      operation.action !== "create" &&
+      targetLink !== undefined &&
+      invitationObserved(targetLink[operation.target])
+    ) {
+      store.failOperation(operation.id, "invitation-read-only", now);
       counts.failed += 1;
       continue;
     }

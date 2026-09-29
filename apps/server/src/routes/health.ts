@@ -4,6 +4,7 @@ import type {
   ReadinessResponse,
 } from "@suite/contracts";
 import { sendJson, securityHeaders } from "../http-utils.ts";
+import { calendarBridgeMetricLines } from "../calendar-bridge/worker.ts";
 import type { RouteHandler } from "./shared.ts";
 
 const startedAt = Date.now();
@@ -46,6 +47,12 @@ export const handleHealth: RouteHandler = async (
           ([status, count]) =>
             `suite_http_requests_total{status="${String(status)}"} ${String(count)}`,
         ),
+      ...calendarBridgeMetricLines({
+        snapshot: database.calendarBridgeWorker.health(),
+        nowMs: Date.now(),
+        worker: ctx.calendarBridgeWorker,
+        throttle: ctx.googleThrottle,
+      }),
       "",
     ];
     response.writeHead(200, {
@@ -72,12 +79,22 @@ export const handleHealth: RouteHandler = async (
       const state = database.state();
       const current =
         state.appliedMigrationCount === state.expectedMigrationCount;
+      let calendarBridge: ReadinessResponse["checks"]["calendarBridge"];
+      try {
+        calendarBridge =
+          ctx.calendarBridgeWorker?.healthState(
+            database.calendarBridgeWorker.health(),
+          ) ?? "disabled";
+      } catch {
+        calendarBridge = undefined;
+      }
       const body: ReadinessResponse = {
         service: "productivity-suite",
         status: current ? "ok" : "not_ready",
         checks: {
           database: "ok",
           migrations: current ? "current" : "pending",
+          ...(calendarBridge === undefined ? {} : { calendarBridge }),
         },
         instanceId: state.install.instanceId,
         migrationCount: state.appliedMigrationCount,

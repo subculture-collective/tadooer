@@ -128,6 +128,8 @@ export const dataExportExcludedTables: readonly string[] = [
   "calendar_bridge_links",
   "calendar_bridge_outbox",
   "calendar_bridge_conflicts",
+  "calendar_bridge_jobs",
+  "calendar_bridge_leases",
   "calendar_providers",
   "calendar_collections",
   "calendar_event_projections",

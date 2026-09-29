@@ -424,6 +424,13 @@ const eventsUrl = (calendarId: string, eventId?: string): URL =>
     }`,
   );
 
+/** Bridge writes never notify guests (ADR 0042). */
+const writeUrl = (calendarId: string, eventId?: string): URL => {
+  const url = eventsUrl(calendarId, eventId);
+  url.searchParams.set("sendUpdates", "none");
+  return url;
+};
+
 const eventResource = (value: unknown): GoogleEventResource | undefined => {
   const item = record(value);
   const id = string(item?.id);
@@ -451,12 +458,12 @@ const send = async (
   }
 };
 
-/** Complete change listing: every page is read before the token is returned. */
-export const listGoogleEventChanges = async (
+const listGoogleEventPages = async (
   accessToken: string,
   calendarId: string,
-  syncToken: string | null,
-  fetcher: typeof fetch = fetch,
+  fetcher: typeof fetch,
+  configure: (url: URL) => void,
+  requireSyncToken = true,
 ): Promise<GoogleEventChangesResult> => {
   const events: GoogleEventResource[] = [];
   let pageToken: string | undefined;
@@ -465,7 +472,7 @@ export const listGoogleEventChanges = async (
     const url = eventsUrl(calendarId);
     url.searchParams.set("maxResults", "2500");
     url.searchParams.set("showDeleted", "true");
-    if (syncToken !== null) url.searchParams.set("syncToken", syncToken);
+    configure(url);
     if (pageToken !== undefined) url.searchParams.set("pageToken", pageToken);
     const response = await send(fetcher, url, {
       headers: { Authorization: `Bearer ${accessToken}` },
@@ -494,9 +501,51 @@ export const listGoogleEventChanges = async (
     pageToken = string(body?.nextPageToken);
     nextSyncToken = string(body?.nextSyncToken) ?? nextSyncToken;
   } while (pageToken !== undefined);
+  if (!requireSyncToken)
+    return { kind: "ok", events, nextSyncToken: nextSyncToken ?? "" };
   return nextSyncToken === undefined
     ? { kind: "failed", reason: "invalid-response" }
     : { kind: "ok", events, nextSyncToken };
+};
+
+/** Complete change listing: every page is read before the token is returned. */
+export const listGoogleEventChanges = async (
+  accessToken: string,
+  calendarId: string,
+  syncToken: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GoogleEventChangesResult> =>
+  listGoogleEventPages(accessToken, calendarId, fetcher, (url) => {
+    if (syncToken !== null) url.searchParams.set("syncToken", syncToken);
+  });
+
+export type GoogleSeriesListResult =
+  | { readonly kind: "ok"; readonly events: readonly GoogleEventResource[] }
+  | { readonly kind: "failed"; readonly reason: GoogleBridgeFailure };
+
+/**
+ * Every event with one iCalendar UID, cancelled ones included: a recurring
+ * master and all of its exceptions (ADR 0042).
+ */
+export const listGoogleEventsByICalUid = async (
+  accessToken: string,
+  calendarId: string,
+  iCalUid: string,
+  fetcher: typeof fetch = fetch,
+): Promise<GoogleSeriesListResult> => {
+  const result = await listGoogleEventPages(
+    accessToken,
+    calendarId,
+    fetcher,
+    (url) => {
+      url.searchParams.set("iCalUID", iCalUid);
+    },
+    false,
+  );
+  if (result.kind === "ok") return { kind: "ok", events: result.events };
+  return result.kind === "failed"
+    ? result
+    : { kind: "failed", reason: "invalid-response" };
 };
 
 export const getGoogleEvent = async (
@@ -560,7 +609,7 @@ export const insertGoogleEvent = async (
   fetcher: typeof fetch = fetch,
 ): Promise<GoogleEventWriteResult> =>
   writeOutcome(
-    await send(fetcher, eventsUrl(calendarId), {
+    await send(fetcher, writeUrl(calendarId), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -579,7 +628,7 @@ export const updateGoogleEvent = async (
   fetcher: typeof fetch = fetch,
 ): Promise<GoogleEventWriteResult> =>
   writeOutcome(
-    await send(fetcher, eventsUrl(calendarId, eventId), {
+    await send(fetcher, writeUrl(calendarId, eventId), {
       method: "PUT",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -598,7 +647,7 @@ export const deleteGoogleEvent = async (
   fetcher: typeof fetch = fetch,
 ): Promise<GoogleEventWriteResult> =>
   writeOutcome(
-    await send(fetcher, eventsUrl(calendarId, eventId), {
+    await send(fetcher, writeUrl(calendarId, eventId), {
       method: "DELETE",
       headers: {
         Authorization: `Bearer ${accessToken}`,
