@@ -17,6 +17,7 @@ import {
   randomUUID,
 } from "node:crypto";
 import type {
+  BaikalProbeResponse,
   BaikalStatusResponse,
   CalendarCollection,
 } from "@suite/contracts";
@@ -24,6 +25,7 @@ import {
   createCalDavEvent,
   deleteCalDavEvent,
   discoverCalDavCalendars,
+  probeCalDavEndpoint,
   readBoundedCalDavEvents,
   replaceCalDavEvent,
   serializeBoundedVEvent,
@@ -169,6 +171,51 @@ export class BaikalConnectorService {
       now,
       discovery.calendars,
     );
+  }
+
+  /**
+   * Read-only setup check for the configured endpoint (ADR 0039): CalDAV
+   * capability, discovery and per-calendar privileges. Nothing is stored and
+   * the result never contains the password.
+   */
+  async probe(
+    username: string,
+    password: string,
+  ): Promise<
+    | { readonly ok: true; readonly probe: BaikalProbeResponse }
+    | { readonly ok: false; readonly reason: CalDavDiscoveryFailure }
+  > {
+    const result = await this.#withTimeout((signal) =>
+      probeCalDavEndpoint({
+        endpoint: this.endpoint,
+        username,
+        password,
+        fetch: this.fetcher,
+        signal,
+      }),
+    );
+    if (!result.ok) return result;
+    return {
+      ok: true,
+      probe: {
+        endpoint: this.endpoint.href,
+        davClasses: result.davClasses.slice(0, 64),
+        principalHref: result.principalUrl.pathname,
+        calendarHomeHref: result.calendarHomeUrl.pathname,
+        calendars: result.calendars.map((calendar) => ({
+          href: calendar.href,
+          displayName: calendar.displayName,
+          supportsEvents: calendar.supportsEvents,
+          supportsTodos: calendar.supportsTodos,
+          privileges: calendar.privileges?.slice(0, 64) ?? null,
+          canRead: calendar.canRead,
+          canWrite: calendar.canWrite,
+        })),
+        writableEventCalendars: result.calendars.filter(
+          (calendar) => calendar.supportsEvents && calendar.canWrite === true,
+        ).length,
+      },
+    };
   }
 
   async status(ownerId: string): Promise<ConnectorResult> {
@@ -343,6 +390,34 @@ export class BaikalConnectorService {
         signal,
       }),
     );
+  }
+
+  /**
+   * Credentials for the calendar bridge (ADR 0041). The password stays in
+   * memory for one pass and is never returned by a route or logged.
+   */
+  bridgeAccess(
+    ownerId: string,
+    calendarId: string,
+  ):
+    | {
+        readonly ok: true;
+        readonly collectionUrl: URL;
+        readonly username: string;
+        readonly password: string;
+        readonly fetch: typeof fetch;
+      }
+    | { readonly ok: false; readonly reason: CalendarOperationFailure } {
+    const access = this.#calendarAccess(ownerId, calendarId);
+    return access.ok
+      ? {
+          ok: true,
+          collectionUrl: access.collectionUrl,
+          username: access.connector.username,
+          password: access.password,
+          fetch: this.fetcher,
+        }
+      : access;
   }
 
   async #discover(

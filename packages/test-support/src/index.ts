@@ -13,3 +13,5 @@ export const withTemporaryDirectory = async <T>(
     await rm(directory, { recursive: true, force: true });
   }
 };
+
+export * from "./caldav-fake.ts";

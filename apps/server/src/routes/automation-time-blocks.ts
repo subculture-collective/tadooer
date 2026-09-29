@@ -14,7 +14,8 @@ import type {
   BaikalConnectorService,
   CalendarOperationResult,
 } from "../connector.ts";
-import { taskResponse } from "./shared.ts";
+import type { GoogleConnectorService } from "../google-connector.ts";
+import { googleCalendarWriteRefusal, taskResponse } from "./shared.ts";
 
 // Time-block assistant operations (issue #58, ADR 0037). automation.ts keeps
 // the shared preview/confirm protocol; this module supplies the checks, the
@@ -119,6 +120,7 @@ const resolve = (
   database: SuiteDatabase,
   ownerId: string,
   command: TimeBlockCommand,
+  google?: GoogleConnectorService,
 ):
   | {
       readonly ok: true;
@@ -163,6 +165,14 @@ const resolve = (
       : database.getOwnedCalendar(ownerId, calendarId);
   if (calendar?.supportsEvents !== true)
     return failure(404, "CALENDAR_NOT_FOUND", "Calendar not found");
+  // ADR 0040: a Google calendar needs the write grant and a writable role;
+  // removal only releases an existing block, so it is not refused here.
+  const refusal =
+    google === undefined || command.operation === "schedule.remove_time_block"
+      ? undefined
+      : googleCalendarWriteRefusal(google, ownerId, calendar);
+  if (refusal !== undefined)
+    return failure(refusal.status, refusal.code, refusal.message);
   return {
     ok: true,
     task,
@@ -176,8 +186,9 @@ export const previewTimeBlock = (
   database: SuiteDatabase,
   ownerId: string,
   command: TimeBlockCommand,
+  google?: GoogleConnectorService,
 ): TimeBlockPreview => {
-  const resolved = resolve(database, ownerId, command);
+  const resolved = resolve(database, ownerId, command, google);
   if (!resolved.ok) return resolved;
   const { task, calendarId, calendarName } = resolved;
   const title = quoted(task.title);
@@ -223,11 +234,12 @@ export const confirmTimeBlockWrite = async (
   internalKey: string,
   command: WriteCommand,
   taskRevision: number,
+  google?: GoogleConnectorService,
 ): Promise<
   | { readonly ok: true; readonly result: Result; readonly apply?: undefined }
   | TimeBlockFailure
 > => {
-  const resolved = resolve(database, ownerId, command);
+  const resolved = resolve(database, ownerId, command, google);
   if (!resolved.ok) return resolved;
   const { task, block: existingBlock, calendarId } = resolved;
   const calendar = database.getOwnedCalendar(ownerId, calendarId);

@@ -22,6 +22,7 @@ import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
   ActiveSession,
+  BaikalProbeResponse,
   BaikalStatusResponse,
   ChoicePool,
   ChoicePoolHistoryEvent,
@@ -46,12 +47,14 @@ import { ApiRequestError } from "@suite/contracts";
 import {
   commandActiveSession,
   connectBaikal,
+  probeBaikal,
   createSyncTransport,
   getBaikalStatus,
   getGoogleStatus,
   beginGoogleAuthorization,
   synchronizeGoogle,
   disconnectGoogle,
+  withdrawGoogleWriteConsent,
   getPlanningPreferences,
   updatePlanningPreferences,
   getDayPlan,
@@ -180,6 +183,32 @@ const messageFor = (error: unknown): string =>
     ? error.message
     : "An unexpected error occurred";
 
+const endpointHost = (endpoint: string): string => {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return "Configured endpoint";
+  }
+};
+
+const calendarAccessLabel = (
+  calendar: BaikalProbeResponse["calendars"][number],
+): string => {
+  const kinds = [
+    ...(calendar.supportsEvents ? ["events"] : []),
+    ...(calendar.supportsTodos ? ["tasks"] : []),
+  ];
+  const access =
+    calendar.canWrite === true
+      ? "read and write"
+      : calendar.canRead === true
+        ? "read only"
+        : calendar.canRead === false
+          ? "no access"
+          : "permissions not reported";
+  return `${kinds.length === 0 ? "no supported items" : kinds.join(" and ")}, ${access}`;
+};
+
 const formValue = (data: FormData, name: string): string => {
   const value = data.get(name);
   return typeof value === "string" ? value : "";
@@ -195,6 +224,17 @@ const plannerWindow = (): { readonly from: string; readonly to: string } => {
 const localInputToIso = (value: string): string | undefined => {
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
+};
+
+/** Reports the outcome of the explicit Google write consent step (ADR 0040). */
+const googleCallbackMessage = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const outcome = new URLSearchParams(window.location.search).get("google");
+  if (outcome === "write-granted")
+    return "Google allowed event changes. Writable calendars are marked on Connections.";
+  if (outcome === "write-not-granted")
+    return "Google did not grant event changes. Your read-only connection is unchanged.";
+  return null;
 };
 
 export const App = ({ initialState, initialPath }: AppProps) => {
@@ -235,7 +275,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       />
     ) : null;
   const [formError, setFormError] = useState<string | null>(null);
-  const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
+  const [baikalProbe, setBaikalProbe] = useState<BaikalProbeResponse | null>(
+    null,
+  );
+  const [calendarMessage, setCalendarMessage] = useState<string | null>(
+    googleCallbackMessage,
+  );
   const [localStore] = useState(() => new LocalStore());
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [tags, setTags] = useState<readonly Tag[]>([]);
@@ -683,6 +728,29 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  const checkBaikal = async (form: HTMLFormElement | null): Promise<void> => {
+    if (state.kind !== "authenticated" || form === null) return;
+    const data = new FormData(form);
+    setBusy(true);
+    setFormError(null);
+    setBaikalProbe(null);
+    try {
+      setBaikalProbe(
+        await probeBaikal(
+          {
+            username: formValue(data, "username"),
+            password: formValue(data, "password"),
+          },
+          state.session.csrfToken,
+        ),
+      );
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const calendarError = (error: unknown): void => {
     setCalendarMessage(null);
     if (
@@ -705,13 +773,18 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     return session;
   };
 
-  const authorizeGoogle = async (): Promise<string> => {
+  const authorizeGoogle = async (
+    access: "read" | "write" = "read",
+  ): Promise<string> => {
     if (state.kind !== "authenticated") throw new Error("Sign in required");
     setBusy(true);
     setFormError(null);
     try {
       const session = await calendarSession();
-      const authorization = await beginGoogleAuthorization(session.csrfToken);
+      const authorization = await beginGoogleAuthorization(
+        session.csrfToken,
+        access,
+      );
       return authorization.authorizationUrl;
     } catch (error: unknown) {
       calendarError(error);
@@ -777,6 +850,26 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  const withdrawGoogleWrite = async (): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const session = await calendarSession();
+      const google = await withdrawGoogleWriteConsent(session.csrfToken);
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, google } : current,
+      );
+      setCalendarMessage(
+        "Tadooer will no longer change Google events. Google keeps the permission until you disconnect or remove access in your Google account.",
+      );
+    } catch (error: unknown) {
+      calendarError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const removeGoogleCalendar = async (): Promise<void> => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
@@ -799,6 +892,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 grantedScopes: [],
                 calendars: [],
                 freshness: [],
+                write: {
+                  consent: "none",
+                  consentedAt: null,
+                  scopeGranted: false,
+                },
+                capabilities: [],
               },
             }
           : current,
@@ -2436,7 +2535,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 CalDAV before storing an encrypted credential.
               </p>
               <p className="hint mono">
-                Bundled Baikal \u00b7 server-managed CalDAV
+                {endpointHost(state.baikal.endpoint)} \u00b7 server-managed
+                CalDAV
               </p>
               <Field
                 label="Baikal username"
@@ -2452,6 +2552,31 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               {formError !== null && (
                 <p className="message message-error">{formError}</p>
               )}
+              {baikalProbe !== null && (
+                <div aria-live="polite">
+                  <p className="muted">
+                    CalDAV answered. {baikalProbe.writableEventCalendars} of{" "}
+                    {baikalProbe.calendars.length} calendars accept Suite
+                    events.
+                  </p>
+                  <ul>
+                    {baikalProbe.calendars.map((calendar) => (
+                      <li key={calendar.href}>
+                        {calendar.displayName}: {calendarAccessLabel(calendar)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <Button
+                variant="outline"
+                type="button"
+                className="w-full"
+                disabled={busy}
+                onClick={(event) => void checkBaikal(event.currentTarget.form)}
+              >
+                Check connection
+              </Button>
               <Button className="w-full" disabled={busy}>
                 {busy ? "Verifying..." : "Verify and connect"}
               </Button>
@@ -2731,6 +2856,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             onAuthorizeGoogle={authorizeGoogle}
             onSyncGoogle={syncGoogleCalendar}
             onDisconnectGoogle={removeGoogleCalendar}
+            onAuthorizeGoogleWrite={() => authorizeGoogle("write")}
+            onWithdrawGoogleWrite={withdrawGoogleWrite}
             onSavePlanningPreferences={savePlanningPreferences}
           />
         )}

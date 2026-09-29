@@ -1,5 +1,6 @@
 export { superProductivityImportLimits } from "./import-limits.ts";
 export * from "./organization.ts";
+export * from "./calendar-bridge.ts";
 export * from "./task-planning.ts";
 export * from "./task-links.ts";
 export * from "./task-archive.ts";
@@ -251,6 +252,26 @@ export const baikalStatusResponseSchema = z.object({
   username: z.string().nullable(),
   verifiedAt: z.iso.datetime().nullable(),
   calendars: z.array(calendarCollectionSchema),
+});
+
+/** Read-only setup probe of the server-configured Baikal endpoint (ADR 0039). */
+export const baikalProbeCalendarSchema = z.object({
+  href: z.string().min(1),
+  displayName: z.string().min(1),
+  supportsEvents: z.boolean(),
+  supportsTodos: z.boolean(),
+  privileges: z.array(z.string().min(1).max(128)).max(64).nullable(),
+  canRead: z.boolean().nullable(),
+  canWrite: z.boolean().nullable(),
+});
+
+export const baikalProbeResponseSchema = z.object({
+  endpoint: z.url(),
+  davClasses: z.array(z.string().min(1).max(128)).max(64),
+  principalHref: z.string().min(1),
+  calendarHomeHref: z.string().min(1),
+  calendars: z.array(baikalProbeCalendarSchema).max(50),
+  writableEventCalendars: z.number().int().nonnegative(),
 });
 
 export const calendarProviderKindSchema = z.enum([
@@ -626,6 +647,33 @@ export const googleCalendarFreshnessSchema = z.object({
   lastSuccessfulSyncAt: z.iso.datetime().nullable(),
   message: z.string().min(1).max(240),
 });
+/** ADR 0040: Google calendar roles and the write gate's refusal reasons. */
+export const googleAccessRoleSchema = z.enum([
+  "freeBusyReader",
+  "reader",
+  "writer",
+  "owner",
+]);
+export const googleWriteRefusalSchema = z.enum([
+  "not-connected",
+  "reconnect-required",
+  "consent-required",
+  "scope-missing",
+  "role-unknown",
+  "read-only-calendar",
+]);
+export const googleWriteStatusSchema = z.object({
+  /** `lost`: consent was recorded but the grant no longer allows writes. */
+  consent: z.enum(["none", "granted", "lost"]),
+  consentedAt: z.iso.datetime().nullable(),
+  scopeGranted: z.boolean(),
+});
+export const googleCalendarCapabilitySchema = z.object({
+  calendarId: entityIdSchema,
+  accessRole: googleAccessRoleSchema.nullable(),
+  writable: z.boolean(),
+  reason: googleWriteRefusalSchema.nullable(),
+});
 export const googleConnectorStatusResponseSchema = z.object({
   configured: z.boolean(),
   connected: z.boolean(),
@@ -635,7 +683,15 @@ export const googleConnectorStatusResponseSchema = z.object({
   grantedScopes: z.array(z.string()),
   calendars: z.array(calendarCollectionSchema),
   freshness: z.array(googleCalendarFreshnessSchema),
+  write: googleWriteStatusSchema,
+  capabilities: z.array(googleCalendarCapabilitySchema),
 });
+/** Read-only is the default; write is the separate explicit consent step. */
+export const googleAuthorizationRequestSchema = z
+  .object({
+    access: z.enum(["read", "write"]).default("read"),
+  })
+  .strict();
 export const googleAuthorizationResponseSchema = z.object({
   authorizationUrl: z.url(),
   expiresAt: z.iso.datetime(),
@@ -4077,6 +4133,7 @@ export type SessionResponse = z.infer<typeof sessionResponseSchema>;
 export type BaikalConnectRequest = z.infer<typeof baikalConnectRequestSchema>;
 export type CalendarCollection = z.infer<typeof calendarCollectionSchema>;
 export type BaikalStatusResponse = z.infer<typeof baikalStatusResponseSchema>;
+export type BaikalProbeResponse = z.infer<typeof baikalProbeResponseSchema>;
 export type CalendarEventIdentity = z.infer<typeof calendarEventIdentitySchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
@@ -4126,6 +4183,11 @@ export type GoogleConnectorStatusResponse = z.infer<
   typeof googleConnectorStatusResponseSchema
 >;
 export type GoogleSyncResponse = z.infer<typeof googleSyncResponseSchema>;
+export type GoogleWriteStatus = z.infer<typeof googleWriteStatusSchema>;
+export type GoogleCalendarCapability = z.infer<
+  typeof googleCalendarCapabilitySchema
+>;
+export type GoogleWriteRefusal = z.infer<typeof googleWriteRefusalSchema>;
 export type PlanningPreferences = z.infer<typeof planningPreferencesSchema>;
 export type DayPlanResponse = z.infer<typeof dayPlanResponseSchema>;
 export type NotificationPreferences = z.infer<

@@ -19,11 +19,13 @@
     },
     {
       "id": "connector-grants",
-      "action": "Provision Baikal credentials, authorize Google, disconnect grants",
+      "action": "Provision Baikal credentials, authorize Google, grant or withdraw Google write consent, disconnect grants",
       "webApi": [
         "connectBaikal",
+        "probeBaikal",
         "beginGoogleAuthorization",
-        "disconnectGoogle"
+        "disconnectGoogle",
+        "withdrawGoogleWriteConsent"
       ],
       "catalog": [],
       "status": "owner-only",

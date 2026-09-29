@@ -1,8 +1,11 @@
 # Google Calendar operator setup
 
-Phase 3 uses Google OAuth's web-server flow and requests only calendar-list read
-access and event read access. The Suite never asks for Google calendar write
-authority. OAuth client configuration is operator-owned secret material; do not
+Phase 3 uses Google OAuth's web-server flow. The default connection requests
+only calendar-list read access and event read access. Event write access
+(`calendar.events`) is a separate, explicit owner step described in
+[Optional write consent](#optional-write-consent) and
+[ADR 0040](../adr/0040-google-write-consent.md); nothing requests it
+implicitly. OAuth client configuration is operator-owned secret material; do not
 commit it to this repository.
 
 ## Create the Google OAuth client
@@ -105,6 +108,41 @@ Suite code, and loopback deployment at that date. It is not a claim of Google
 write support, universal account compatibility, or a production-hosted OAuth
 deployment.
 
+## Optional write consent
+
+Write access is opt-in per owner and is not needed for federation. To offer it,
+add `https://www.googleapis.com/auth/calendar.events` to the OAuth consent
+screen's scopes. Google classifies it as sensitive; a private deployment in
+testing mode can use it for listed test users.
+
+On Connections, a connected owner chooses **Allow event changes**. The Suite
+states the effect, then returns a one-time link that asks Google for the read
+scopes plus `calendar.events`. The requested access is stored with the state
+digest, so the callback cannot be upgraded. Outcomes:
+
+- Google grants the scope: write consent is recorded and the redirect is
+  `/?google=write-granted`.
+- The owner unticks the scope: the read connection is kept, no consent is
+  recorded, and the redirect is `/?google=write-not-granted`.
+- A later read-only **Reconnect** does not request or carry the write scope and
+  clears recorded consent.
+
+Each sync stores every calendar's Google `accessRole`. A calendar is writable
+only with a live connection, recorded consent, the write scope in the current
+grant and a `writer` or `owner` role. Connections shows **Writable** or **Read
+only** with the reason. If Google narrows the grant or the role, the next sync
+records it and consent shows as lost; `invalid_grant` still requires reconnect.
+
+**Withdraw event changes** stops Suite writes immediately but leaves the scope
+on Google's grant. Disconnect, or remove access in the Google account, to revoke
+it at Google.
+
+No Google write adapter is enabled yet. Time blocks aimed at a Google calendar
+are refused: 403 `GOOGLE_CALENDAR_NOT_WRITABLE` when the gate fails, 409
+`GOOGLE_WRITE_NOT_AVAILABLE` when it passes. Real-account qualification of the
+consent screen, granular scope choices, refresh scopes, shared-calendar roles
+and revocation is tracked in #50 and has not been performed.
+
 ## Secret lifecycle, backup, and revocation
 
 The client secret stays in `/data/google-oauth.json`. The refresh grant is
@@ -127,7 +165,7 @@ Resync sends `POST /api/connectors/google/sync` with `{ "full": true }` under th
 same session, same-origin and CSRF protections. Existing clients may omit the
 body for incremental sync. Each calendar replaces its projection transactionally
 only after the complete fetch succeeds; a failed fetch retains the saved events.
-No Google calendar writes or new OAuth permissions are involved.
+Sync never writes to Google or requests new OAuth permissions.
 
 Calendar actions first resume the current Tadooer session and use its current
 CSRF token. If the session has expired, the UI returns to sign-in and explains
