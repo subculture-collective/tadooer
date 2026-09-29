@@ -5,6 +5,7 @@ import {
   getGoogleStatus,
   synchronizeGoogle,
   updatePlanningPreferences,
+  withdrawGoogleWriteConsent,
 } from "./api.ts";
 
 const response = (body: unknown): Response =>
@@ -30,6 +31,39 @@ describe("Phase 3 browser API", () => {
         method: "POST",
         body: JSON.stringify({ full: true }),
       }),
+    );
+  });
+
+  it("asks for write access only from the explicit consent call", async () => {
+    const fetcher = vi.fn((path: string, init: RequestInit = {}) => {
+      void init;
+      return Promise.resolve(
+        path.endsWith("/authorize")
+          ? response({
+              authorizationUrl:
+                "https://accounts.google.com/o/oauth2/v2/auth?state=state",
+              expiresAt: "2026-08-07T12:10:00.000Z",
+            })
+          : response(disconnectedStatus),
+      );
+    });
+    vi.stubGlobal("fetch", fetcher);
+    await beginGoogleAuthorization("csrf-token");
+    await beginGoogleAuthorization("csrf-token", "write");
+    await withdrawGoogleWriteConsent("csrf-token");
+    const [read, write, withdraw] = fetcher.mock.calls;
+    expect(read?.[1]?.body).toBeUndefined();
+    expect(write?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ access: "write" }),
+    });
+    expect(new Headers(write?.[1]?.headers).get("x-csrf-token")).toBe(
+      "csrf-token",
+    );
+    expect(withdraw?.[0]).toBe("/api/connectors/google/write-consent");
+    expect(withdraw?.[1]).toMatchObject({ method: "DELETE" });
+    expect(new Headers(withdraw?.[1]?.headers).get("x-csrf-token")).toBe(
+      "csrf-token",
     );
   });
 
@@ -125,4 +159,6 @@ const disconnectedStatus = {
   grantedScopes: [],
   calendars: [],
   freshness: [],
+  write: { consent: "none", consentedAt: null, scopeGranted: false },
+  capabilities: [],
 };

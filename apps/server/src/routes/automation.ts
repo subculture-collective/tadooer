@@ -148,6 +148,7 @@ import {
   intervalsFromActive,
   eventsFromActive,
   activeResponse,
+  googleCalendarWriteRefusal,
 } from "./shared.ts";
 
 function authenticateAutomation(
@@ -1563,11 +1564,26 @@ export const handleAutomation: RouteHandler = async (
         sendError(response, 404, "TASK_NOT_FOUND", "Task not found");
         return true;
       }
-      if (
-        database.getOwnedCalendar(token.ownerId, command.input.calendarId)
-          ?.supportsEvents !== true
-      ) {
+      const calendar = database.getOwnedCalendar(
+        token.ownerId,
+        command.input.calendarId,
+      );
+      if (calendar?.supportsEvents !== true) {
         sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
+        return true;
+      }
+      const googleRefusal = googleCalendarWriteRefusal(
+        ctx.google,
+        token.ownerId,
+        calendar,
+      );
+      if (googleRefusal !== undefined) {
+        sendError(
+          response,
+          googleRefusal.status,
+          googleRefusal.code,
+          googleRefusal.message,
+        );
         return true;
       }
       affected.push(
@@ -2688,6 +2704,20 @@ export const handleAutomation: RouteHandler = async (
       }
       if (calendar?.supportsEvents !== true) {
         sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
+        return true;
+      }
+      const googleRefusal = googleCalendarWriteRefusal(
+        ctx.google,
+        token.ownerId,
+        calendar,
+      );
+      if (googleRefusal !== undefined) {
+        sendError(
+          response,
+          googleRefusal.status,
+          googleRefusal.code,
+          googleRefusal.message,
+        );
         return true;
       }
       const existingBlock = database.getTaskCalendarBlock(

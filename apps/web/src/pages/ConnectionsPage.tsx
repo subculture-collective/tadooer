@@ -29,6 +29,8 @@ export interface ConnectionsPageProps {
   readonly onAuthorizeGoogle: (() => Promise<string>) | undefined;
   readonly onSyncGoogle: ((full?: boolean) => Promise<void>) | undefined;
   readonly onDisconnectGoogle: (() => Promise<void>) | undefined;
+  readonly onAuthorizeGoogleWrite?: () => Promise<string>;
+  readonly onWithdrawGoogleWrite?: () => Promise<void>;
   readonly onSavePlanningPreferences:
     ((preferences: PlanningPreferences) => Promise<void>) | undefined;
 }
@@ -45,6 +47,8 @@ export const ConnectionsPage = ({
   onAuthorizeGoogle,
   onSyncGoogle,
   onDisconnectGoogle,
+  onAuthorizeGoogleWrite,
+  onWithdrawGoogleWrite,
   onSavePlanningPreferences,
 }: ConnectionsPageProps) => {
   // Reloads the imported plugin data list after an import (ADR 0026).
@@ -86,6 +90,13 @@ export const ConnectionsPage = ({
             onSynchronize={onSyncGoogle}
             onDisconnect={onDisconnectGoogle}
             onSavePreferences={onSavePlanningPreferences}
+            {...(onAuthorizeGoogleWrite === undefined ||
+            onWithdrawGoogleWrite === undefined
+              ? {}
+              : {
+                  onAuthorizeWrite: onAuthorizeGoogleWrite,
+                  onWithdrawWrite: onWithdrawGoogleWrite,
+                })}
           />
         )}
       <CalendarSubscriptions csrfToken={csrfToken} />

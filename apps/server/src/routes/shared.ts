@@ -20,6 +20,7 @@ import type {
   Subtask,
   TemplateInstantiationResponse,
   ActiveSession as ContractActiveSession,
+  GoogleWriteRefusal,
 } from "@suite/contracts";
 import { automationCatalog } from "@suite/contracts";
 import type {
@@ -535,3 +536,49 @@ export const activeResponse = (
   currentIntervalId:
     session.intervals.find((interval) => interval.endedAt === null)?.id ?? null,
 });
+
+const googleWriteRefusalMessages: Record<GoogleWriteRefusal, string> = {
+  "not-connected": "Google Calendar is not connected",
+  "reconnect-required":
+    "Google authorization expired or was revoked; reconnect before changing events",
+  "consent-required":
+    "Allow event changes for Google Calendar before writing to it",
+  "scope-missing":
+    "Google no longer grants event changes; allow event changes again",
+  "role-unknown":
+    "This calendar's Google permissions are unknown; sync Google Calendar first",
+  "read-only-calendar": "This Google calendar is read-only for your account",
+};
+
+/**
+ * ADR 0040 write gate for route handlers. Returns the refusal to send for a
+ * write aimed at a Google calendar, or undefined for other providers. A Google
+ * calendar that passes the gate is still refused until the write adapter of
+ * #40 exists, so no reservation or provider call is ever made for it here.
+ */
+export const googleCalendarWriteRefusal = (
+  google: GoogleConnectorService,
+  ownerId: string,
+  calendar: { readonly id: string; readonly kind: string },
+):
+  | {
+      readonly status: number;
+      readonly code: string;
+      readonly message: string;
+    }
+  | undefined => {
+  if (calendar.kind !== "google") return undefined;
+  const capability = google.writeCapability(ownerId, calendar.id);
+  return capability.writable
+    ? {
+        status: 409,
+        code: "GOOGLE_WRITE_NOT_AVAILABLE",
+        message:
+          "Writing to Google calendars is not available yet; choose a Baïkal calendar",
+      }
+    : {
+        status: 403,
+        code: "GOOGLE_CALENDAR_NOT_WRITABLE",
+        message: googleWriteRefusalMessages[capability.reason],
+      };
+};

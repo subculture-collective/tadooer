@@ -1,7 +1,66 @@
-export const googleScopes = [
+/** Default read-only grant. Every connection requires both. */
+export const googleReadScopes = [
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
   "https://www.googleapis.com/auth/calendar.events.readonly",
 ] as const;
+/** @deprecated Use {@link googleReadScopes}; kept for existing callers. */
+export const googleScopes = googleReadScopes;
+/**
+ * The single write scope requested only by the explicit write-consent flow
+ * (ADR 0040): event create/update/delete, no calendar settings or ACLs.
+ */
+export const googleWriteScope =
+  "https://www.googleapis.com/auth/calendar.events" as const;
+
+export type GoogleAccessRequest = "read" | "write";
+export type GoogleAccessRole = "freeBusyReader" | "reader" | "writer" | "owner";
+
+export const hasGoogleReadScopes = (scopes: readonly string[]): boolean =>
+  googleReadScopes.every((scope) => scopes.includes(scope));
+export const hasGoogleWriteScope = (scopes: readonly string[]): boolean =>
+  scopes.includes(googleWriteScope);
+export const googleRoleAllowsWrites = (
+  role: GoogleAccessRole | null | undefined,
+): boolean => role === "writer" || role === "owner";
+
+export type GoogleWriteRefusal =
+  | "not-connected"
+  | "reconnect-required"
+  | "consent-required"
+  | "scope-missing"
+  | "role-unknown"
+  | "read-only-calendar";
+export type GoogleWriteCapability =
+  | { readonly writable: true }
+  | { readonly writable: false; readonly reason: GoogleWriteRefusal };
+
+/**
+ * Pure write gate (ADR 0040). A Google calendar is writable only with a live
+ * connector, recorded owner consent, a grant carrying the write scope and a
+ * last observed `writer`/`owner` role. Checks run in that order so the reason
+ * names the first thing the owner has to fix.
+ */
+export const evaluateGoogleWriteCapability = (input: {
+  readonly connectorState:
+    "disconnected" | "connected" | "stale" | "reconnect_required";
+  readonly writeConsentAt: string | null;
+  readonly grantedScopes: readonly string[];
+  readonly accessRole: GoogleAccessRole | null;
+}): GoogleWriteCapability => {
+  if (input.connectorState === "disconnected")
+    return { writable: false, reason: "not-connected" };
+  if (input.connectorState === "reconnect_required")
+    return { writable: false, reason: "reconnect-required" };
+  if (input.writeConsentAt === null)
+    return { writable: false, reason: "consent-required" };
+  if (!hasGoogleWriteScope(input.grantedScopes))
+    return { writable: false, reason: "scope-missing" };
+  if (input.accessRole === null)
+    return { writable: false, reason: "role-unknown" };
+  if (!googleRoleAllowsWrites(input.accessRole))
+    return { writable: false, reason: "read-only-calendar" };
+  return { writable: true };
+};
 
 export interface GoogleOAuthClientConfig {
   readonly clientId: string;
@@ -19,7 +78,7 @@ export interface GoogleCalendarSummary {
   readonly etag: string;
   readonly summary: string;
   readonly timeZone: string | null;
-  readonly accessRole: "freeBusyReader" | "reader" | "writer" | "owner";
+  readonly accessRole: GoogleAccessRole;
   readonly primary: boolean;
   readonly deleted: boolean;
 }
@@ -59,9 +118,15 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
 const string = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
 
+/**
+ * A read request asks only for the read scopes and does not opt into
+ * incremental authorization, so a read-only reconnect never carries a prior
+ * write scope forward. A write request is the separate, explicit consent step.
+ */
 export const buildGoogleAuthorizationUrl = (
   config: GoogleOAuthClientConfig,
   state: string,
+  access: GoogleAccessRequest = "read",
 ): string => {
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
@@ -70,8 +135,11 @@ export const buildGoogleAuthorizationUrl = (
     response_type: "code",
     access_type: "offline",
     prompt: "consent",
-    include_granted_scopes: "true",
-    scope: googleScopes.join(" "),
+    ...(access === "write" ? { include_granted_scopes: "true" } : {}),
+    scope: (access === "write"
+      ? [...googleReadScopes, googleWriteScope]
+      : [...googleReadScopes]
+    ).join(" "),
     state,
   }).toString();
   return url.href;
@@ -92,7 +160,9 @@ const tokenGrant = (
     !Number.isFinite(expiresIn)
   )
     return undefined;
-  const scopes = (string(body?.scope) ?? googleScopes.join(" "))
+  // A response without `scope` is assumed to carry only the read scopes;
+  // write access is never inferred (ADR 0040).
+  const scopes = (string(body?.scope) ?? googleReadScopes.join(" "))
     .split(" ")
     .filter(Boolean);
   return {
@@ -194,7 +264,7 @@ export const listGoogleCalendars = async (
           etag,
           summary,
           timeZone: string(item?.timeZone) ?? null,
-          accessRole: role as GoogleCalendarSummary["accessRole"],
+          accessRole: role as GoogleAccessRole,
           primary: item?.primary === true,
           deleted: item?.deleted === true,
         });
