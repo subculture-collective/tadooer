@@ -22,6 +22,7 @@ import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
 import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
 import type {
   ActiveSession,
+  BaikalProbeResponse,
   BaikalStatusResponse,
   ChoicePool,
   ChoicePoolHistoryEvent,
@@ -46,6 +47,7 @@ import { ApiRequestError } from "@suite/contracts";
 import {
   commandActiveSession,
   connectBaikal,
+  probeBaikal,
   createSyncTransport,
   getBaikalStatus,
   getGoogleStatus,
@@ -181,6 +183,32 @@ const messageFor = (error: unknown): string =>
     ? error.message
     : "An unexpected error occurred";
 
+const endpointHost = (endpoint: string): string => {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return "Configured endpoint";
+  }
+};
+
+const calendarAccessLabel = (
+  calendar: BaikalProbeResponse["calendars"][number],
+): string => {
+  const kinds = [
+    ...(calendar.supportsEvents ? ["events"] : []),
+    ...(calendar.supportsTodos ? ["tasks"] : []),
+  ];
+  const access =
+    calendar.canWrite === true
+      ? "read and write"
+      : calendar.canRead === true
+        ? "read only"
+        : calendar.canRead === false
+          ? "no access"
+          : "permissions not reported";
+  return `${kinds.length === 0 ? "no supported items" : kinds.join(" and ")}, ${access}`;
+};
+
 const formValue = (data: FormData, name: string): string => {
   const value = data.get(name);
   return typeof value === "string" ? value : "";
@@ -247,6 +275,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       />
     ) : null;
   const [formError, setFormError] = useState<string | null>(null);
+  const [baikalProbe, setBaikalProbe] = useState<BaikalProbeResponse | null>(
+    null,
+  );
   const [calendarMessage, setCalendarMessage] = useState<string | null>(
     googleCallbackMessage,
   );
@@ -690,6 +721,29 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
       await loadAuthenticated(state.session);
       form.reset();
+    } catch (error: unknown) {
+      setFormError(messageFor(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const checkBaikal = async (form: HTMLFormElement | null): Promise<void> => {
+    if (state.kind !== "authenticated" || form === null) return;
+    const data = new FormData(form);
+    setBusy(true);
+    setFormError(null);
+    setBaikalProbe(null);
+    try {
+      setBaikalProbe(
+        await probeBaikal(
+          {
+            username: formValue(data, "username"),
+            password: formValue(data, "password"),
+          },
+          state.session.csrfToken,
+        ),
+      );
     } catch (error: unknown) {
       setFormError(messageFor(error));
     } finally {
@@ -2481,7 +2535,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 CalDAV before storing an encrypted credential.
               </p>
               <p className="hint mono">
-                Bundled Baikal \u00b7 server-managed CalDAV
+                {endpointHost(state.baikal.endpoint)} \u00b7 server-managed
+                CalDAV
               </p>
               <Field
                 label="Baikal username"
@@ -2497,6 +2552,31 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               {formError !== null && (
                 <p className="message message-error">{formError}</p>
               )}
+              {baikalProbe !== null && (
+                <div aria-live="polite">
+                  <p className="muted">
+                    CalDAV answered. {baikalProbe.writableEventCalendars} of{" "}
+                    {baikalProbe.calendars.length} calendars accept Suite
+                    events.
+                  </p>
+                  <ul>
+                    {baikalProbe.calendars.map((calendar) => (
+                      <li key={calendar.href}>
+                        {calendar.displayName}: {calendarAccessLabel(calendar)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <Button
+                variant="outline"
+                type="button"
+                className="w-full"
+                disabled={busy}
+                onClick={(event) => void checkBaikal(event.currentTarget.form)}
+              >
+                Check connection
+              </Button>
               <Button className="w-full" disabled={busy}>
                 {busy ? "Verifying..." : "Verify and connect"}
               </Button>

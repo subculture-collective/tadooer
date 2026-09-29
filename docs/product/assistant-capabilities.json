@@ -22,6 +22,7 @@
       "action": "Provision Baikal credentials, authorize Google, grant or withdraw Google write consent, disconnect grants",
       "webApi": [
         "connectBaikal",
+        "probeBaikal",
         "beginGoogleAuthorization",
         "disconnectGoogle",
         "withdrawGoogleWriteConsent"

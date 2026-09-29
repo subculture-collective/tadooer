@@ -62,6 +62,9 @@ credentials through CalDAV, encrypts the password, and displays discovered
 calendar collections with separate Events and Todos capabilities. A server
 administrator may point `BAIKAL_ENDPOINT` at a different CalDAV deployment;
 arbitrary browser-entered connector origins are intentionally unsupported.
+Bundled and existing-instance setup, the **Check connection** permissions
+probe, setup failure codes and `pnpm verify:baikal-setup` are documented in
+[`docs/operations/baikal-setup.md`](docs/operations/baikal-setup.md).
 
 After Baïkal is connected, the owner sees supported non-recurring UTC-timed
 events in the current seven-day window. They can capture, rename, annotate,

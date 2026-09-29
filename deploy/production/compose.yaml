@@ -9,7 +9,9 @@ services:
     ports:
       - "10.0.0.56:18080:8080"
     environment:
-      BAIKAL_ENDPOINT: http://baikal/dav.php/
+      # Default: the existing NUC Baikal on the shared productivity network.
+      # Bundled path (ADR 0039): http://baikal-bundled/dav.php/
+      BAIKAL_ENDPOINT: ${BAIKAL_ENDPOINT:-http://baikal/dav.php/}
       SUITE_CREDENTIAL_KEY_PATH: /data/credential.key
       GOOGLE_OAUTH_CONFIG_PATH: /data/google-oauth.json
       NTFY_PUBLISHER_CONFIG_PATH: /data/ntfy-publisher.json
@@ -22,6 +24,7 @@ services:
       - /tmp:size=16m,mode=1777
     networks:
       productivity: {}
+      tadooer-baikal: {}
       monitoring:
         aliases:
           - tadooer-suite
@@ -32,7 +35,31 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # Opt-in bundled upstream Baikal (ADR 0039). Start with
+  # `--profile bundled-baikal`; the default deployment keeps the existing
+  # NUC Baikal authoritative. Same pinned image and health check as the
+  # qualified development Compose file.
+  baikal-bundled:
+    profiles: ["bundled-baikal"]
+    image: ckulka/baikal:0.10.1-nginx@sha256:434bdd162247cc6aa6f878c9b4dce6216e39e79526b980453b13812d5f8ebf4b
+    restart: unless-stopped
+    ports:
+      # Admin interface on the NUC loopback only; Caddy does not route it.
+      - "127.0.0.1:${TADOOER_BAIKAL_ADMIN_PORT:-18086}:80"
+    volumes:
+      - ${TADOOER_BAIKAL_DATA_ROOT:-/srv/apps/productivity/data/tadooer-baikal}/specific:/var/www/baikal/Specific
+      - ${TADOOER_BAIKAL_DATA_ROOT:-/srv/apps/productivity/data/tadooer-baikal}/config:/var/www/baikal/config
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1/admin/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      tadooer-baikal: {}
+
 networks:
+  tadooer-baikal: {}
   productivity:
     external: true
     name: productivity

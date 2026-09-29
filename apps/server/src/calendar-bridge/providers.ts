@@ -153,9 +153,13 @@ const calDavWrite = (
       return action === "create"
         ? { kind: "retry", reason: "baikal-not-found" }
         : { kind: "gone" };
+    // Credentials and endpoint configuration (#35 adds redirects and
+    // servers without CalDAV): the owner fixes them, then the pass retries.
     case "authentication-required":
     case "authorization-denied":
     case "unsafe-remote-url":
+    case "redirected":
+    case "caldav-unsupported":
       return { kind: "retry", reason: `baikal-${reason}` };
     case "remote-unavailable":
     case "transport-failed":
