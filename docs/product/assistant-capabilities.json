@@ -667,16 +667,17 @@
     },
     {
       "id": "templates-write",
-      "action": "Template authoring, archive, from-task and set creation",
+      "action": "Template authoring, archive, from-task, pool slots and set creation",
       "webApi": [
         "createTemplate",
         "createTemplateFromTask",
         "patchTemplate",
         "archiveTemplate",
+        "createTemplatePoolSlot",
         "createTemplateSet"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": ["templates.mutate", "template_sets.create"],
+      "status": "covered",
       "issue": 57,
       "authority": "Library/source revisions, atomic membership and explicit archive approval.",
       "source": "apps/web/src/api.ts"
@@ -713,17 +714,20 @@
     },
     {
       "id": "pools-write",
-      "action": "Pool authoring, slots, completion history and placeholder creation/suggestion",
+      "action": "Pool authoring, completion history and placeholder creation/suggestion",
       "webApi": [
         "createChoicePool",
         "patchChoicePool",
-        "createTemplatePoolSlot",
         "recordChoicePoolCompletion",
         "createPlanningPlaceholder",
         "suggestPlanningPlaceholder"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": [
+        "pools.mutate",
+        "placeholders.create",
+        "placeholders.suggestion"
+      ],
+      "status": "covered",
       "issue": 57,
       "authority": "History facts and explicit override audit must retain policy semantics and stable replay identities.",
       "source": "apps/web/src/api.ts"

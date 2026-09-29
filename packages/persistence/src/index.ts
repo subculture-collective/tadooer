@@ -4848,6 +4848,29 @@ export class SuiteDatabase {
     };
   }
 
+  /**
+   * ADR 0036: store methods that the assistant confirmation runs inside its
+   * receipt transaction cannot open a second transaction, so they start one
+   * only when none is open and use a savepoint otherwise.
+   */
+  #beginWrite(): { commit(): void; rollback(): void } {
+    if (this.#database.isTransaction) {
+      this.#database.exec("SAVEPOINT nested_write;");
+      return {
+        commit: () => this.#database.exec("RELEASE SAVEPOINT nested_write;"),
+        rollback: () =>
+          this.#database.exec(
+            "ROLLBACK TO SAVEPOINT nested_write; RELEASE SAVEPOINT nested_write;",
+          ),
+      };
+    }
+    this.#database.exec("BEGIN IMMEDIATE;");
+    return {
+      commit: () => this.#database.exec("COMMIT;"),
+      rollback: () => this.#database.exec("ROLLBACK;"),
+    };
+  }
+
   appendSyncChange(
     ownerId: string,
     entityType: string,
@@ -4856,7 +4879,7 @@ export class SuiteDatabase {
     revision: number,
     now: string,
   ): SyncChangeRecord {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       const change = this.#appendSyncChangeInTransaction(
         ownerId,
@@ -4866,10 +4889,10 @@ export class SuiteDatabase {
         revision,
         now,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return change;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -5873,7 +5896,7 @@ export class SuiteDatabase {
       >[];
     },
   ): TaskTemplateRecord {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       if (
         input.suggestedProjectId !== null &&
@@ -5938,13 +5961,13 @@ export class SuiteDatabase {
         input.revision,
         input.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       const created = this.getTaskTemplate(input.ownerId, input.id);
       if (created === undefined)
         throw new Error("Created task template could not be read");
       return created;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -6049,11 +6072,11 @@ export class SuiteDatabase {
     >[];
     readonly now: string;
   }): TaskTemplateRecord | undefined {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       const current = this.getTaskTemplate(input.ownerId, input.id);
       if (current?.revision !== input.expectedRevision) {
-        this.#database.exec("COMMIT;");
+        write.commit();
         return undefined;
       }
       if (
@@ -6064,7 +6087,7 @@ export class SuiteDatabase {
           )
           .get(input.suggestedProjectId, input.ownerId) === undefined
       ) {
-        this.#database.exec("ROLLBACK;");
+        write.rollback();
         return undefined;
       }
       if (
@@ -6077,7 +6100,7 @@ export class SuiteDatabase {
             .get(input.ownerId, ...input.tagIds) as unknown as { count: number }
         ).count !== input.tagIds.length
       ) {
-        this.#database.exec("ROLLBACK;");
+        write.rollback();
         return undefined;
       }
       const revision = current.revision + 1;
@@ -6125,13 +6148,13 @@ export class SuiteDatabase {
         revision,
         input.now,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       const updated = this.getTaskTemplate(input.ownerId, input.id);
       if (updated === undefined)
         throw new Error("Updated task template could not be read");
       return updated;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -6254,7 +6277,7 @@ export class SuiteDatabase {
     record: TemplateSetRecord,
     members: readonly TemplateSetMemberRecord[],
   ): void {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       if (
         members.length === 0 ||
@@ -6299,9 +6322,9 @@ export class SuiteDatabase {
         record.revision,
         record.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -8015,7 +8038,7 @@ export class SuiteDatabase {
     pool: ChoicePoolRecord,
     items: readonly ChoicePoolItemRecord[],
   ): ChoicePoolRecord {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       if (
         items.length < pool.pickCount ||
@@ -8063,10 +8086,10 @@ export class SuiteDatabase {
         pool.revision,
         pool.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return pool;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -8081,14 +8104,14 @@ export class SuiteDatabase {
     readonly items: readonly { readonly id?: string; readonly title: string }[];
     readonly now: string;
   }): ChoicePoolRecord | undefined {
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       const current = this.getChoicePool(input.ownerId, input.id);
       if (
         current?.revision !== input.expectedRevision ||
         input.items.length < input.pickCount
       ) {
-        this.#database.exec("COMMIT;");
+        write.commit();
         return undefined;
       }
       const existing = this.listChoicePoolItems(input.id, true);
@@ -8164,10 +8187,10 @@ export class SuiteDatabase {
         input.expectedRevision + 1,
         input.now,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return this.getChoicePool(input.ownerId, input.id, true);
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }
@@ -8283,7 +8306,7 @@ export class SuiteDatabase {
       this.listChoicePoolItems(record.poolId, false).length < record.pickCount
     )
       return undefined;
-    this.#database.exec("BEGIN IMMEDIATE;");
+    const write = this.#beginWrite();
     try {
       this.#database
         .prepare(
@@ -8310,10 +8333,10 @@ export class SuiteDatabase {
         record.revision,
         record.createdAt,
       );
-      this.#database.exec("COMMIT;");
+      write.commit();
       return record;
     } catch (error) {
-      this.#database.exec("ROLLBACK;");
+      write.rollback();
       throw error;
     }
   }

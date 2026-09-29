@@ -134,6 +134,13 @@ import {
 } from "./automation-recovery.ts";
 import { automationCalendarImportResourceInputSchema } from "@suite/contracts";
 import {
+  confirmAuthoring,
+  isAuthoringCommand,
+  previewAuthoring,
+} from "./automation-authoring.ts";
+import { automationPlaceholderSuggestionInputSchema } from "@suite/contracts";
+import { suggestChoicePool } from "@suite/domain";
+import {
   automationTokenResponse,
   automationScopeFor,
   automationPreviewPath,
@@ -806,6 +813,63 @@ export const handleAutomation: RouteHandler = async (
           .listPlanningPlaceholders(token.ownerId)
           .map(planningPlaceholderResponse),
       };
+    } else if (resource === "placeholders.suggestion") {
+      // ADR 0036: the pool policy evaluated for one placeholder at a time.
+      const input = automationPlaceholderSuggestionInputSchema.safeParse(
+        Object.fromEntries(url.searchParams.entries()),
+      );
+      if (!input.success) {
+        sendError(
+          response,
+          400,
+          "INVALID_PLACEHOLDER_SUGGESTION",
+          "Provide a placeholder ID and an optional ISO logical time",
+        );
+        return true;
+      }
+      const placeholder = database.getPlanningPlaceholder(
+        token.ownerId,
+        input.data.placeholderId,
+      );
+      if (placeholder === undefined) {
+        sendError(
+          response,
+          404,
+          "PLANNING_PLACEHOLDER_NOT_FOUND",
+          "Planning placeholder not found",
+        );
+        return true;
+      }
+      const logicalTime = input.data.at ?? ctx.sessionClock.now().toISOString();
+      const evaluated = choiceSuggestion(
+        database,
+        token.ownerId,
+        placeholder.poolId,
+        logicalTime,
+      );
+      if (evaluated === undefined)
+        throw new Error("Placeholder pool could not be evaluated");
+      const suggestion = suggestChoicePool(
+        {
+          policy: evaluated.pool.policy,
+          pickCount: placeholder.pickCount,
+          cooldownSeconds: evaluated.pool.cooldownSeconds,
+        },
+        evaluated.items.map(({ id, position, archivedAt }) => ({
+          id,
+          position,
+          archived: archivedAt !== null,
+        })),
+        evaluated.history,
+        logicalTime,
+      );
+      body = {
+        pool: choicePoolResponse(evaluated.pool),
+        selectedItemIds: [...suggestion.selectedItemIds],
+        cycle: suggestion.cycle,
+        eligibility: suggestion.eligibility,
+        logicalTime,
+      };
     } else if (resource === "active-session.get") {
       const stored = database.getActiveSession(token.ownerId);
       body = {
@@ -1252,6 +1316,17 @@ export const handleAutomation: RouteHandler = async (
         command,
         boardClock(database, token.ownerId, ctx.sessionClock.now()),
       );
+      if (!planned.ok) {
+        sendError(response, planned.status, planned.code, planned.message);
+        return true;
+      }
+      affected.push(...planned.affected);
+      baseRevisions.push(...planned.baseRevisions);
+      taskSummary = planned.summary;
+    } else if (isAuthoringCommand(command)) {
+      // ADR 0036: freezes the template, set members, pool, items, placeholder,
+      // task, project and tag revisions the authoring change depends on.
+      const planned = previewAuthoring(database, token.ownerId, command);
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -2315,6 +2390,23 @@ export const handleAutomation: RouteHandler = async (
         command,
         boardClock(database, token.ownerId, ctx.sessionClock.now()),
         () => ctx.sessionClock.now().toISOString(),
+      );
+      if (!confirmation.ok) {
+        sendError(
+          response,
+          confirmation.status,
+          "AUTOMATION_PREVIEW_STALE",
+          confirmation.message,
+        );
+        return true;
+      }
+      applyLocalMutation = confirmation.apply;
+    } else if (isAuthoringCommand(command)) {
+      const confirmation = confirmAuthoring(
+        database,
+        token.ownerId,
+        command,
+        () => new Date().toISOString(),
       );
       if (!confirmation.ok) {
         sendError(

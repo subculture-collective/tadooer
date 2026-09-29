@@ -1269,6 +1269,151 @@ export const choicePoolLibraryResponseSchema = z.object({
   placeholders: z.array(planningPlaceholderSchema),
 });
 
+// ADR 0036: assistant authoring of templates, sets, pools and placeholders.
+// Inputs mirror the browser request schemas; the entity ID and expected
+// revision replace the If-Match header.
+const templateSubtaskInputSchema = z
+  .object({ title: z.string().trim().min(1).max(240) })
+  .strict();
+export const automationTemplateMutationInputSchema = z.discriminatedUnion(
+  "action",
+  [
+    z
+      .object({
+        action: z.literal("create"),
+        ...createTaskTemplateRequestSchema.shape,
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal("create_from_task"),
+        taskId: entityIdSchema,
+        expectedTaskRevision: revisionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal("update"),
+        templateId: entityIdSchema,
+        expectedRevision: revisionSchema,
+        title: z.string().trim().min(1).max(240).optional(),
+        notes: z.string().max(20_000).optional(),
+        estimateMinutes: z.number().int().min(1).max(720).nullable().optional(),
+        suggestedProjectId: entityIdSchema.nullable().optional(),
+        tagIds: z
+          .array(entityIdSchema)
+          .max(25)
+          .refine((ids) => new Set(ids).size === ids.length)
+          .optional(),
+        subtasks: z.array(templateSubtaskInputSchema).max(100).optional(),
+      })
+      .strict()
+      .refine(
+        (value) =>
+          Object.keys(value).some(
+            (key) =>
+              !["action", "templateId", "expectedRevision"].includes(key),
+          ),
+        { message: "At least one mutable template field is required" },
+      ),
+    z
+      .object({
+        action: z.literal("archive"),
+        templateId: entityIdSchema,
+        expectedRevision: revisionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal("add_pool_slot"),
+        templateId: entityIdSchema,
+        expectedRevision: revisionSchema,
+        ...createTemplatePoolSlotRequestSchema.shape,
+      })
+      .strict(),
+  ],
+);
+export const automationTemplateSetCreateInputSchema =
+  createTemplateSetRequestSchema;
+const choicePoolCooldownRule = (
+  {
+    policy,
+    cooldownSeconds,
+  }: { policy: string; cooldownSeconds: number | null },
+  context: z.RefinementCtx,
+) => {
+  if (policy === "cooldown" && cooldownSeconds === null)
+    context.addIssue({
+      code: "custom",
+      message: "Cooldown policy requires cooldownSeconds",
+    });
+  if (policy !== "cooldown" && cooldownSeconds !== null)
+    context.addIssue({
+      code: "custom",
+      message: "Only cooldown policy accepts cooldownSeconds",
+    });
+};
+export const automationChoicePoolMutationInputSchema = z.discriminatedUnion(
+  "action",
+  [
+    z
+      .object({
+        action: z.literal("create"),
+        ...createChoicePoolRequestSchema.shape,
+      })
+      .strict()
+      .superRefine(choicePoolCooldownRule),
+    z
+      .object({
+        action: z.literal("update"),
+        poolId: entityIdSchema,
+        expectedRevision: revisionSchema,
+        ...updateChoicePoolRequestSchema.shape,
+      })
+      .strict()
+      .superRefine(choicePoolCooldownRule),
+    z
+      .object({
+        action: z.literal("record_completion"),
+        poolId: entityIdSchema,
+        itemId: entityIdSchema,
+        ...completeChoicePoolItemRequestSchema.shape,
+      })
+      .strict(),
+  ],
+);
+export const automationPlaceholderCreateInputSchema =
+  createPlanningPlaceholderRequestSchema;
+export const automationPlaceholderSuggestionInputSchema = z
+  .object({
+    placeholderId: entityIdSchema,
+    at: z.iso.datetime().optional(),
+  })
+  .strict();
+export const templateMutationResponseSchema = z
+  .object({
+    template: taskTemplateSchema,
+    blueprints: z.array(templateSubtaskBlueprintSchema),
+    poolSlots: z.array(templatePoolSlotSchema),
+  })
+  .strict();
+export const templateSetMutationResponseSchema = z
+  .object({
+    set: templateSetSchema,
+    members: z.array(templateSetMemberSchema),
+  })
+  .strict();
+export const choicePoolMutationResponseSchema = z
+  .object({
+    pool: choicePoolSchema,
+    items: z.array(choicePoolItemSchema),
+    history: z.array(choicePoolHistoryEventSchema),
+  })
+  .strict();
+export const planningPlaceholderMutationResponseSchema = z
+  .object({ placeholder: planningPlaceholderSchema })
+  .strict();
+
 export const clientRegistrationRequestSchema = z
   .object({
     label: z.string().trim().min(1).max(100),
@@ -2197,6 +2342,11 @@ export const automationOperationSchema = z.enum([
   "templates.instantiate",
   "template_sets.instantiate",
   "placeholders.resolve",
+  // ADR 0036: authoring of the reusable work library and choice pools.
+  "templates.mutate",
+  "template_sets.create",
+  "pools.mutate",
+  "placeholders.create",
   "habits.mutate",
 ]);
 
@@ -2588,6 +2738,22 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
       operation: z.literal("placeholders.resolve"),
       input: resolvePlanningPlaceholderPreviewInputSchema,
     }),
+    z.object({
+      operation: z.literal("templates.mutate"),
+      input: automationTemplateMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("template_sets.create"),
+      input: automationTemplateSetCreateInputSchema,
+    }),
+    z.object({
+      operation: z.literal("pools.mutate"),
+      input: automationChoicePoolMutationInputSchema,
+    }),
+    z.object({
+      operation: z.literal("placeholders.create"),
+      input: automationPlaceholderCreateInputSchema,
+    }),
     ...[
       "focus.start",
       "focus.pause",
@@ -2864,6 +3030,26 @@ const automationToolInputSchema = (
       operation: z.literal("placeholders.resolve"),
       input: resolvePlanningPlaceholderPreviewInputSchema,
     });
+  if (operation === "templates.mutate")
+    return z.object({
+      operation: z.literal("templates.mutate"),
+      input: automationTemplateMutationInputSchema,
+    });
+  if (operation === "template_sets.create")
+    return z.object({
+      operation: z.literal("template_sets.create"),
+      input: automationTemplateSetCreateInputSchema,
+    });
+  if (operation === "pools.mutate")
+    return z.object({
+      operation: z.literal("pools.mutate"),
+      input: automationChoicePoolMutationInputSchema,
+    });
+  if (operation === "placeholders.create")
+    return z.object({
+      operation: z.literal("placeholders.create"),
+      input: automationPlaceholderCreateInputSchema,
+    });
   if (operation === "focus.start")
     return z.object({
       operation: z.literal("focus.start"),
@@ -3048,6 +3234,10 @@ export const automationExecutionResultSchema = z.union([
   taskMutationResponseSchema,
   taskBatchMutationResponseSchema,
   templateInstantiationResponseSchema,
+  templateMutationResponseSchema,
+  templateSetMutationResponseSchema,
+  choicePoolMutationResponseSchema,
+  planningPlaceholderMutationResponseSchema,
   planningPlaceholderResolutionResponseSchema,
 ]);
 
@@ -3484,6 +3674,18 @@ export const automationCatalog = [
     inputSchema: z.object({}).strict(),
     outputSchema: automationChoicePoolResourceSchema,
   },
+  {
+    // ADR 0036: pool policy evaluated for one placeholder at a logical time.
+    id: "placeholders.suggestion",
+    kind: "resource",
+    scopes: ["pools:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/placeholder-suggestion",
+    mcpName: "suite.placeholders.suggestion",
+    mcpUri: "suite://v1/placeholder-suggestion",
+    inputSchema: automationPlaceholderSuggestionInputSchema,
+    outputSchema: choicePoolSuggestionResponseSchema,
+  },
   ...automationOperationSchema.options.map((id) => ({
     id,
     kind: "tool" as const,
@@ -3534,7 +3736,8 @@ export const automationCatalog = [
                                     : id.startsWith("templates.") ||
                                         id.startsWith("template_sets.")
                                       ? "templates:write"
-                                      : id === "placeholders.resolve"
+                                      : id.startsWith("placeholders.") ||
+                                          id.startsWith("pools.")
                                         ? "pools:write"
                                         : "focus:write",
     ] as const,
@@ -3701,6 +3904,18 @@ export type ChoicePoolHistoryEvent = z.infer<
   typeof choicePoolHistoryEventSchema
 >;
 export type PlanningPlaceholder = z.infer<typeof planningPlaceholderSchema>;
+export type AutomationTemplateMutationInput = z.infer<
+  typeof automationTemplateMutationInputSchema
+>;
+export type AutomationChoicePoolMutationInput = z.infer<
+  typeof automationChoicePoolMutationInputSchema
+>;
+export type TemplateMutationResponse = z.infer<
+  typeof templateMutationResponseSchema
+>;
+export type ChoicePoolMutationResponse = z.infer<
+  typeof choicePoolMutationResponseSchema
+>;
 export type ChoicePoolSuggestionResponse = z.infer<
   typeof choicePoolSuggestionResponseSchema
 >;

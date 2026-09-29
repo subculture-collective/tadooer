@@ -650,6 +650,99 @@ describe("Suite contracts", () => {
     ).toBe(false);
   });
 
+  it("describes ADR 0036 authoring operations with library scopes and browser-shaped inputs", () => {
+    const byId = new Map(automationCatalog.map((entry) => [entry.id, entry]));
+    expect(byId.get("templates.mutate")?.scopes).toEqual(["templates:write"]);
+    expect(byId.get("template_sets.create")?.scopes).toEqual([
+      "templates:write",
+    ]);
+    expect(byId.get("pools.mutate")?.scopes).toEqual(["pools:write"]);
+    expect(byId.get("placeholders.create")?.scopes).toEqual(["pools:write"]);
+    const suggestion = byId.get("placeholders.suggestion");
+    expect(suggestion?.kind).toBe("resource");
+    expect(suggestion?.scopes).toEqual(["pools:read"]);
+    expect(
+      suggestion !== undefined && "mcpUri" in suggestion
+        ? suggestion.mcpUri
+        : undefined,
+    ).toBe("suite://v1/placeholder-suggestion");
+    const id = "4519c805-e478-486b-a918-616fc6d9ea98";
+    const parse = (operation: string, input: unknown) =>
+      automationPreviewCommandSchema.safeParse({ operation, input }).success;
+    expect(
+      parse("templates.mutate", { action: "create", title: "Weekly review" }),
+    ).toBe(true);
+    expect(
+      parse("templates.mutate", {
+        action: "update",
+        templateId: id,
+        expectedRevision: 1,
+      }),
+    ).toBe(false);
+    expect(
+      parse("templates.mutate", {
+        action: "update",
+        templateId: id,
+        expectedRevision: 1,
+        estimateMinutes: null,
+      }),
+    ).toBe(true);
+    expect(
+      parse("templates.mutate", {
+        action: "create_from_task",
+        taskId: id,
+        expectedTaskRevision: 2,
+      }),
+    ).toBe(true);
+    expect(
+      parse("templates.mutate", {
+        action: "add_pool_slot",
+        templateId: id,
+        expectedRevision: 1,
+        poolId: id,
+        pickCount: 1,
+        position: 0,
+      }),
+    ).toBe(true);
+    expect(
+      parse("template_sets.create", { title: "Morning", templateIds: [id] }),
+    ).toBe(true);
+    expect(
+      parse("pools.mutate", {
+        action: "create",
+        title: "Chores",
+        policy: "cooldown",
+        pickCount: 1,
+        cooldownSeconds: null,
+        items: [{ title: "Dishes" }],
+      }),
+    ).toBe(false);
+    expect(
+      parse("pools.mutate", {
+        action: "update",
+        poolId: id,
+        expectedRevision: 3,
+        title: "Chores",
+        policy: "cycle",
+        pickCount: 1,
+        cooldownSeconds: null,
+        items: [{ id, title: "Dishes" }, { title: "Laundry" }],
+      }),
+    ).toBe(true);
+    expect(
+      parse("pools.mutate", {
+        action: "record_completion",
+        poolId: id,
+        itemId: id,
+        occurredAt: "2026-09-25T10:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(parse("placeholders.create", { taskId: id, poolId: id })).toBe(true);
+    expect(parse("placeholders.create", { taskId: id, pickCount: 1 })).toBe(
+      false,
+    );
+  });
+
   it("keeps one catalog for Suite HTTP and MCP without legacy bridge identifiers", () => {
     const ids = automationCatalog.map((entry) => entry.id);
     const names = automationCatalog.map((entry) => entry.mcpName);
@@ -659,7 +752,7 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(94);
+    expect(automationCatalog).toHaveLength(99);
     expect(ids).toEqual(
       expect.arrayContaining([
         "tasks.update",
@@ -670,6 +763,11 @@ describe("Suite contracts", () => {
         "tasks.set_completed",
         "pools.list",
         "placeholders.resolve",
+        "templates.mutate",
+        "template_sets.create",
+        "pools.mutate",
+        "placeholders.create",
+        "placeholders.suggestion",
         "habits.list",
         "habits.mutate",
         "projects.reorder",
