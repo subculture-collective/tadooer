@@ -2232,6 +2232,18 @@ export const automationTokenScopeSchema = z.enum([
   "publication:write",
 ]);
 
+/**
+ * ADR 0035: the owner chooses at issuance whether a token may apply an
+ * ordinary edit in the preview call (`execute_ordinary`) or must always call
+ * `automation.confirm` (`confirm_all`). Consequential operations always need
+ * the separate confirmation whatever the token policy. Like scopes, the policy
+ * is immutable; changing it is revoke-and-reissue.
+ */
+export const automationTokenConfirmationPolicySchema = z.enum([
+  "confirm_all",
+  "execute_ordinary",
+]);
+
 export const automationTokenSchema = z
   .object({
     id: entityIdSchema,
@@ -2241,6 +2253,7 @@ export const automationTokenSchema = z
       .array(automationTokenScopeSchema)
       .min(1)
       .max(automationTokenScopeSchema.options.length),
+    confirmationPolicy: automationTokenConfirmationPolicySchema,
     createdAt: z.iso.datetime(),
     lastUsedAt: z.iso.datetime().nullable(),
     expiresAt: z.iso.datetime(),
@@ -2258,6 +2271,8 @@ export const createAutomationTokenRequestSchema = z
       .array(automationTokenScopeSchema)
       .min(1)
       .max(automationTokenScopeSchema.options.length),
+    confirmationPolicy:
+      automationTokenConfirmationPolicySchema.default("confirm_all"),
     expiresAt: z.iso.datetime(),
   })
   .strict()
@@ -2779,9 +2794,9 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
   ],
 );
 
-const automationToolInputSchema = (
+const automationToolCommandSchema = (
   operation: z.infer<typeof automationOperationSchema>,
-): z.ZodType => {
+): z.ZodObject => {
   if (operation === "notifications.send_test")
     return z.object({
       operation: z.literal(operation),
@@ -3066,6 +3081,203 @@ const automationToolInputSchema = (
   });
 };
 
+// ADR 0035: the confirmation policy is declared here, per operation, and
+// evaluated against the exact command. Servers, adapters and skills read it;
+// none keeps a second list.
+export const automationConfirmationPolicySchema = z.enum([
+  "ordinary",
+  "consequential",
+]);
+export const automationConsequenceCategorySchema = z.enum([
+  "bulk",
+  "deletion",
+  "destructive_replacement",
+  "takeover",
+  "external_effect",
+  "irreversible",
+]);
+export type AutomationConsequenceCategory = z.infer<
+  typeof automationConsequenceCategorySchema
+>;
+
+export type AutomationOperationConfirmationRule =
+  | { readonly kind: "ordinary" }
+  | {
+      readonly kind: "consequential";
+      readonly category: AutomationConsequenceCategory;
+    }
+  | {
+      readonly kind: "by_action";
+      /** Path of the action discriminator inside the operation input. */
+      readonly path: readonly string[];
+      /** Actions that need explicit approval; every other action is ordinary. */
+      readonly consequential: Readonly<
+        Record<string, AutomationConsequenceCategory>
+      >;
+    };
+export type AutomationConfirmationRule =
+  { readonly kind: "none" } | AutomationOperationConfirmationRule;
+
+/** A preview is the approval artifact; it expires this long after issue. */
+export const automationApprovalExpiryMinutes = 5;
+/** Declared batch bounds for one previewed action. */
+export const automationBatchBounds = {
+  createManyTasks: captureBatchMaxTasks,
+  affectedRecords: 201,
+} as const;
+
+const ordinaryRule = { kind: "ordinary" } as const;
+const consequentialRule = (category: AutomationConsequenceCategory) =>
+  ({ kind: "consequential", category }) as const;
+const byActionRule = (
+  path: readonly string[],
+  consequential: Readonly<Record<string, AutomationConsequenceCategory>>,
+) => ({ kind: "by_action", path, consequential }) as const;
+const deleteAction = { delete: "deletion" } as const;
+
+export const automationConfirmationRules: Readonly<
+  Record<
+    z.infer<typeof automationOperationSchema>,
+    AutomationOperationConfirmationRule
+  >
+> = {
+  "planning.update_preferences": ordinaryRule,
+  "application.update_preferences": ordinaryRule,
+  "notifications.send_test": consequentialRule("external_effect"),
+  "notifications.update_preferences": ordinaryRule,
+  "subtasks.mutate": byActionRule(["command", "action"], deleteAction),
+  "projects.mutate": ordinaryRule,
+  "projects.reorder": ordinaryRule,
+  "projects.set_backlog": ordinaryRule,
+  "tags.mutate": ordinaryRule,
+  "tags.reorder": ordinaryRule,
+  "notes.mutate": byActionRule(["action"], deleteAction),
+  "task_links.mutate": byActionRule(["action"], {
+    remove_attachment: "deletion",
+    remove_issue_link: "deletion",
+  }),
+  "tasks.assign_project": ordinaryRule,
+  "tasks.set_tags": consequentialRule("destructive_replacement"),
+  "tasks.hierarchy": ordinaryRule,
+  "tasks.create": ordinaryRule,
+  "tasks.create_many": consequentialRule("bulk"),
+  "tasks.update": ordinaryRule,
+  "tasks.set_completed": ordinaryRule,
+  "tasks.delete": consequentialRule("deletion"),
+  "tasks.restore": ordinaryRule,
+  "tasks.archive": ordinaryRule,
+  "tasks.unarchive": ordinaryRule,
+  "recurrence.create": ordinaryRule,
+  "recurrence.update": ordinaryRule,
+  "recurrence.set_state": byActionRule(["action"], { end: "irreversible" }),
+  "recurrence.occurrence": byActionRule(["action"], {
+    delete_instance: "deletion",
+  }),
+  "time_entries.mutate": byActionRule(["action"], deleteAction),
+  "counters.mutate": byActionRule(["action"], deleteAction),
+  "counters.record": ordinaryRule,
+  "evaluations.write": ordinaryRule,
+  "day_order.reorder": ordinaryRule,
+  "boards.mutate": byActionRule(["action"], deleteAction),
+  "sections.mutate": byActionRule(["action"], deleteAction),
+  "task_views.set": ordinaryRule,
+  "menu_folders.mutate": byActionRule(["action"], deleteAction),
+  "calendar_subscriptions.refresh": ordinaryRule,
+  "calendar_subscriptions.convert_event": ordinaryRule,
+  "calendar_subscriptions.hide_event": ordinaryRule,
+  "schedule.create_time_block": ordinaryRule,
+  // #58: moving a block is one revision-checked edit, like creating it;
+  // removing it deletes the calendar event.
+  "schedule.move_time_block": ordinaryRule,
+  "schedule.remove_time_block": consequentialRule("deletion"),
+  // #60: an import writes many events; revoking a feed breaks every
+  // subscriber's address and cannot be undone. A resync only reads.
+  "imports.apply": consequentialRule("bulk"),
+  "calendar_feeds.revoke": consequentialRule("irreversible"),
+  "connectors.resync": ordinaryRule,
+  // #57: an update replaces the pool's whole item list, like tasks.set_tags.
+  "templates.mutate": ordinaryRule,
+  "template_sets.create": ordinaryRule,
+  "pools.mutate": byActionRule(["action"], {
+    update: "destructive_replacement",
+  }),
+  "placeholders.create": ordinaryRule,
+  "focus.start": ordinaryRule,
+  "focus.pause": ordinaryRule,
+  "focus.resume": ordinaryRule,
+  "focus.start_break": ordinaryRule,
+  "focus.end_break": ordinaryRule,
+  "focus.complete": ordinaryRule,
+  "focus.takeover": consequentialRule("takeover"),
+  "focus.update_preferences": ordinaryRule,
+  "focus.idle_disposition": ordinaryRule,
+  "templates.instantiate": ordinaryRule,
+  "template_sets.instantiate": consequentialRule("bulk"),
+  "placeholders.resolve": ordinaryRule,
+  "habits.mutate": ordinaryRule,
+};
+
+export const automationCommandClassificationSchema = z
+  .object({
+    policy: automationConfirmationPolicySchema,
+    category: automationConsequenceCategorySchema.nullable(),
+    action: z.string().max(64).nullable(),
+  })
+  .strict();
+export type AutomationCommandClassification = z.infer<
+  typeof automationCommandClassificationSchema
+>;
+
+const actionAt = (input: unknown, path: readonly string[]): string | null => {
+  let current: unknown = input;
+  for (const key of path) {
+    if (typeof current !== "object" || current === null) return null;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" ? current : null;
+};
+
+/** The only classifier: the policy the exact command falls under. */
+export const classifyAutomationCommand = (command: {
+  readonly operation: z.infer<typeof automationOperationSchema>;
+  readonly input: unknown;
+}): AutomationCommandClassification => {
+  const rule = automationConfirmationRules[command.operation];
+  switch (rule.kind) {
+    case "ordinary":
+      return { policy: "ordinary", category: null, action: null };
+    case "consequential":
+      return { policy: "consequential", category: rule.category, action: null };
+    case "by_action": {
+      const action = actionAt(command.input, rule.path);
+      const category = action === null ? undefined : rule.consequential[action];
+      return category === undefined
+        ? { policy: "ordinary", category: null, action }
+        : { policy: "consequential", category, action };
+    }
+  }
+};
+
+/**
+ * ADR 0035: a preview request may ask the server to apply an ordinary command
+ * in the same call. It is honoured only when the command classifies as
+ * ordinary and the token policy is `execute_ordinary`; otherwise the server
+ * answers AUTOMATION_CONFIRMATION_REQUIRED and the preview stays confirmable.
+ */
+export const automationPreviewExecuteSchema = z
+  .object({ idempotencyKey: idempotencyKeySchema })
+  .strict();
+
+const automationToolInputSchema = (
+  operation: z.infer<typeof automationOperationSchema>,
+): z.ZodType => {
+  const command = automationToolCommandSchema(operation);
+  // A consequential tool rejects `execute` outright instead of stripping it.
+  return automationConfirmationRules[operation].kind === "consequential"
+    ? command.strict()
+    : command.extend({ execute: automationPreviewExecuteSchema.optional() });
+};
+
 export const automationAffectedEntitySchema = z
   .object({
     entityKind: z.enum([
@@ -3151,21 +3363,32 @@ export const automationBaseRevisionSchema = z.union([
     .strict(),
 ]);
 
+/** ADR 0035: what the preview needs before it may be applied. */
+export const automationPreviewConfirmationSchema = z
+  .object({
+    policy: automationConfirmationPolicySchema,
+    category: automationConsequenceCategorySchema.nullable(),
+    tokenPolicy: automationTokenConfirmationPolicySchema,
+  })
+  .strict();
+
 export const automationPreviewSchema = z
   .object({
     id: entityIdSchema,
     operation: automationOperationSchema,
     inputHash: z.string().regex(/^[a-f0-9]{64}$/),
     summary: z.string().trim().min(1).max(1_000),
-    affected: z.array(automationAffectedEntitySchema).max(201),
-    baseRevisions: z.array(automationBaseRevisionSchema).max(201),
+    affected: z
+      .array(automationAffectedEntitySchema)
+      .max(automationBatchBounds.affectedRecords),
+    baseRevisions: z
+      .array(automationBaseRevisionSchema)
+      .max(automationBatchBounds.affectedRecords),
     expiresAt: z.iso.datetime(),
-    requiresConfirmation: z.literal(true),
+    confirmation: automationPreviewConfirmationSchema,
+    // False only when the same request already applied the command.
+    requiresConfirmation: z.boolean(),
   })
-  .strict();
-
-export const automationPreviewResponseSchema = z
-  .object({ preview: automationPreviewSchema })
   .strict();
 
 export const automationConfirmRequestSchema = z
@@ -3250,6 +3473,14 @@ export const automationConfirmationResponseSchema = z
   })
   .strict();
 
+export const automationPreviewResponseSchema = z
+  .object({
+    preview: automationPreviewSchema,
+    // Present only when an ordinary command was applied in the preview call.
+    executed: automationConfirmationResponseSchema.optional(),
+  })
+  .strict();
+
 export const automationTaskResourceSchema = z
   .object({ tasks: z.array(taskSchema) })
   .strict();
@@ -3275,6 +3506,8 @@ export interface AutomationCatalogEntry {
   readonly kind: "resource" | "tool";
   readonly scopes: readonly z.infer<typeof automationTokenScopeSchema>[];
   readonly confirmationRequired: boolean;
+  /** ADR 0035: the declared confirmation rule; `none` for reads and confirm. */
+  readonly confirmation: AutomationConfirmationRule;
   readonly apiPath: string;
   readonly mcpName: string;
   readonly mcpUri?: string;
@@ -3292,6 +3525,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["schedule:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/day-plan",
     mcpName: "suite.planning.day_plan",
     mcpUri: "suite://v1/day-plan",
@@ -3303,6 +3537,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["schedule:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/planning-preferences",
     mcpName: "suite.planning.preferences",
     mcpUri: "suite://v1/planning-preferences",
@@ -3314,6 +3549,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["application:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/application-preferences",
     mcpName: "suite.application.preferences",
     mcpUri: "suite://v1/application-preferences",
@@ -3325,6 +3561,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["notifications:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/notification-preferences",
     mcpName: "suite.notifications.preferences",
     mcpUri: "suite://v1/notification-preferences",
@@ -3336,6 +3573,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["notifications:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/notification-delivery",
     mcpName: "suite.notifications.delivery",
     mcpUri: "suite://v1/notification-delivery",
@@ -3347,6 +3585,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["notifications:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/notification-status",
     mcpName: "suite.notifications.status",
     mcpUri: "suite://v1/notification-status",
@@ -3359,6 +3598,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/subtasks",
     mcpName: "suite.subtasks.list",
     mcpUri: "suite://v1/subtasks",
@@ -3371,6 +3611,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["habits:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/habits",
     mcpName: "suite.habits.list",
     mcpUri: "suite://v1/habits",
@@ -3382,6 +3623,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/tasks",
     mcpName: "suite.tasks.list",
     mcpUri: "suite://v1/tasks",
@@ -3393,6 +3635,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/tasks/deleted",
     mcpName: "suite.tasks.deleted",
     mcpUri: "suite://v1/tasks/deleted",
@@ -3404,6 +3647,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/tasks/history",
     mcpName: "suite.tasks.history",
     mcpUri: "suite://v1/tasks/history{?query,cursor,limit}",
@@ -3415,6 +3659,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/recurrence",
     mcpName: "suite.recurrence.list",
     mcpUri: "suite://v1/recurrence",
@@ -3426,6 +3671,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/time-report",
     mcpName: "suite.time.report",
     mcpUri: "suite://v1/time-report{?from,to}",
@@ -3437,6 +3683,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["metrics:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/counters",
     mcpName: "suite.counters.history",
     mcpUri: "suite://v1/counters{?from,to}",
@@ -3448,6 +3695,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["metrics:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/evaluations",
     mcpName: "suite.evaluations.list",
     mcpUri: "suite://v1/evaluations{?from,to}",
@@ -3459,6 +3707,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/day-order",
     mcpName: "suite.day_order.get",
     mcpUri: "suite://v1/day-order{?date}",
@@ -3470,6 +3719,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/boards",
     mcpName: "suite.boards.list",
     mcpUri: "suite://v1/boards{?boardId}",
@@ -3481,6 +3731,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/sections",
     mcpName: "suite.sections.list",
     mcpUri: "suite://v1/sections{?contextKind,contextId}",
@@ -3492,6 +3743,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/task-views",
     mcpName: "suite.task_views.list",
     mcpUri: "suite://v1/task-views",
@@ -3503,6 +3755,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tasks:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/menu-folders",
     mcpName: "suite.menu_folders.list",
     mcpUri: "suite://v1/menu-folders",
@@ -3514,6 +3767,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["focus:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/focus-preferences",
     mcpName: "suite.focus.preferences",
     mcpUri: "suite://v1/focus-preferences",
@@ -3525,6 +3779,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["schedule:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/calendar-subscriptions",
     mcpName: "suite.calendar_subscriptions.list",
     mcpUri: "suite://v1/calendar-subscriptions{?from,to}",
@@ -3536,6 +3791,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["connectors:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/connectors",
     mcpName: "suite.connectors.status",
     mcpUri: "suite://v1/connectors",
@@ -3547,6 +3803,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["imports:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/imports",
     mcpName: "suite.imports.list",
     mcpUri: "suite://v1/imports{?jobId}",
@@ -3558,6 +3815,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["publication:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/calendar-feeds",
     mcpName: "suite.calendar_feeds.list",
     mcpUri: "suite://v1/calendar-feeds",
@@ -3569,6 +3827,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["schedule:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/schedule",
     mcpName: "suite.schedule.get",
     mcpUri: "suite://v1/schedule{?from,to}",
@@ -3580,6 +3839,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["projects:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/projects",
     mcpName: "suite.projects.list",
     mcpUri: "suite://v1/projects",
@@ -3591,6 +3851,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["tags:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/tags",
     mcpName: "suite.tags.list",
     mcpUri: "suite://v1/tags",
@@ -3602,6 +3863,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["notes:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/notes",
     mcpName: "suite.notes.list",
     mcpUri: "suite://v1/notes",
@@ -3613,6 +3875,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["task_links:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/task-links",
     mcpName: "suite.task_links.get",
     mcpUri: "suite://v1/task-links{?taskId}",
@@ -3624,6 +3887,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["plugin_data:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/plugin-data",
     mcpName: "suite.plugin_data.list",
     mcpUri: "suite://v1/plugin-data",
@@ -3635,6 +3899,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["focus:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/active-session",
     mcpName: "suite.active_session.get",
     mcpUri: "suite://v1/active-session",
@@ -3646,6 +3911,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["templates:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/templates",
     mcpName: "suite.templates.list",
     mcpUri: "suite://v1/templates",
@@ -3657,6 +3923,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["templates:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/template-sets",
     mcpName: "suite.template_sets.list",
     mcpUri: "suite://v1/template-sets",
@@ -3668,6 +3935,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["pools:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/pools",
     mcpName: "suite.pools.list",
     mcpUri: "suite://v1/pools",
@@ -3680,6 +3948,7 @@ export const automationCatalog = [
     kind: "resource",
     scopes: ["pools:read"],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/resources/placeholder-suggestion",
     mcpName: "suite.placeholders.suggestion",
     mcpUri: "suite://v1/placeholder-suggestion",
@@ -3742,6 +4011,7 @@ export const automationCatalog = [
                                         : "focus:write",
     ] as const,
     confirmationRequired: true,
+    confirmation: automationConfirmationRules[id],
     apiPath: "/api/automation/v1/previews",
     mcpName: `suite.${id}`,
     inputSchema: automationToolInputSchema(id),
@@ -3771,6 +4041,7 @@ export const automationCatalog = [
       "connectors:recover",
     ],
     confirmationRequired: false,
+    confirmation: { kind: "none" },
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",
     mcpName: "suite.confirm",
     inputSchema: automationConfirmToolInputSchema,
@@ -3958,12 +4229,19 @@ export type SyncDiagnosticManifest = z.infer<
 >;
 export type AutomationTokenScope = z.infer<typeof automationTokenScopeSchema>;
 export type AutomationToken = z.infer<typeof automationTokenSchema>;
+export type AutomationTokenConfirmationPolicy = z.infer<
+  typeof automationTokenConfirmationPolicySchema
+>;
+export type AutomationPreviewExecute = z.infer<
+  typeof automationPreviewExecuteSchema
+>;
 export type CreateAutomationTokenRequest = z.infer<
   typeof createAutomationTokenRequestSchema
 >;
 export type CreateAutomationTokenResponse = z.infer<
   typeof createAutomationTokenResponseSchema
 >;
+export type AutomationOperation = z.infer<typeof automationOperationSchema>;
 export type AutomationPreviewCommand = z.infer<
   typeof automationPreviewCommandSchema
 >;

@@ -350,7 +350,7 @@ describe("focus preferences persistence (ADR 0029)", () => {
           kind: "test",
           state: "pending",
         });
-        expect(db.state().appliedMigrationCount).toBe(37);
+        expect(db.state().appliedMigrationCount).toBe(38);
         expect(
           db.focus.queueReminder("owner", "focus_tracking_reminder", now, now),
         ).toBe(true);

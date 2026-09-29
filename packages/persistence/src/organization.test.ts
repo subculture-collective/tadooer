@@ -165,6 +165,7 @@ it("nests lifecycle and task assignments in the confirmation transaction and rol
       ownerId: owner.id,
       label: "Test",
       secretHash: "hash",
+      confirmationPolicy: "confirm_all",
       scopes: [],
       createdAt: now,
       lastUsedAt: null,

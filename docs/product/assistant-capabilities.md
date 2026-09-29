@@ -14,11 +14,34 @@ resolves the scope of the stored operation rather than requiring every advertise
 write scope. Browser identity, provider secret entry, OAuth consent and issuance
 of broader assistant authority remain owner-interactive boundaries.
 
-All current mutation tools use preview/confirmation. A server confirmation call
-is not necessarily a second user prompt: #33 will qualify ordinary explicitly
-requested edits versus explicit bulk/deletion approval. Existing scope, revision,
-staleness and durable replay checks must remain. Skills do not replace these
-application controls. No full-capability claim is made while gaps remain.
+All mutation tools produce a preview. Which previews also need the user's
+explicit approval is declared per operation in the catalog (`confirmation`,
+ADR 0035) and evaluated by `classifyAutomationCommand`:
+
+- ordinary: revision-bound edits of one identified record, single creations,
+  reversible archive/restore, complete-set reorders, preference updates and
+  focus commands on the caller's own session. An explicit request authorizes
+  them; a client confirms without a second prompt. A token issued with
+  `confirmationPolicy: execute_ordinary` may pass `execute.idempotencyKey` in
+  the preview call and the server applies the command through the same
+  confirmation path; the default `confirm_all` refuses that with
+  `AUTOMATION_CONFIRMATION_REQUIRED` and leaves the preview confirmable.
+- consequential: `tasks.delete` and `schedule.remove_time_block` (deletion),
+  `tasks.create_many`, `template_sets.instantiate` and `imports.apply` (bulk),
+  `tasks.set_tags` and the `update` action of `pools.mutate` (destructive
+  replacement: both replace a whole set), `focus.takeover` (takeover),
+  `notifications.send_test` (external effect), `calendar_feeds.revoke`
+  (irreversible), and the `delete`, `delete_instance`, `remove_attachment`,
+  `remove_issue_link` actions of mixed tools plus ending a recurring series
+  (irreversible). These always need the separate `automation.confirm` call
+  after the user approves the concrete preview; `execute` is refused whatever
+  the token policy, with no effect.
+
+Bounds: `tasks.create_many` accepts at most 100 tasks, a preview lists at most
+201 affected records, and a preview expires 5 minutes after issue. Scope,
+revision, staleness, idempotency replay and conflict checks are unchanged in
+both paths. Skills do not replace these application controls. No
+full-capability claim is made while gaps remain.
 
 ## Current capability inventory
 

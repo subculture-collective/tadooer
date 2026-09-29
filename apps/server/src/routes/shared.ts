@@ -21,7 +21,10 @@ import type {
   TemplateInstantiationResponse,
   ActiveSession as ContractActiveSession,
 } from "@suite/contracts";
-import { automationCatalog } from "@suite/contracts";
+import {
+  automationCatalog,
+  automationTokenConfirmationPolicySchema,
+} from "@suite/contracts";
 import type {
   SuiteDatabase,
   TaskRecord,
@@ -79,11 +82,15 @@ export const automationTokenResponse = (token: {
   readonly lastUsedAt: string | null;
   readonly expiresAt: string | null;
   readonly revokedAt: string | null;
+  readonly confirmationPolicy: string;
 }) => ({
   id: token.id,
   ownerId: token.ownerId,
   label: token.label,
   scopes: token.scopes,
+  confirmationPolicy: automationTokenConfirmationPolicySchema.parse(
+    token.confirmationPolicy,
+  ),
   createdAt: token.createdAt,
   lastUsedAt: token.lastUsedAt,
   expiresAt: token.expiresAt ?? token.createdAt,
