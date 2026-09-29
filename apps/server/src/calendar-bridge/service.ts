@@ -3,17 +3,22 @@ import type {
   CalendarBridgeDirectionName,
   CalendarBridgeInitialSync,
   CalendarBridgeMappingCreateResult,
+  CalendarBridgeMappingRecord,
   SuiteDatabase,
 } from "@suite/persistence";
 import type { BaikalConnectorService } from "../connector.ts";
 import type { GoogleConnectorService } from "../google-connector.ts";
 import { runBridgeOnce, type BridgeRunResult } from "./engine.ts";
+import type { BridgeLeaseManager } from "./leases.ts";
 import { createCalDavBridgeSide, createGoogleBridgeSide } from "./providers.ts";
 
 export type CalendarBridgeRunOutcome =
   | BridgeRunResult
   | { readonly kind: "not-found" }
-  /** Another pass for this mapping is running in this process. */
+  /**
+   * Another pass for this mapping is running in this process, or another
+   * process holds its lease (ADR 0043).
+   */
   | { readonly kind: "busy" }
   | {
       readonly kind: "blocked";
@@ -38,6 +43,8 @@ export class CalendarBridgeService {
     private readonly database: SuiteDatabase,
     private readonly baikal: BaikalConnectorService,
     private readonly google: GoogleConnectorService,
+    /** ADR 0043: excludes passes of the same mapping across processes. */
+    private readonly leases?: BridgeLeaseManager,
   ) {}
 
   createMapping(
@@ -79,6 +86,30 @@ export class CalendarBridgeService {
     const mapping = store.getMapping(ownerId, mappingId);
     if (mapping === undefined) return { kind: "not-found" };
     if (!mapping.enabled) return { kind: "disabled" };
+    if (this.#running.has(mapping.id)) return { kind: "busy" };
+    if (this.leases === undefined) return this.#pass(ownerId, mapping, now);
+    const leased = await this.leases.withLease(
+      `bridge:${mapping.id}`,
+      now,
+      () => {
+        // Re-read under the lease: another process may have advanced the cursor.
+        const current = store.getMapping(ownerId, mappingId);
+        if (current === undefined)
+          return Promise.resolve({ kind: "not-found" } as const);
+        if (!current.enabled)
+          return Promise.resolve({ kind: "disabled" } as const);
+        return this.#pass(ownerId, current, now);
+      },
+    );
+    return leased.acquired ? leased.value : { kind: "busy" };
+  }
+
+  async #pass(
+    ownerId: string,
+    mapping: CalendarBridgeMappingRecord,
+    now: Date,
+  ): Promise<CalendarBridgeRunOutcome> {
+    const store = this.database.calendarBridge;
     if (this.#running.has(mapping.id)) return { kind: "busy" };
     this.#running.add(mapping.id);
     const iso = now.toISOString();
