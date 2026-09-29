@@ -20,6 +20,17 @@ import {
   type AddressLookup,
 } from "./calendar-subscriptions.ts";
 import { CalendarBridgeService } from "./calendar-bridge/service.ts";
+import { BridgeLeaseManager } from "./calendar-bridge/leases.ts";
+import { ProviderThrottle } from "./calendar-bridge/throttle.ts";
+import {
+  systemSchedulerClock,
+  type SchedulerClock,
+} from "./calendar-bridge/scheduler-clock.ts";
+import {
+  CalendarBridgeWorker,
+  classifyBridgeReason,
+  type ProjectionSyncOutcome,
+} from "./calendar-bridge/worker.ts";
 import { loadNtfyPublisherConfig, NtfyPublisher } from "./notifications.ts";
 import type { RouteContext } from "./routes/shared.ts";
 import { handleHealth } from "./routes/health.ts";
@@ -62,6 +73,8 @@ import { handleStatic } from "./routes/static.ts";
 export interface RunningSuiteServer {
   readonly baseUrl: string;
   runNotifications(): Promise<void>;
+  /** ADR 0043 worker; undefined when the configuration has none. */
+  readonly calendarBridgeWorker: CalendarBridgeWorker | undefined;
   close(): Promise<void>;
 }
 
@@ -75,6 +88,14 @@ export interface SuiteServerOptions {
   readonly notificationFetch?: typeof fetch;
   readonly notificationIntervalMs?: number;
   readonly disableNotificationTimer?: boolean;
+  /** ADR 0043: worker, lease and throttle time source; tests use a manual clock. */
+  readonly schedulerClock?: SchedulerClock;
+  /** Deterministic jitter for tests. */
+  readonly schedulerRandom?: () => number;
+  /** Leaves the worker constructed but without its periodic timer. */
+  readonly disableCalendarBridgeTimer?: boolean;
+  /** Lease holder identity; defaults to a random ID per process start. */
+  readonly leaseHolder?: string;
 }
 
 export const startSuiteServer = async (
@@ -84,6 +105,9 @@ export const startSuiteServer = async (
   const database = SuiteDatabase.open(config.databasePath);
   const auth = new AuthService(database);
   const sessionClock = options.sessionClock ?? { now: () => new Date() };
+  const schedulerClock = options.schedulerClock ?? systemSchedulerClock;
+  // ADR 0043: every Google request (routes and worker) feeds one cooldown.
+  const googleThrottle = new ProviderThrottle(schedulerClock);
   const connector = new BaikalConnectorService(
     database,
     new URL(config.baikalEndpoint),
@@ -94,7 +118,7 @@ export const startSuiteServer = async (
     database,
     config.credentialKeyPath,
     config.googleOAuthConfigPath,
-    options.googleFetch,
+    googleThrottle.wrap(options.googleFetch ?? fetch),
   );
   const calendarSubscriptions = new CalendarSubscriptionService(
     database,
@@ -108,8 +132,69 @@ export const startSuiteServer = async (
         : { lookup: options.subscriptionLookup }),
     },
   );
-  // ADR 0041: no timer here; #46 schedules passes through runOnce.
-  const calendarBridge = new CalendarBridgeService(database, connector, google);
+  // ADR 0043: the lease excludes passes of one mapping across processes, for
+  // both the worker and the owner's manual run route.
+  const bridgeLeases = new BridgeLeaseManager(database.calendarBridgeWorker, {
+    clock: schedulerClock,
+    ...(options.leaseHolder === undefined
+      ? {}
+      : { holder: options.leaseHolder }),
+  });
+  const calendarBridge = new CalendarBridgeService(
+    database,
+    connector,
+    google,
+    bridgeLeases,
+  );
+  const runProjection = async (
+    ownerId: string,
+    now: Date,
+  ): Promise<ProjectionSyncOutcome> => {
+    let status: Awaited<ReturnType<typeof google.synchronize>>["status"];
+    try {
+      ({ status } = await google.synchronize(ownerId, now));
+    } catch {
+      return {
+        kind: "failed",
+        failureClass: "provider-offline",
+        errorCode: "google-transport",
+      };
+    }
+    if (!status.configured || status.state === "disconnected")
+      return {
+        kind: "failed",
+        failureClass: "grant-expired",
+        errorCode: "google-not-connected",
+      };
+    if (status.state === "reconnect_required")
+      return {
+        kind: "failed",
+        failureClass: "grant-expired",
+        errorCode: "google-reconnect-required",
+      };
+    if (status.state === "stale")
+      return {
+        kind: "failed",
+        failureClass: classifyBridgeReason("google-stale"),
+        errorCode: "google-stale",
+      };
+    return { kind: "ok" };
+  };
+  const calendarBridgeWorker =
+    config.calendarBridgeWorker === undefined
+      ? undefined
+      : new CalendarBridgeWorker(config.calendarBridgeWorker, {
+          store: database.calendarBridgeWorker,
+          leases: bridgeLeases,
+          clock: schedulerClock,
+          runBridge: (ownerId, mappingId, now) =>
+            calendarBridge.runOnce(ownerId, mappingId, now),
+          runProjection,
+          throttle: googleThrottle,
+          ...(options.schedulerRandom === undefined
+            ? {}
+            : { random: options.schedulerRandom }),
+        });
   const requestCounts = new Map<number, number>();
   const notificationConfig = loadNtfyPublisherConfig(
     config.ntfyPublisherConfigPath,
@@ -333,6 +418,8 @@ export const startSuiteServer = async (
     google,
     calendarSubscriptions,
     calendarBridge,
+    calendarBridgeWorker,
+    googleThrottle,
     ntfy: notificationPublisher,
     sessionClock,
     requestCounts,
@@ -480,12 +567,17 @@ export const startSuiteServer = async (
       : address.address;
 
   if (!options.disableNotificationTimer) void triggerNotifications();
+  if (!options.disableCalendarBridgeTimer) calendarBridgeWorker?.start();
 
   return {
     baseUrl: `http://${host}:${String(address.port)}`,
     runNotifications: triggerNotifications,
+    calendarBridgeWorker,
     close: async () => {
       if (notificationTimer !== undefined) clearInterval(notificationTimer);
+      // Let in-flight passes finish or reach a checkpoint before the
+      // database closes (ADR 0043).
+      await calendarBridgeWorker?.stop();
       await new Promise<void>((resolveClose, reject) => {
         server.close((error) => {
           if (error === undefined) resolveClose();

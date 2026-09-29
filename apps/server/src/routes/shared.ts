@@ -51,6 +51,8 @@ import type { BaikalConnectorService, ConnectorFailure } from "../connector.ts";
 import type { GoogleConnectorService } from "../google-connector.ts";
 import type { CalendarSubscriptionService } from "../calendar-subscriptions.ts";
 import type { CalendarBridgeService } from "../calendar-bridge/service.ts";
+import type { CalendarBridgeWorker } from "../calendar-bridge/worker.ts";
+import type { ProviderThrottle } from "../calendar-bridge/throttle.ts";
 import type { NtfyPublisher } from "../notifications.ts";
 import { mimeTypes, securityHeaders } from "../http-utils.ts";
 
@@ -71,6 +73,10 @@ export interface RouteContext {
   readonly calendarSubscriptions: CalendarSubscriptionService;
   /** Google-Baikal bridge (ADR 0041); passes run only when called. */
   readonly calendarBridge: CalendarBridgeService;
+  /** ADR 0043 background worker; undefined when not configured. */
+  readonly calendarBridgeWorker?: CalendarBridgeWorker | undefined;
+  /** ADR 0043 Google cooldown shared by routes and the worker. */
+  readonly googleThrottle?: ProviderThrottle;
   readonly ntfy: NtfyPublisher | undefined;
   readonly sessionClock: SessionClock;
   readonly requestCounts: Map<number, number>;

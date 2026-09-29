@@ -142,6 +142,11 @@ export const readinessResponseSchema = z.object({
   checks: z.object({
     database: z.enum(["ok", "error"]),
     migrations: z.enum(["current", "pending", "error"]),
+    /**
+     * ADR 0043 background calendar bridge. Informational: it never changes
+     * `status`, so a provider outage does not fail readiness.
+     */
+    calendarBridge: z.enum(["disabled", "idle", "ok", "degraded"]).optional(),
   }),
   instanceId: z.uuid().nullable(),
   migrationCount: z.number().int().nonnegative(),
