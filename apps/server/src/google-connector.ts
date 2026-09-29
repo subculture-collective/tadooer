@@ -14,6 +14,7 @@ import {
   randomUUID,
 } from "node:crypto";
 import {
+  googleBridgeScope,
   buildGoogleAuthorizationUrl,
   evaluateGoogleWriteCapability,
   exchangeGoogleCode,
@@ -360,6 +361,68 @@ export class GoogleConnectorService {
     } catch {
       return undefined;
     }
+  }
+
+  /** True when the stored grant includes event write access (#36). */
+  /**
+   * The bridge writes Google only with the owner's recorded write consent
+   * (ADR 0040) and a grant that still carries the write scope (ADR 0041).
+   */
+  hasBridgeConsent(ownerId: string): boolean {
+    const connector = this.database.getGoogleConnector(ownerId);
+    return (
+      connector !== undefined &&
+      connector.state !== "reconnect_required" &&
+      connector.writeConsentAt !== null &&
+      connector.grantedScopes.includes(googleBridgeScope) &&
+      hasGoogleWriteScope(connector.grantedScopes)
+    );
+  }
+
+  /**
+   * A short-lived access token for one bridge pass (ADR 0041). The token is
+   * held in memory only; an invalid grant marks the connector for reconnect.
+   */
+  async bridgeAccess(
+    ownerId: string,
+    now = new Date(),
+  ): Promise<
+    | {
+        readonly ok: true;
+        readonly accessToken: string;
+        readonly fetch: typeof fetch;
+      }
+    | {
+        readonly ok: false;
+        readonly reason:
+          | "not-connected"
+          | "consent-required"
+          | "reconnect-required"
+          | "unavailable";
+      }
+  > {
+    const config = readConfiguration(this.configPath);
+    const refreshToken = this.#refreshToken(ownerId);
+    if (config === undefined || refreshToken === undefined)
+      return { ok: false, reason: "not-connected" };
+    if (!this.hasBridgeConsent(ownerId))
+      return { ok: false, reason: "consent-required" };
+    const grant = await refreshGoogleAccess(
+      config,
+      refreshToken,
+      this.fetcher,
+    ).catch(() => undefined);
+    if (grant === "invalid_grant") {
+      this.database.markGoogleConnectorState(
+        ownerId,
+        "reconnect_required",
+        now.toISOString(),
+      );
+      return { ok: false, reason: "reconnect-required" };
+    }
+    return grant === undefined
+      ? { ok: false, reason: "unavailable" }
+      : { ok: true, accessToken: grant.accessToken, fetch: this.fetcher };
   }
 
   async synchronize(

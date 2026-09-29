@@ -171,6 +171,31 @@ export {
   type CalendarSubscriptionUrlCipher,
   type CalendarSubscriptionWriteResult,
 } from "./calendar-subscription-store.ts";
+import {
+  SqliteCalendarBridgeStore,
+  calendarBridgeMigration,
+} from "./calendar-bridge-store.ts";
+export {
+  SqliteCalendarBridgeStore,
+  type CalendarBridgeConflictRecord,
+  type CalendarBridgeConflictResolveResult,
+  type CalendarBridgeConflictSide,
+  type CalendarBridgeDirectionName,
+  type CalendarBridgeInitialSync,
+  type CalendarBridgeLinkRecord,
+  type CalendarBridgeLinkStatus,
+  type CalendarBridgeMappingCreateResult,
+  type CalendarBridgeMappingRecord,
+  type CalendarBridgeMappingRemoveResult,
+  type CalendarBridgeMappingUpdateResult,
+  type CalendarBridgeNewLink,
+  type CalendarBridgeOperationInput,
+  type CalendarBridgeOperationRecord,
+  type CalendarBridgeOperationState,
+  type CalendarBridgeReceipt,
+  type CalendarBridgeSideName,
+  type CalendarBridgeSideState,
+} from "./calendar-bridge-store.ts";
 import { SqliteDayOrderStore, dayOrderMigration } from "./day-order-store.ts";
 import {
   SqliteBoardStore,
@@ -1685,6 +1710,8 @@ const migrations: readonly Migration[] = [
     `,
   },
   googleWriteConsentMigration,
+  // ADR 0041: Google-Baikal bridge mappings, links, outbox and conflicts.
+  calendarBridgeMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -1716,11 +1743,14 @@ export class SuiteDatabase {
   readonly calendarSubscriptions: SqliteCalendarSubscriptionStore;
   /** ADR 0034: owner data export and restore. */
   readonly dataExport: SqliteDataExportStore;
+  /** ADR 0041: Google-Baikal bridge state; provider I/O is in the server. */
+  readonly calendarBridge: SqliteCalendarBridgeStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.dataExport = new SqliteDataExportStore(database);
     this.calendarSubscriptions = new SqliteCalendarSubscriptionStore(database);
+    this.calendarBridge = new SqliteCalendarBridgeStore(database);
     this.counters = new SqliteCounterStore(database);
     this.boards = new SqliteBoardStore(database, {
       setTags: (ownerId, taskId, tagIds, revision, now) =>
