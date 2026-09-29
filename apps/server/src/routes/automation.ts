@@ -1727,7 +1727,12 @@ export const handleAutomation: RouteHandler = async (
         });
     } else if (isTimeBlockCommand(command)) {
       // ADR 0037: freezes the task revision; the block follows it.
-      const planned = previewTimeBlock(database, token.ownerId, command);
+      const planned = previewTimeBlock(
+        database,
+        token.ownerId,
+        command,
+        ctx.google,
+      );
       if (!planned.ok) {
         sendError(response, planned.status, planned.code, planned.message);
         return true;
@@ -2927,6 +2932,7 @@ export const handleAutomation: RouteHandler = async (
               internalKey,
               command,
               taskRevision,
+              ctx.google,
             );
       if (!outcome.ok) {
         // Provider failures leave the preview open for another attempt and

@@ -238,7 +238,9 @@ describe("assistant import, publication and connector recovery", () => {
             .calendars[0]?.id ?? "";
         const authorization = googleAuthorizationResponseSchema.parse(
           await (
-            await owner("/api/connectors/google/authorize", "POST")
+            await owner("/api/connectors/google/authorize", "POST", {
+              access: "read",
+            })
           ).json(),
         );
         const state =

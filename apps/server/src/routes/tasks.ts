@@ -23,7 +23,7 @@ import {
   sendConditionalTask,
 } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
-import { taskResponse } from "./shared.ts";
+import { googleCalendarWriteRefusal, taskResponse } from "./shared.ts";
 import { planningPatch, planningPatchProblem } from "../task-planning.ts";
 
 export const handleTasks: RouteHandler = async (
@@ -443,6 +443,20 @@ export const handleTasks: RouteHandler = async (
       );
       if (calendar?.supportsEvents !== true) {
         sendError(response, 404, "CALENDAR_NOT_FOUND", "Calendar not found");
+        return true;
+      }
+      const googleRefusal = googleCalendarWriteRefusal(
+        ctx.google,
+        session.owner.id,
+        calendar,
+      );
+      if (googleRefusal !== undefined) {
+        sendError(
+          response,
+          googleRefusal.status,
+          googleRefusal.code,
+          googleRefusal.message,
+        );
         return true;
       }
       const uid = existingBlock?.eventUid ?? `${randomUUID()}@suite.local`;

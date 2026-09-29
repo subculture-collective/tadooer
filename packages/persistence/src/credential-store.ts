@@ -1,10 +1,34 @@
 import type { DatabaseSync } from "node:sqlite";
 import type {
   BaikalConnectorRecord,
+  GoogleCalendarCapabilityRecord,
   GoogleCalendarSyncRecord,
   GoogleConnectorRecord,
 } from "./index.js";
 import type { CredentialStore } from "./stores.js";
+
+/**
+ * ADR 0040: explicit Google write consent. The OAuth state remembers which
+ * access the owner asked for, the connector records consent bound to the grant
+ * that carried it, and each discovered calendar keeps its last observed role.
+ */
+export const googleWriteConsentMigration = {
+  id: "0044_google_write_consent",
+  sql: `
+      ALTER TABLE google_oauth_states ADD COLUMN requested_access TEXT NOT NULL DEFAULT 'read'
+        CHECK (requested_access IN ('read', 'write'));
+      ALTER TABLE google_connectors ADD COLUMN write_consent_at TEXT;
+      CREATE TABLE google_calendar_capabilities (
+        calendar_id TEXT PRIMARY KEY REFERENCES calendar_collections(id) ON DELETE CASCADE,
+        owner_id TEXT NOT NULL REFERENCES owner_accounts(id) ON DELETE CASCADE,
+        access_role TEXT NOT NULL
+          CHECK (access_role IN ('freeBusyReader', 'reader', 'writer', 'owner')),
+        observed_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX google_calendar_capabilities_by_owner
+        ON google_calendar_capabilities(owner_id, calendar_id);
+    `,
+};
 
 export class SqliteCredentialStore implements CredentialStore {
   private readonly db: DatabaseSync;
@@ -83,6 +107,7 @@ export class SqliteCredentialStore implements CredentialStore {
     readonly ownerId: string;
     readonly expiresAt: string;
     readonly createdAt: string;
+    readonly requestedAccess?: "read" | "write";
   }): void {
     this.db
       .prepare(
@@ -91,30 +116,47 @@ export class SqliteCredentialStore implements CredentialStore {
       .run(record.ownerId, record.createdAt);
     this.db
       .prepare(
-        "INSERT INTO google_oauth_states (state_hash,owner_id,expires_at,consumed_at,created_at) VALUES (?,?,?,NULL,?)",
+        "INSERT INTO google_oauth_states (state_hash,owner_id,expires_at,consumed_at,created_at,requested_access) VALUES (?,?,?,NULL,?,?)",
       )
       .run(
         record.stateHash,
         record.ownerId,
         record.expiresAt,
         record.createdAt,
+        record.requestedAccess ?? "read",
       );
   }
 
   consumeGoogleOAuthState(stateHash: string, now: string): string | undefined {
+    return this.consumeGoogleOAuthRequest(stateHash, now)?.ownerId;
+  }
+
+  /** Consumes a state once and returns the access the owner requested. */
+  consumeGoogleOAuthRequest(
+    stateHash: string,
+    now: string,
+  ):
+    | { readonly ownerId: string; readonly requestedAccess: "read" | "write" }
+    | undefined {
     const row = this.db
       .prepare(
-        "SELECT owner_id FROM google_oauth_states WHERE state_hash=? AND consumed_at IS NULL AND expires_at>?",
+        "SELECT owner_id,requested_access FROM google_oauth_states WHERE state_hash=? AND consumed_at IS NULL AND expires_at>?",
       )
       .get(stateHash, now) as unknown as
-      { readonly owner_id: string } | undefined;
+      | { readonly owner_id: string; readonly requested_access: string }
+      | undefined;
     if (row === undefined) return undefined;
     const consumed = this.db
       .prepare(
         "UPDATE google_oauth_states SET consumed_at=? WHERE state_hash=? AND consumed_at IS NULL AND expires_at>?",
       )
       .run(now, stateHash, now);
-    return consumed.changes === 1 ? row.owner_id : undefined;
+    return consumed.changes === 1
+      ? {
+          ownerId: row.owner_id,
+          requestedAccess: row.requested_access === "write" ? "write" : "read",
+        }
+      : undefined;
   }
 
   // ── Google connector ──────────────────────────────────────────────────
@@ -122,10 +164,11 @@ export class SqliteCredentialStore implements CredentialStore {
   upsertGoogleConnector(record: GoogleConnectorRecord): void {
     this.db
       .prepare(
-        `INSERT INTO google_connectors (id,owner_id,credential_key_id,credential_nonce,credential_ciphertext,credential_tag,granted_scopes_json,account_label,state,created_at,updated_at,revoked_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET id=excluded.id,credential_key_id=excluded.credential_key_id,
+        `INSERT INTO google_connectors (id,owner_id,credential_key_id,credential_nonce,credential_ciphertext,credential_tag,granted_scopes_json,account_label,state,created_at,updated_at,revoked_at,write_consent_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET id=excluded.id,credential_key_id=excluded.credential_key_id,
        credential_nonce=excluded.credential_nonce,credential_ciphertext=excluded.credential_ciphertext,credential_tag=excluded.credential_tag,
-       granted_scopes_json=excluded.granted_scopes_json,account_label=excluded.account_label,state=excluded.state,updated_at=excluded.updated_at,revoked_at=NULL`,
+       granted_scopes_json=excluded.granted_scopes_json,account_label=excluded.account_label,state=excluded.state,updated_at=excluded.updated_at,revoked_at=NULL,
+       write_consent_at=excluded.write_consent_at`,
       )
       .run(
         record.id,
@@ -140,6 +183,7 @@ export class SqliteCredentialStore implements CredentialStore {
         record.createdAt,
         record.updatedAt,
         record.revokedAt,
+        record.writeConsentAt ?? null,
       );
   }
 
@@ -168,7 +212,72 @@ export class SqliteCredentialStore implements CredentialStore {
           createdAt: String(row.created_at),
           updatedAt: String(row.updated_at),
           revokedAt: row.revoked_at === null ? null : String(row.revoked_at),
+          writeConsentAt:
+            row.write_consent_at === null || row.write_consent_at === undefined
+              ? null
+              : String(row.write_consent_at),
         };
+  }
+
+  /** Records or withdraws owner write consent without touching the grant. */
+  setGoogleWriteConsent(
+    ownerId: string,
+    writeConsentAt: string | null,
+    now: string,
+  ): boolean {
+    return (
+      this.db
+        .prepare(
+          "UPDATE google_connectors SET write_consent_at=?,updated_at=? WHERE owner_id=? AND revoked_at IS NULL",
+        )
+        .run(writeConsentAt, now, ownerId).changes > 0
+    );
+  }
+
+  /**
+   * Replaces the owner's observed Google calendar roles. Callers pass every
+   * currently discovered calendar; rows for pruned collections cascade away.
+   */
+  putGoogleCalendarCapabilities(
+    ownerId: string,
+    capabilities: readonly Omit<
+      GoogleCalendarCapabilityRecord,
+      "ownerId" | "observedAt"
+    >[],
+    observedAt: string,
+  ): void {
+    const upsert = this.db.prepare(
+      `INSERT INTO google_calendar_capabilities (calendar_id,owner_id,access_role,observed_at)
+       VALUES (?,?,?,?) ON CONFLICT(calendar_id) DO UPDATE SET
+         access_role=excluded.access_role,observed_at=excluded.observed_at
+       WHERE google_calendar_capabilities.owner_id=excluded.owner_id`,
+    );
+    for (const capability of capabilities)
+      upsert.run(
+        capability.calendarId,
+        ownerId,
+        capability.accessRole,
+        observedAt,
+      );
+  }
+
+  listGoogleCalendarCapabilities(
+    ownerId: string,
+  ): readonly GoogleCalendarCapabilityRecord[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT calendar_id,owner_id,access_role,observed_at FROM google_calendar_capabilities WHERE owner_id=? ORDER BY calendar_id",
+        )
+        .all(ownerId) as unknown as readonly Record<string, string>[]
+    ).map((row) => ({
+      calendarId: String(row.calendar_id),
+      ownerId: String(row.owner_id),
+      accessRole: String(
+        row.access_role,
+      ) as GoogleCalendarCapabilityRecord["accessRole"],
+      observedAt: String(row.observed_at),
+    }));
   }
 
   deleteGoogleConnector(ownerId: string): boolean {

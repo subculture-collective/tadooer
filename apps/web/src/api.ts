@@ -355,14 +355,37 @@ export const connectBaikal = (
 export const getGoogleStatus = (): Promise<GoogleConnectorStatusResponse> =>
   request("/api/connectors/google", googleConnectorStatusResponseSchema);
 
+/**
+ * Read-only is the default. `write` is the separate explicit consent step of
+ * ADR 0040 and is sent only from the owner's "Allow event changes" action.
+ */
 export const beginGoogleAuthorization = (
   csrfToken: string,
+  access: "read" | "write" = "read",
 ): Promise<{ readonly authorizationUrl: string; readonly expiresAt: string }> =>
   request(
     "/api/connectors/google/authorize",
     googleAuthorizationResponseSchema,
+    access === "read"
+      ? {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrfToken },
+        }
+      : {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ access }),
+        },
+  );
+
+export const withdrawGoogleWriteConsent = (
+  csrfToken: string,
+): Promise<GoogleConnectorStatusResponse> =>
+  request(
+    "/api/connectors/google/write-consent",
+    googleConnectorStatusResponseSchema,
     {
-      method: "POST",
+      method: "DELETE",
       headers: { "X-CSRF-Token": csrfToken },
     },
   );

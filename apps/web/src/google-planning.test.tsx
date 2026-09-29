@@ -45,6 +45,8 @@ describe("Google planning surface", () => {
           grantedScopes: [],
           calendars: [],
           freshness: [],
+          write: { consent: "none", consentedAt: null, scopeGranted: false },
+          capabilities: [],
         }}
         preferences={preferences}
         dayPlan={dayPlan}
@@ -85,6 +87,8 @@ describe("Google planning surface", () => {
               message: "Google projection is current",
             },
           ],
+          write: { consent: "none", consentedAt: null, scopeGranted: false },
+          capabilities: [],
         }}
         preferences={preferences}
         dayPlan={dayPlan}
@@ -103,5 +107,141 @@ describe("Google planning surface", () => {
     expect(html).toContain("existing Google connection");
     expect(html).toContain("Disconnect Google");
     expect(html).toContain("Reminder: quiet");
+  });
+  it("keeps write consent separate and shows per-calendar writable state", () => {
+    const calendar = (id: string, displayName: string) => ({
+      id,
+      providerId: "00000000-0000-4000-8000-000000000031",
+      href: `${displayName}@example.test`,
+      displayName,
+      supportsEvents: true,
+      supportsTodos: false,
+    });
+    const owned = "00000000-0000-4000-8000-000000000041";
+    const shared = "00000000-0000-4000-8000-000000000042";
+    const base = {
+      configured: true,
+      connected: true,
+      state: "connected" as const,
+      providerId: "00000000-0000-4000-8000-000000000031",
+      accountLabel: "owner@example.test",
+      grantedScopes: [],
+      calendars: [calendar(owned, "Owned"), calendar(shared, "Shared")],
+      freshness: [],
+    };
+    const render = (status: Parameters<typeof GooglePlanning>[0]["status"]) =>
+      renderToStaticMarkup(
+        <GooglePlanning
+          mode="connection"
+          status={status}
+          preferences={preferences}
+          dayPlan={dayPlan}
+          busy={false}
+          {...callbacks}
+          onAuthorizeWrite={vi.fn(() =>
+            Promise.resolve("https://accounts.google.com/"),
+          )}
+          onWithdrawWrite={vi.fn(() => Promise.resolve())}
+        />,
+      );
+
+    const readOnly = render({
+      ...base,
+      write: { consent: "none", consentedAt: null, scopeGranted: false },
+      capabilities: [
+        {
+          calendarId: owned,
+          accessRole: "owner",
+          writable: false,
+          reason: "consent-required",
+        },
+        {
+          calendarId: shared,
+          accessRole: "reader",
+          writable: false,
+          reason: "consent-required",
+        },
+      ],
+    });
+    expect(readOnly).toContain("Tadooer has read-only access");
+    expect(readOnly).toContain("Allow event changes");
+    expect(readOnly).not.toContain("Withdraw event changes");
+    expect(readOnly).toContain("Read only (event changes not allowed)");
+    expect(readOnly).not.toContain('data-writable="true"');
+
+    const granted = render({
+      ...base,
+      write: {
+        consent: "granted",
+        consentedAt: "2026-09-29T12:00:00.000Z",
+        scopeGranted: true,
+      },
+      capabilities: [
+        {
+          calendarId: owned,
+          accessRole: "owner",
+          writable: true,
+          reason: null,
+        },
+        {
+          calendarId: shared,
+          accessRole: "reader",
+          writable: false,
+          reason: "read-only-calendar",
+        },
+      ],
+    });
+    expect(granted).toContain("Event changes allowed");
+    expect(granted).toContain("Withdraw event changes");
+    expect(granted).not.toContain("Allow event changes again");
+    expect(granted).toContain('data-writable="true"');
+    expect(granted).toContain("Read only (read only in Google)");
+    expect(granted).toContain("Google keeps the");
+
+    const lost = render({
+      ...base,
+      write: {
+        consent: "lost",
+        consentedAt: "2026-09-29T12:00:00.000Z",
+        scopeGranted: false,
+      },
+      capabilities: [
+        {
+          calendarId: owned,
+          accessRole: "owner",
+          writable: false,
+          reason: "scope-missing",
+        },
+      ],
+    });
+    expect(lost).toContain("Google no longer allows event changes");
+    expect(lost).toContain('role="alert"');
+    expect(lost).toContain("Allow event changes again");
+    expect(lost).toContain("Withdraw event changes");
+    expect(lost).not.toContain('data-writable="true"');
+  });
+
+  it("does not offer write consent where no write handlers are supplied", () => {
+    const html = renderToStaticMarkup(
+      <GooglePlanning
+        status={{
+          configured: true,
+          connected: true,
+          state: "connected",
+          providerId: null,
+          accountLabel: null,
+          grantedScopes: [],
+          calendars: [],
+          freshness: [],
+          write: { consent: "none", consentedAt: null, scopeGranted: false },
+          capabilities: [],
+        }}
+        preferences={preferences}
+        dayPlan={dayPlan}
+        busy={false}
+        {...callbacks}
+      />,
+    );
+    expect(html).not.toContain("Allow event changes");
   });
 });

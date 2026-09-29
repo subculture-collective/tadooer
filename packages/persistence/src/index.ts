@@ -15,7 +15,10 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { SqliteCalendarProjectionStore } from "./calendar-projection-store.js";
-import { SqliteCredentialStore } from "./credential-store.js";
+import {
+  SqliteCredentialStore,
+  googleWriteConsentMigration,
+} from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 import { SqliteNoteStore } from "./note-store.ts";
 import { captureMigration, SqliteCaptureStore } from "./capture-store.ts";
@@ -781,6 +784,15 @@ export interface GoogleConnectorRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly revokedAt: string | null;
+  /** ADR 0040: owner write consent bound to this grant; absent means none. */
+  readonly writeConsentAt?: string | null;
+}
+/** ADR 0040: last observed Google `accessRole` of a discovered calendar. */
+export interface GoogleCalendarCapabilityRecord {
+  readonly calendarId: string;
+  readonly ownerId: string;
+  readonly accessRole: "freeBusyReader" | "reader" | "writer" | "owner";
+  readonly observedAt: string;
 }
 export interface GoogleCalendarSyncRecord {
   readonly calendarId: string;
@@ -1672,6 +1684,7 @@ const migrations: readonly Migration[] = [
         CHECK (confirmation_policy IN ('confirm_all', 'execute_ordinary'));
     `,
   },
+  googleWriteConsentMigration,
 ];
 
 const checksum = (sql: string): string =>
@@ -2423,12 +2436,51 @@ export class SuiteDatabase {
     readonly ownerId: string;
     readonly expiresAt: string;
     readonly createdAt: string;
+    readonly requestedAccess?: "read" | "write";
   }): void {
     this.credentials.createGoogleOAuthState(record);
   }
 
   consumeGoogleOAuthState(stateHash: string, now: string): string | undefined {
     return this.credentials.consumeGoogleOAuthState(stateHash, now);
+  }
+
+  consumeGoogleOAuthRequest(
+    stateHash: string,
+    now: string,
+  ):
+    | { readonly ownerId: string; readonly requestedAccess: "read" | "write" }
+    | undefined {
+    return this.credentials.consumeGoogleOAuthRequest(stateHash, now);
+  }
+
+  setGoogleWriteConsent(
+    ownerId: string,
+    writeConsentAt: string | null,
+    now: string,
+  ): boolean {
+    return this.credentials.setGoogleWriteConsent(ownerId, writeConsentAt, now);
+  }
+
+  putGoogleCalendarCapabilities(
+    ownerId: string,
+    capabilities: readonly Omit<
+      GoogleCalendarCapabilityRecord,
+      "ownerId" | "observedAt"
+    >[],
+    observedAt: string,
+  ): void {
+    this.credentials.putGoogleCalendarCapabilities(
+      ownerId,
+      capabilities,
+      observedAt,
+    );
+  }
+
+  listGoogleCalendarCapabilities(
+    ownerId: string,
+  ): readonly GoogleCalendarCapabilityRecord[] {
+    return this.credentials.listGoogleCalendarCapabilities(ownerId);
   }
 
   putGoogleConnector(record: GoogleConnectorRecord): void {

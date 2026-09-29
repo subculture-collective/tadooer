@@ -2,6 +2,7 @@ import { useState, type SyntheticEvent } from "react";
 import type {
   DayPlanResponse,
   GoogleConnectorStatusResponse,
+  GoogleWriteRefusal,
   PlanningPreferences,
 } from "@suite/contracts";
 import { Button } from "@/components/ui/button";
@@ -27,9 +28,111 @@ export interface GooglePlanningProps {
     preferences: PlanningPreferences,
   ) => Promise<void>;
   readonly mode?: "all" | "connection" | "preferences";
+  /** ADR 0040: explicit write consent; omitted where only reads are shown. */
+  readonly onAuthorizeWrite?: () => Promise<string>;
+  readonly onWithdrawWrite?: () => Promise<void>;
 }
 
 const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const writeRefusalLabels: Record<GoogleWriteRefusal, string> = {
+  "not-connected": "not connected",
+  "reconnect-required": "reconnect required",
+  "consent-required": "event changes not allowed",
+  "scope-missing": "Google no longer allows event changes",
+  "role-unknown": "permissions not synced yet",
+  "read-only-calendar": "read only in Google",
+};
+
+const GoogleWriteAccess = ({
+  status,
+  busy,
+  onAuthorizeWrite,
+  onWithdrawWrite,
+}: {
+  readonly status: GoogleConnectorStatusResponse;
+  readonly busy: boolean;
+  readonly onAuthorizeWrite: () => Promise<string>;
+  readonly onWithdrawWrite: () => Promise<void>;
+}) => {
+  const [writeUrl, setWriteUrl] = useState<string | null>(null);
+  const { consent, consentedAt } = status.write;
+  const allow = (
+    <Button
+      type="button"
+      variant="ghost"
+      disabled={busy}
+      onClick={() =>
+        void onAuthorizeWrite()
+          .then(setWriteUrl)
+          .catch(() => undefined)
+      }
+    >
+      {consent === "lost" ? "Allow event changes again" : "Allow event changes"}
+    </Button>
+  );
+  const withdraw = (
+    <Button
+      type="button"
+      variant="ghost"
+      disabled={busy}
+      onClick={() => void onWithdrawWrite()}
+    >
+      Withdraw event changes
+    </Button>
+  );
+  return (
+    <div className="google-write-access" aria-labelledby="google-write-title">
+      <h4 id="google-write-title">Event changes</h4>
+      {consent === "none" && (
+        <p className="muted">
+          Tadooer has read-only access. Allowing event changes asks Google for
+          permission to create, change and delete events on calendars you can
+          edit. Calendars that are read-only in Google stay read-only.
+        </p>
+      )}
+      {consent === "granted" && (
+        <p className="message message-info">
+          Event changes allowed
+          {consentedAt === null ? "" : " since "}
+          {consentedAt !== null && (
+            <time dateTime={consentedAt}>{consentedAt.slice(0, 10)}</time>
+          )}
+          . Tadooer writes only to calendars marked writable below.
+        </p>
+      )}
+      {consent === "lost" && (
+        <p className="message message-error" role="alert">
+          Google no longer allows event changes. Your calendars and saved events
+          are kept; writes are refused until you allow event changes again.
+        </p>
+      )}
+      <div className="task-actions">
+        {consent !== "granted" && allow}
+        {consent !== "none" && withdraw}
+      </div>
+      {consent !== "none" && (
+        <p className="hint">
+          Withdrawing stops Tadooer writes immediately. Google keeps the
+          permission until you disconnect or remove access in your Google
+          account.
+        </p>
+      )}
+      {writeUrl !== null && (
+        <p>
+          <a
+            className="button-link"
+            href={writeUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            Review event-change permission in your system browser
+          </a>
+        </p>
+      )}
+    </div>
+  );
+};
 
 export const GooglePlanning = ({
   status,
@@ -41,6 +144,8 @@ export const GooglePlanning = ({
   onDisconnect,
   onSavePreferences,
   mode = "all",
+  onAuthorizeWrite,
+  onWithdrawWrite,
 }: GooglePlanningProps) => {
   const [days, setDays] = useState<readonly number[]>(preferences.workingDays);
   const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
@@ -143,12 +248,25 @@ export const GooglePlanning = ({
                 const freshness = status.freshness.find(
                   (item) => item.calendarId === calendar.id,
                 );
+                const capability = status.capabilities.find(
+                  (item) => item.calendarId === calendar.id,
+                );
                 return (
                   <li key={calendar.id}>
                     <strong>{calendar.displayName}</strong>{" "}
                     <span>
                       {freshness?.message ?? "Awaiting first projection"}
-                    </span>
+                    </span>{" "}
+                    {capability !== undefined && (
+                      <span
+                        className="hint"
+                        data-writable={capability.writable ? "true" : "false"}
+                      >
+                        {capability.writable
+                          ? "Writable"
+                          : `Read only (${writeRefusalLabels[capability.reason ?? "role-unknown"]})`}
+                      </span>
+                    )}
                     <p className="hint">
                       {freshness?.lastSuccessfulSyncAt ? (
                         <>
@@ -170,6 +288,15 @@ export const GooglePlanning = ({
                 );
               })}
             </ul>
+            {onAuthorizeWrite !== undefined &&
+              onWithdrawWrite !== undefined && (
+                <GoogleWriteAccess
+                  status={status}
+                  busy={busy}
+                  onAuthorizeWrite={onAuthorizeWrite}
+                  onWithdrawWrite={onWithdrawWrite}
+                />
+              )}
             <p className="hint">
               Google refresh is currently manual. A recent sync is considered
               fresh for fifteen minutes. Resync reloads your calendars and

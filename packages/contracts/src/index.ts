@@ -626,6 +626,33 @@ export const googleCalendarFreshnessSchema = z.object({
   lastSuccessfulSyncAt: z.iso.datetime().nullable(),
   message: z.string().min(1).max(240),
 });
+/** ADR 0040: Google calendar roles and the write gate's refusal reasons. */
+export const googleAccessRoleSchema = z.enum([
+  "freeBusyReader",
+  "reader",
+  "writer",
+  "owner",
+]);
+export const googleWriteRefusalSchema = z.enum([
+  "not-connected",
+  "reconnect-required",
+  "consent-required",
+  "scope-missing",
+  "role-unknown",
+  "read-only-calendar",
+]);
+export const googleWriteStatusSchema = z.object({
+  /** `lost`: consent was recorded but the grant no longer allows writes. */
+  consent: z.enum(["none", "granted", "lost"]),
+  consentedAt: z.iso.datetime().nullable(),
+  scopeGranted: z.boolean(),
+});
+export const googleCalendarCapabilitySchema = z.object({
+  calendarId: entityIdSchema,
+  accessRole: googleAccessRoleSchema.nullable(),
+  writable: z.boolean(),
+  reason: googleWriteRefusalSchema.nullable(),
+});
 export const googleConnectorStatusResponseSchema = z.object({
   configured: z.boolean(),
   connected: z.boolean(),
@@ -635,7 +662,15 @@ export const googleConnectorStatusResponseSchema = z.object({
   grantedScopes: z.array(z.string()),
   calendars: z.array(calendarCollectionSchema),
   freshness: z.array(googleCalendarFreshnessSchema),
+  write: googleWriteStatusSchema,
+  capabilities: z.array(googleCalendarCapabilitySchema),
 });
+/** Read-only is the default; write is the separate explicit consent step. */
+export const googleAuthorizationRequestSchema = z
+  .object({
+    access: z.enum(["read", "write"]).default("read"),
+  })
+  .strict();
 export const googleAuthorizationResponseSchema = z.object({
   authorizationUrl: z.url(),
   expiresAt: z.iso.datetime(),
@@ -4126,6 +4161,11 @@ export type GoogleConnectorStatusResponse = z.infer<
   typeof googleConnectorStatusResponseSchema
 >;
 export type GoogleSyncResponse = z.infer<typeof googleSyncResponseSchema>;
+export type GoogleWriteStatus = z.infer<typeof googleWriteStatusSchema>;
+export type GoogleCalendarCapability = z.infer<
+  typeof googleCalendarCapabilitySchema
+>;
+export type GoogleWriteRefusal = z.infer<typeof googleWriteRefusalSchema>;
 export type PlanningPreferences = z.infer<typeof planningPreferencesSchema>;
 export type DayPlanResponse = z.infer<typeof dayPlanResponseSchema>;
 export type NotificationPreferences = z.infer<

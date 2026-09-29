@@ -15,13 +15,17 @@ import {
 } from "node:crypto";
 import {
   buildGoogleAuthorizationUrl,
+  evaluateGoogleWriteCapability,
   exchangeGoogleCode,
-  googleScopes,
+  hasGoogleReadScopes,
+  hasGoogleWriteScope,
   listGoogleCalendars,
   refreshGoogleAccess,
   revokeGoogleGrant,
   syncGoogleEvents,
+  type GoogleAccessRequest,
   type GoogleOAuthClientConfig,
+  type GoogleWriteCapability,
 } from "@suite/google-calendar";
 import type {
   GoogleConnectorStatusResponse,
@@ -139,14 +143,26 @@ export class GoogleConnectorService {
     return readConfiguration(this.configPath) !== undefined;
   }
 
+  /**
+   * Starts an owner authorization. `write` is the explicit consent step of
+   * ADR 0040; the requested access is bound to the digested state so the
+   * callback cannot be upgraded after the fact.
+   */
   begin(
     ownerId: string,
+    access: GoogleAccessRequest = "read",
     now = new Date(),
   ):
     | { readonly authorizationUrl: string; readonly expiresAt: string }
     | undefined {
     const config = readConfiguration(this.configPath);
     if (config === undefined) return undefined;
+    // A write consent step extends an existing connection; it never creates one.
+    if (
+      access === "write" &&
+      this.database.getGoogleConnector(ownerId) === undefined
+    )
+      return undefined;
     const state = randomBytes(32).toString("base64url");
     const expiresAt = new Date(now.getTime() + 10 * 60_000).toISOString();
     this.database.createGoogleOAuthState({
@@ -154,9 +170,10 @@ export class GoogleConnectorService {
       ownerId,
       expiresAt,
       createdAt: now.toISOString(),
+      requestedAccess: access,
     });
     return {
-      authorizationUrl: buildGoogleAuthorizationUrl(config, state),
+      authorizationUrl: buildGoogleAuthorizationUrl(config, state, access),
       expiresAt,
     };
   }
@@ -165,19 +182,29 @@ export class GoogleConnectorService {
     state: string,
     code: string,
     now = new Date(),
-  ): Promise<string | undefined> {
+  ): Promise<
+    | {
+        readonly ownerId: string;
+        readonly access: GoogleAccessRequest;
+        readonly writeGranted: boolean;
+      }
+    | undefined
+  > {
     const config = readConfiguration(this.configPath);
-    const ownerId = this.database.consumeGoogleOAuthState(
+    const request = this.database.consumeGoogleOAuthRequest(
       createHash("sha256").update(state).digest("base64url"),
       now.toISOString(),
     );
-    if (config === undefined || ownerId === undefined) return undefined;
+    if (config === undefined || request === undefined) return undefined;
+    const { ownerId, requestedAccess } = request;
     const grant = await exchangeGoogleCode(config, code, this.fetcher);
-    if (
-      grant?.refreshToken == null ||
-      !googleScopes.every((scope) => grant.scopes.includes(scope))
-    )
+    if (grant?.refreshToken == null || !hasGoogleReadScopes(grant.scopes))
       return undefined;
+    // Consent belongs to the grant that carried it: only a write request whose
+    // grant actually includes the write scope records it. Any other
+    // authorization, including a read-only reconnect, clears it.
+    const writeGranted =
+      requestedAccess === "write" && hasGoogleWriteScope(grant.scopes);
 
     const existing = this.database.getGoogleConnector(ownerId);
     const connectorId = existing?.id ?? randomUUID();
@@ -202,15 +229,56 @@ export class GoogleConnectorService {
       createdAt: existing?.createdAt ?? now.toISOString(),
       updatedAt: now.toISOString(),
       revokedAt: null,
+      writeConsentAt: writeGranted ? now.toISOString() : null,
     });
     await this.synchronize(ownerId, now);
-    return ownerId;
+    return { ownerId, access: requestedAccess, writeGranted };
+  }
+
+  /**
+   * Withdraws owner write consent locally. Writes stop immediately; Google
+   * keeps the scope until disconnect revokes the grant (ADR 0040).
+   */
+  withdrawWriteConsent(
+    ownerId: string,
+    now = new Date(),
+  ): GoogleConnectorStatusResponse | undefined {
+    return this.database.setGoogleWriteConsent(ownerId, null, now.toISOString())
+      ? this.status(ownerId, now)
+      : undefined;
+  }
+
+  /**
+   * The single write gate for Google calendars (ADR 0040). Every write path —
+   * time blocks today, bridge dispatch in #40/#46 — must call it before
+   * reserving work or contacting Google.
+   */
+  writeCapability(ownerId: string, calendarId: string): GoogleWriteCapability {
+    const connector = this.database.getGoogleConnector(ownerId);
+    const role =
+      this.database
+        .listGoogleCalendarCapabilities(ownerId)
+        .find((item) => item.calendarId === calendarId)?.accessRole ?? null;
+    return evaluateGoogleWriteCapability({
+      connectorState: connector?.state ?? "disconnected",
+      writeConsentAt: connector?.writeConsentAt ?? null,
+      grantedScopes: connector?.grantedScopes ?? [],
+      accessRole: role,
+    });
   }
 
   status(ownerId: string, now = new Date()): GoogleConnectorStatusResponse {
     const connector = this.database.getGoogleConnector(ownerId);
     const calendars = this.database.listOwnedCalendars(ownerId, "google");
     const sync = this.database.listGoogleCalendarSync(ownerId);
+    const roles = new Map(
+      this.database
+        .listGoogleCalendarCapabilities(ownerId)
+        .map((item) => [item.calendarId, item.accessRole]),
+    );
+    const consentedAt = connector?.writeConsentAt ?? null;
+    const scopeGranted =
+      connector !== undefined && hasGoogleWriteScope(connector.grantedScopes);
     return {
       configured: this.configured(),
       connected:
@@ -246,6 +314,31 @@ export class GoogleConnectorService {
         ),
         lastSuccessfulSyncAt: item.lastSuccessfulSyncAt,
       })),
+      write: {
+        consent:
+          consentedAt === null
+            ? "none"
+            : scopeGranted && connector.state !== "reconnect_required"
+              ? "granted"
+              : "lost",
+        consentedAt,
+        scopeGranted,
+      },
+      capabilities: calendars.map(({ id }) => {
+        const accessRole = roles.get(id) ?? null;
+        const capability = evaluateGoogleWriteCapability({
+          connectorState: connector?.state ?? "disconnected",
+          writeConsentAt: consentedAt,
+          grantedScopes: connector?.grantedScopes ?? [],
+          accessRole,
+        });
+        return {
+          calendarId: id,
+          accessRole,
+          writable: capability.writable,
+          reason: capability.writable ? null : capability.reason,
+        };
+      }),
     };
   }
 
@@ -296,6 +389,21 @@ export class GoogleConnectorService {
       );
       return { status: this.status(ownerId), resetCalendars: [] };
     }
+    // Downgrade handling (ADR 0040): the refreshed grant is authoritative for
+    // scopes. A narrowed grant replaces the stored scopes at once, so the
+    // write gate refuses before any other work, while recorded consent stays
+    // visible as "lost".
+    const refreshed = this.database.getGoogleConnector(ownerId);
+    if (
+      refreshed !== undefined &&
+      [...refreshed.grantedScopes].sort().join(" ") !==
+        [...grant.scopes].sort().join(" ")
+    )
+      this.database.putGoogleConnector({
+        ...refreshed,
+        grantedScopes: grant.scopes,
+        updatedAt: now.toISOString(),
+      });
 
     const discovered = await listGoogleCalendars(
       grant.accessToken,
@@ -330,6 +438,18 @@ export class GoogleConnectorService {
         supportsEvents: true,
         supportsTodos: false,
       })),
+      now.toISOString(),
+    );
+    // Roles are re-observed on every discovery, so a calendar narrowed to
+    // `reader` becomes read-only immediately.
+    this.database.putGoogleCalendarCapabilities(
+      ownerId,
+      active.flatMap((calendar, index) => {
+        const collection = collections[index];
+        return collection === undefined
+          ? []
+          : [{ calendarId: collection.id, accessRole: calendar.accessRole }];
+      }),
       now.toISOString(),
     );
     this.database.pruneGoogleCalendars(

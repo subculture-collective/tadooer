@@ -123,6 +123,7 @@ export const dataExportExcludedTables: readonly string[] = [
   "google_connectors",
   "google_oauth_states",
   "google_calendar_sync",
+  "google_calendar_capabilities",
   "calendar_providers",
   "calendar_collections",
   "calendar_event_projections",

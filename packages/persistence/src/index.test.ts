@@ -268,8 +268,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 38,
-        expectedMigrationCount: 38,
+        appliedMigrationCount: 39,
+        expectedMigrationCount: 39,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -288,8 +288,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(38);
-      expect(reopenedState.expectedMigrationCount).toBe(38);
+      expect(reopenedState.appliedMigrationCount).toBe(39);
+      expect(reopenedState.expectedMigrationCount).toBe(39);
     });
   });
 
@@ -1738,6 +1738,148 @@ describe("SuiteDatabase", () => {
         .get() as unknown as { readonly count: number };
       expect(connectorRows.count).toBe(0);
       raw.close();
+    });
+  });
+
+  it("binds Google write consent to its OAuth request and keeps calendar roles with the calendar list", async () => {
+    await withTemporaryDirectory((directory) => {
+      const path = join(directory, "suite.sqlite");
+      const database = SuiteDatabase.open(path);
+      const now = "2026-09-29T12:00:00.000Z";
+      database.createOwner({
+        id: "write-owner",
+        username: "write-owner",
+        displayName: "Write owner",
+        passwordHash: "hash",
+        createdAt: now,
+      });
+      database.createGoogleOAuthState({
+        stateHash: "read-digest",
+        ownerId: "write-owner",
+        expiresAt: "2026-09-29T12:10:00.000Z",
+        createdAt: now,
+      });
+      expect(
+        database.consumeGoogleOAuthRequest(
+          "read-digest",
+          "2026-09-29T12:01:00.000Z",
+        ),
+      ).toEqual({ ownerId: "write-owner", requestedAccess: "read" });
+      database.createGoogleOAuthState({
+        stateHash: "write-digest",
+        ownerId: "write-owner",
+        expiresAt: "2026-09-29T12:10:00.000Z",
+        createdAt: now,
+        requestedAccess: "write",
+      });
+      expect(
+        database.consumeGoogleOAuthRequest(
+          "write-digest",
+          "2026-09-29T12:01:00.000Z",
+        ),
+      ).toEqual({ ownerId: "write-owner", requestedAccess: "write" });
+      expect(
+        database.consumeGoogleOAuthRequest(
+          "write-digest",
+          "2026-09-29T12:02:00.000Z",
+        ),
+      ).toBeUndefined();
+
+      const connector = {
+        id: "write-connector",
+        ownerId: "write-owner",
+        credentialKeyId: "key-id",
+        credentialNonce: new Uint8Array([1]),
+        credentialCiphertext: new Uint8Array([2]),
+        credentialTag: new Uint8Array([3]),
+        grantedScopes: ["read"],
+        accountLabel: null,
+        state: "connected" as const,
+        createdAt: now,
+        updatedAt: now,
+        revokedAt: null,
+      };
+      database.putGoogleConnector(connector);
+      expect(database.getGoogleConnector("write-owner")?.writeConsentAt).toBe(
+        null,
+      );
+      database.putGoogleConnector({ ...connector, writeConsentAt: now });
+      expect(database.getGoogleConnector("write-owner")?.writeConsentAt).toBe(
+        now,
+      );
+      expect(database.setGoogleWriteConsent("write-owner", null, now)).toBe(
+        true,
+      );
+      expect(database.getGoogleConnector("write-owner")?.writeConsentAt).toBe(
+        null,
+      );
+
+      const provider = database.ensureCalendarProvider(
+        "write-owner",
+        "google",
+        "write-connector",
+        now,
+      );
+      const [owned, shared] = database.putCalendarCollections(
+        provider.id,
+        [
+          {
+            href: "owned@example.test",
+            displayName: "Owned",
+            supportsEvents: true,
+            supportsTodos: false,
+          },
+          {
+            href: "shared@example.test",
+            displayName: "Shared",
+            supportsEvents: true,
+            supportsTodos: false,
+          },
+        ],
+        now,
+      );
+      if (owned === undefined || shared === undefined)
+        throw new Error("Calendar fixtures missing");
+      database.putGoogleCalendarCapabilities(
+        "write-owner",
+        [
+          { calendarId: owned.id, accessRole: "owner" },
+          { calendarId: shared.id, accessRole: "writer" },
+        ],
+        now,
+      );
+      const later = "2026-09-29T13:00:00.000Z";
+      database.putGoogleCalendarCapabilities(
+        "write-owner",
+        [{ calendarId: shared.id, accessRole: "reader" }],
+        later,
+      );
+      expect(
+        Object.fromEntries(
+          database
+            .listGoogleCalendarCapabilities("write-owner")
+            .map(({ calendarId, accessRole, observedAt }) => [
+              calendarId,
+              [accessRole, observedAt],
+            ]),
+        ),
+      ).toEqual({
+        [owned.id]: ["owner", now],
+        [shared.id]: ["reader", later],
+      });
+      database.pruneGoogleCalendars("write-owner", provider.id, [
+        "owned@example.test",
+      ]);
+      expect(
+        database
+          .listGoogleCalendarCapabilities("write-owner")
+          .map(({ calendarId }) => calendarId),
+      ).toEqual([owned.id]);
+      expect(database.disconnectGoogle("write-owner")).toBe(true);
+      expect(database.listGoogleCalendarCapabilities("write-owner")).toEqual(
+        [],
+      );
+      database.close();
     });
   });
 

@@ -52,6 +52,7 @@ import {
   beginGoogleAuthorization,
   synchronizeGoogle,
   disconnectGoogle,
+  withdrawGoogleWriteConsent,
   getPlanningPreferences,
   updatePlanningPreferences,
   getDayPlan,
@@ -197,6 +198,17 @@ const localInputToIso = (value: string): string | undefined => {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
 };
 
+/** Reports the outcome of the explicit Google write consent step (ADR 0040). */
+const googleCallbackMessage = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const outcome = new URLSearchParams(window.location.search).get("google");
+  if (outcome === "write-granted")
+    return "Google allowed event changes. Writable calendars are marked on Connections.";
+  if (outcome === "write-not-granted")
+    return "Google did not grant event changes. Your read-only connection is unchanged.";
+  return null;
+};
+
 export const App = ({ initialState, initialPath }: AppProps) => {
   const [state, setState] = useState<AppState>(
     initialState ?? { kind: "loading" },
@@ -235,7 +247,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       />
     ) : null;
   const [formError, setFormError] = useState<string | null>(null);
-  const [calendarMessage, setCalendarMessage] = useState<string | null>(null);
+  const [calendarMessage, setCalendarMessage] = useState<string | null>(
+    googleCallbackMessage,
+  );
   const [localStore] = useState(() => new LocalStore());
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [tags, setTags] = useState<readonly Tag[]>([]);
@@ -705,13 +719,18 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     return session;
   };
 
-  const authorizeGoogle = async (): Promise<string> => {
+  const authorizeGoogle = async (
+    access: "read" | "write" = "read",
+  ): Promise<string> => {
     if (state.kind !== "authenticated") throw new Error("Sign in required");
     setBusy(true);
     setFormError(null);
     try {
       const session = await calendarSession();
-      const authorization = await beginGoogleAuthorization(session.csrfToken);
+      const authorization = await beginGoogleAuthorization(
+        session.csrfToken,
+        access,
+      );
       return authorization.authorizationUrl;
     } catch (error: unknown) {
       calendarError(error);
@@ -777,6 +796,26 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     }
   };
 
+  const withdrawGoogleWrite = async (): Promise<void> => {
+    if (state.kind !== "authenticated") return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      const session = await calendarSession();
+      const google = await withdrawGoogleWriteConsent(session.csrfToken);
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, google } : current,
+      );
+      setCalendarMessage(
+        "Tadooer will no longer change Google events. Google keeps the permission until you disconnect or remove access in your Google account.",
+      );
+    } catch (error: unknown) {
+      calendarError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const removeGoogleCalendar = async (): Promise<void> => {
     if (state.kind !== "authenticated") return;
     setBusy(true);
@@ -799,6 +838,12 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 grantedScopes: [],
                 calendars: [],
                 freshness: [],
+                write: {
+                  consent: "none",
+                  consentedAt: null,
+                  scopeGranted: false,
+                },
+                capabilities: [],
               },
             }
           : current,
@@ -2731,6 +2776,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             onAuthorizeGoogle={authorizeGoogle}
             onSyncGoogle={syncGoogleCalendar}
             onDisconnectGoogle={removeGoogleCalendar}
+            onAuthorizeGoogleWrite={() => authorizeGoogle("write")}
+            onWithdrawGoogleWrite={withdrawGoogleWrite}
             onSavePlanningPreferences={savePlanningPreferences}
           />
         )}
