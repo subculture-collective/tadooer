@@ -1820,6 +1820,231 @@ export const syncDiagnosticManifestSchema = z
 // sync clients. These contracts deliberately describe the public, safe edge:
 // raw token secrets and preview input are never returned in inventories, audit
 // records, or diagnostic exports.
+export const calendarImportSourceSchema = z.enum(["ics", "google_ics"]);
+export const calendarImportIssueSchema = z.object({
+  code: z.enum([
+    "malformed_component",
+    "missing_uid",
+    "duplicate_uid",
+    "recurrence_preserved",
+    "attendees_preserved",
+    "alarms_preserved",
+    "unknown_properties_preserved",
+  ]),
+  detail: z.string().min(1).max(2048),
+});
+export const calendarImportCandidateSchema = z.object({
+  externalId: z.string().min(1).max(1024),
+  uid: z.string().min(1).max(1024),
+  summary: z.string().max(1024),
+  rawIcs: z
+    .string()
+    .min(1)
+    .max(4 * 1024 * 1024),
+  recurrence: z.boolean(),
+  attendeeCount: z.number().int().nonnegative(),
+  alarmCount: z.number().int().nonnegative(),
+  unknownProperties: z.array(z.string()).max(100),
+  issues: z.array(calendarImportIssueSchema),
+});
+export const calendarImportReportSchema = z.object({
+  source: calendarImportSourceSchema,
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  candidates: z.array(calendarImportCandidateSchema).max(10_000),
+  skipped: z.array(calendarImportIssueSchema).max(10_000),
+  totals: z.object({
+    components: z.number().int().nonnegative(),
+    ready: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    recurring: z.number().int().nonnegative(),
+    attendees: z.number().int().nonnegative(),
+    alarms: z.number().int().nonnegative(),
+    unknownProperties: z.number().int().nonnegative(),
+  }),
+});
+export const calendarImportPreviewRequestSchema = z.object({
+  source: calendarImportSourceSchema,
+  calendarId: entityIdSchema,
+  rawIcs: z
+    .string()
+    .min(1)
+    .max(4 * 1024 * 1024),
+});
+export const calendarImportItemSchema = z.object({
+  externalId: z.string(),
+  uid: z.string(),
+  href: z.string(),
+  state: z.enum(["pending", "applied", "reconciliation_required", "skipped"]),
+  appliedAt: z.iso.datetime().nullable(),
+});
+export const calendarImportJobSchema = z.object({
+  id: entityIdSchema,
+  calendarId: entityIdSchema,
+  source: calendarImportSourceSchema,
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  state: z.enum(["previewed", "applied", "partial"]),
+  report: calendarImportReportSchema,
+  items: z.array(calendarImportItemSchema),
+  createdAt: z.iso.datetime(),
+  appliedAt: z.iso.datetime().nullable(),
+});
+export const calendarImportMutationResponseSchema = z.object({
+  job: calendarImportJobSchema,
+  replayed: z.boolean(),
+});
+export const calendarFeedCreateRequestSchema = z.object({
+  calendarId: entityIdSchema,
+  label: z.string().trim().min(1).max(100),
+});
+export const calendarFeedCapabilitySchema = z.object({
+  id: entityIdSchema,
+  calendarId: entityIdSchema,
+  label: z.string(),
+  createdAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+});
+export const calendarFeedCreateResponseSchema = z.object({
+  capability: calendarFeedCapabilitySchema,
+  url: z.string().min(1),
+});
+export const calendarFeedListResponseSchema = z.object({
+  capabilities: z.array(calendarFeedCapabilitySchema),
+});
+
+// Assistant operations for import, publication and connector recovery
+// (issue #60, ADR 0038). Responses never carry a credential, a capability
+// secret or a feed address; candidates omit rawIcs.
+export const automationConnectorKindSchema = z.enum(["baikal", "google"]);
+export const automationBaikalStatusSchema = z
+  .object({
+    state: z.enum(["disconnected", "connected", "unavailable"]),
+    reason: z.string().min(1).max(100).nullable(),
+    providerId: entityIdSchema.nullable(),
+    endpointHost: z.string().min(1).max(253),
+    username: z.string().nullable(),
+    verifiedAt: z.iso.datetime().nullable(),
+    calendars: z.array(calendarCollectionSchema),
+  })
+  .strict();
+export const automationRecoveryStepSchema = z
+  .object({
+    connector: automationConnectorKindSchema,
+    actor: z.enum(["assistant", "owner", "none"]),
+    operation: z.literal("connectors.resync").nullable(),
+    message: z.string().min(1).max(500),
+  })
+  .strict();
+export const automationConnectorStatusResourceSchema = z
+  .object({
+    baikal: automationBaikalStatusSchema,
+    google: googleConnectorStatusResponseSchema,
+    recovery: z.array(automationRecoveryStepSchema),
+  })
+  .strict();
+export const automationConnectorResyncInputSchema = z
+  .object({
+    connector: z.literal("google"),
+    full: z.boolean().default(false),
+  })
+  .strict();
+export const automationConnectorResyncResponseSchema = z
+  .object({
+    status: googleConnectorStatusResponseSchema,
+    resetCalendars: z.array(entityIdSchema),
+  })
+  .strict();
+
+export const automationCalendarImportCandidateSchema =
+  calendarImportCandidateSchema.omit({ rawIcs: true });
+export const automationCalendarImportReportSchema =
+  calendarImportReportSchema.extend({
+    candidates: z.array(automationCalendarImportCandidateSchema).max(10_000),
+  });
+export const automationCalendarImportSummarySchema = z
+  .object({
+    id: entityIdSchema,
+    calendarId: entityIdSchema,
+    calendarName: z.string().nullable(),
+    source: calendarImportSourceSchema,
+    inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+    state: z.enum(["previewed", "applied", "partial"]),
+    createdAt: z.iso.datetime(),
+    appliedAt: z.iso.datetime().nullable(),
+    totals: calendarImportReportSchema.shape.totals,
+    itemCounts: z
+      .object({
+        pending: z.number().int().nonnegative(),
+        applied: z.number().int().nonnegative(),
+        reconciliationRequired: z.number().int().nonnegative(),
+        skipped: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+export const automationCalendarImportJobSchema =
+  automationCalendarImportSummarySchema
+    .extend({
+      report: automationCalendarImportReportSchema,
+      items: z.array(calendarImportItemSchema),
+    })
+    .strict();
+export const automationCalendarImportResourceInputSchema = z
+  .object({ jobId: entityIdSchema.optional() })
+  .strict();
+export const automationTaskImportProvenanceSchema = z
+  .object({
+    entityKind: z.string().min(1).max(100),
+    count: z.number().int().nonnegative(),
+    lastImportedAt: z.iso.datetime(),
+  })
+  .strict();
+export const automationCalendarImportResourceSchema = z
+  .object({
+    jobs: z.array(automationCalendarImportSummarySchema),
+    job: automationCalendarImportJobSchema.nullable(),
+    superProductivity: z
+      .object({
+        lastImportedAt: z.iso.datetime().nullable(),
+        entities: z.array(automationTaskImportProvenanceSchema),
+      })
+      .strict(),
+  })
+  .strict();
+export const automationCalendarImportApplyInputSchema = z
+  .object({
+    jobId: entityIdSchema,
+    expectedInputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export const automationCalendarImportApplyResponseSchema = z
+  .object({ job: automationCalendarImportJobSchema, replayed: z.boolean() })
+  .strict();
+
+export const automationCalendarFeedSchema = calendarFeedCapabilitySchema
+  .extend({ calendarName: z.string().nullable(), active: z.boolean() })
+  .strict();
+export const automationCalendarPublicationSchema = z
+  .object({
+    calendarId: entityIdSchema,
+    displayName: z.string().min(1),
+    providerKind: calendarProviderKindSchema,
+    publishedEvents: z.number().int().nonnegative(),
+    activeFeeds: z.number().int().nonnegative(),
+  })
+  .strict();
+export const automationCalendarFeedResourceSchema = z
+  .object({
+    feeds: z.array(automationCalendarFeedSchema),
+    calendars: z.array(automationCalendarPublicationSchema),
+  })
+  .strict();
+export const automationCalendarFeedRevokeInputSchema = z
+  .object({ feedId: entityIdSchema })
+  .strict();
+export const automationCalendarFeedRevocationResponseSchema = z
+  .object({ feed: automationCalendarFeedSchema })
+  .strict();
+
 export const automationTokenScopeSchema = z.enum([
   "notifications:test",
   "notifications:read",
@@ -1852,6 +2077,14 @@ export const automationTokenScopeSchema = z.enum([
   "metrics:write",
   // Imported plugin data (ADR 0026): listing only, never the data itself.
   "plugin_data:read",
+  // Import, publication and connector recovery (ADR 0038). Reads never
+  // return a secret; recover retries with the stored grant only.
+  "connectors:read",
+  "connectors:recover",
+  "imports:read",
+  "imports:write",
+  "publication:read",
+  "publication:write",
 ]);
 
 export const automationTokenSchema = z
@@ -1943,6 +2176,10 @@ export const automationOperationSchema = z.enum([
   "calendar_subscriptions.refresh",
   "calendar_subscriptions.convert_event",
   "calendar_subscriptions.hide_event",
+  // ADR 0038: apply an owner-previewed import, revoke a feed, retry a sync.
+  "imports.apply",
+  "calendar_feeds.revoke",
+  "connectors.resync",
   "schedule.create_time_block",
   // ADR 0037: move and remove an existing block with the task revision.
   "schedule.move_time_block",
@@ -2214,6 +2451,18 @@ export const automationPreviewCommandSchema = z.discriminatedUnion(
     z.object({
       operation: z.literal("calendar_subscriptions.hide_event"),
       input: automationCalendarSubscriptionHideInputSchema,
+    }),
+    z.object({
+      operation: z.literal("imports.apply"),
+      input: automationCalendarImportApplyInputSchema,
+    }),
+    z.object({
+      operation: z.literal("calendar_feeds.revoke"),
+      input: automationCalendarFeedRevokeInputSchema,
+    }),
+    z.object({
+      operation: z.literal("connectors.resync"),
+      input: automationConnectorResyncInputSchema,
     }),
     z.object({
       operation: z.literal("projects.mutate"),
@@ -2492,6 +2741,21 @@ const automationToolInputSchema = (
       operation: z.literal(operation),
       input: automationCalendarSubscriptionHideInputSchema,
     });
+  if (operation === "imports.apply")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarImportApplyInputSchema,
+    });
+  if (operation === "calendar_feeds.revoke")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationCalendarFeedRevokeInputSchema,
+    });
+  if (operation === "connectors.resync")
+    return z.object({
+      operation: z.literal(operation),
+      input: automationConnectorResyncInputSchema,
+    });
   if (operation === "tasks.assign_project")
     return z.object({
       operation: z.literal(operation),
@@ -2646,6 +2910,10 @@ export const automationAffectedEntitySchema = z
       "section",
       "task_view",
       "menu_folder",
+      // ADR 0038: unrevisioned records; confirmation repeats the state check.
+      "calendar_import",
+      "calendar_feed",
+      "connector",
     ]),
     entityId: entityIdSchema,
   })
@@ -2741,6 +3009,9 @@ export const calendarSubscriptionConversionResponseSchema = z
 
 export const automationExecutionResultSchema = z.union([
   notificationTestQueuedSchema,
+  automationCalendarImportApplyResponseSchema,
+  automationCalendarFeedRevocationResponseSchema,
+  automationConnectorResyncResponseSchema,
   calendarSubscriptionRefreshResponseSchema,
   calendarSubscriptionEventMutationResponseSchema,
   calendarSubscriptionConversionResponseSchema,
@@ -3071,6 +3342,39 @@ export const automationCatalog = [
     outputSchema: calendarSubscriptionResourceSchema,
   },
   {
+    id: "connectors.status",
+    kind: "resource",
+    scopes: ["connectors:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/connectors",
+    mcpName: "suite.connectors.status",
+    mcpUri: "suite://v1/connectors",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationConnectorStatusResourceSchema,
+  },
+  {
+    id: "imports.list",
+    kind: "resource",
+    scopes: ["imports:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/imports",
+    mcpName: "suite.imports.list",
+    mcpUri: "suite://v1/imports{?jobId}",
+    inputSchema: automationCalendarImportResourceInputSchema,
+    outputSchema: automationCalendarImportResourceSchema,
+  },
+  {
+    id: "calendar_feeds.list",
+    kind: "resource",
+    scopes: ["publication:read"],
+    confirmationRequired: false,
+    apiPath: "/api/automation/v1/resources/calendar-feeds",
+    mcpName: "suite.calendar_feeds.list",
+    mcpUri: "suite://v1/calendar-feeds",
+    inputSchema: z.object({}).strict(),
+    outputSchema: automationCalendarFeedResourceSchema,
+  },
+  {
     id: "schedule.get",
     kind: "resource",
     scopes: ["schedule:read"],
@@ -3184,48 +3488,55 @@ export const automationCatalog = [
     id,
     kind: "tool" as const,
     scopes: [
-      id === "notifications.send_test"
-        ? "notifications:test"
-        : id === "planning.update_preferences"
-          ? "planning:write"
-          : id === "application.update_preferences"
-            ? "application:write"
-            : id === "notifications.update_preferences"
-              ? "notifications:write"
-              : id.startsWith("projects.")
-                ? "projects:write"
-                : id.startsWith("tags.")
-                  ? "tags:write"
-                  : id === "notes.mutate"
-                    ? "notes:write"
-                    : id === "task_links.mutate"
-                      ? "task_links:write"
-                      : id === "habits.mutate"
-                        ? "habits:write"
-                        : id.startsWith("counters.") ||
-                            id === "evaluations.write"
-                          ? "metrics:write"
-                          : id.startsWith("tasks.") ||
-                              id.startsWith("recurrence.") ||
-                              id === "subtasks.mutate" ||
-                              id === "time_entries.mutate" ||
-                              id === "day_order.reorder" ||
-                              id === "boards.mutate" ||
-                              id === "sections.mutate" ||
-                              id === "task_views.set" ||
-                              id === "menu_folders.mutate" ||
-                              id === "calendar_subscriptions.convert_event"
-                            ? "tasks:write"
-                            : id.startsWith("schedule.") ||
-                                id === "calendar_subscriptions.refresh" ||
-                                id === "calendar_subscriptions.hide_event"
-                              ? "schedule:write"
-                              : id.startsWith("templates.") ||
-                                  id.startsWith("template_sets.")
-                                ? "templates:write"
-                                : id === "placeholders.resolve"
-                                  ? "pools:write"
-                                  : "focus:write",
+      id === "imports.apply"
+        ? "imports:write"
+        : id === "calendar_feeds.revoke"
+          ? "publication:write"
+          : id === "connectors.resync"
+            ? "connectors:recover"
+            : id === "notifications.send_test"
+              ? "notifications:test"
+              : id === "planning.update_preferences"
+                ? "planning:write"
+                : id === "application.update_preferences"
+                  ? "application:write"
+                  : id === "notifications.update_preferences"
+                    ? "notifications:write"
+                    : id.startsWith("projects.")
+                      ? "projects:write"
+                      : id.startsWith("tags.")
+                        ? "tags:write"
+                        : id === "notes.mutate"
+                          ? "notes:write"
+                          : id === "task_links.mutate"
+                            ? "task_links:write"
+                            : id === "habits.mutate"
+                              ? "habits:write"
+                              : id.startsWith("counters.") ||
+                                  id === "evaluations.write"
+                                ? "metrics:write"
+                                : id.startsWith("tasks.") ||
+                                    id.startsWith("recurrence.") ||
+                                    id === "subtasks.mutate" ||
+                                    id === "time_entries.mutate" ||
+                                    id === "day_order.reorder" ||
+                                    id === "boards.mutate" ||
+                                    id === "sections.mutate" ||
+                                    id === "task_views.set" ||
+                                    id === "menu_folders.mutate" ||
+                                    id ===
+                                      "calendar_subscriptions.convert_event"
+                                  ? "tasks:write"
+                                  : id.startsWith("schedule.") ||
+                                      id === "calendar_subscriptions.refresh" ||
+                                      id === "calendar_subscriptions.hide_event"
+                                    ? "schedule:write"
+                                    : id.startsWith("templates.") ||
+                                        id.startsWith("template_sets.")
+                                      ? "templates:write"
+                                      : id === "placeholders.resolve"
+                                        ? "pools:write"
+                                        : "focus:write",
     ] as const,
     confirmationRequired: true,
     apiPath: "/api/automation/v1/previews",
@@ -3252,6 +3563,9 @@ export const automationCatalog = [
       "notes:write",
       "task_links:write",
       "metrics:write",
+      "imports:write",
+      "publication:write",
+      "connectors:recover",
     ],
     confirmationRequired: false,
     apiPath: "/api/automation/v1/previews/{previewId}/confirm",
@@ -3270,97 +3584,6 @@ export const importTaskCandidateSchema = z.object({
     source: z.string().trim().min(1).max(100),
     sourceRevision: z.string().trim().min(1).max(1024),
   }),
-});
-
-export const calendarImportSourceSchema = z.enum(["ics", "google_ics"]);
-export const calendarImportIssueSchema = z.object({
-  code: z.enum([
-    "malformed_component",
-    "missing_uid",
-    "duplicate_uid",
-    "recurrence_preserved",
-    "attendees_preserved",
-    "alarms_preserved",
-    "unknown_properties_preserved",
-  ]),
-  detail: z.string().min(1).max(2048),
-});
-export const calendarImportCandidateSchema = z.object({
-  externalId: z.string().min(1).max(1024),
-  uid: z.string().min(1).max(1024),
-  summary: z.string().max(1024),
-  rawIcs: z
-    .string()
-    .min(1)
-    .max(4 * 1024 * 1024),
-  recurrence: z.boolean(),
-  attendeeCount: z.number().int().nonnegative(),
-  alarmCount: z.number().int().nonnegative(),
-  unknownProperties: z.array(z.string()).max(100),
-  issues: z.array(calendarImportIssueSchema),
-});
-export const calendarImportReportSchema = z.object({
-  source: calendarImportSourceSchema,
-  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
-  candidates: z.array(calendarImportCandidateSchema).max(10_000),
-  skipped: z.array(calendarImportIssueSchema).max(10_000),
-  totals: z.object({
-    components: z.number().int().nonnegative(),
-    ready: z.number().int().nonnegative(),
-    skipped: z.number().int().nonnegative(),
-    recurring: z.number().int().nonnegative(),
-    attendees: z.number().int().nonnegative(),
-    alarms: z.number().int().nonnegative(),
-    unknownProperties: z.number().int().nonnegative(),
-  }),
-});
-export const calendarImportPreviewRequestSchema = z.object({
-  source: calendarImportSourceSchema,
-  calendarId: entityIdSchema,
-  rawIcs: z
-    .string()
-    .min(1)
-    .max(4 * 1024 * 1024),
-});
-export const calendarImportItemSchema = z.object({
-  externalId: z.string(),
-  uid: z.string(),
-  href: z.string(),
-  state: z.enum(["pending", "applied", "reconciliation_required", "skipped"]),
-  appliedAt: z.iso.datetime().nullable(),
-});
-export const calendarImportJobSchema = z.object({
-  id: entityIdSchema,
-  calendarId: entityIdSchema,
-  source: calendarImportSourceSchema,
-  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
-  state: z.enum(["previewed", "applied", "partial"]),
-  report: calendarImportReportSchema,
-  items: z.array(calendarImportItemSchema),
-  createdAt: z.iso.datetime(),
-  appliedAt: z.iso.datetime().nullable(),
-});
-export const calendarImportMutationResponseSchema = z.object({
-  job: calendarImportJobSchema,
-  replayed: z.boolean(),
-});
-export const calendarFeedCreateRequestSchema = z.object({
-  calendarId: entityIdSchema,
-  label: z.string().trim().min(1).max(100),
-});
-export const calendarFeedCapabilitySchema = z.object({
-  id: entityIdSchema,
-  calendarId: entityIdSchema,
-  label: z.string(),
-  createdAt: z.iso.datetime(),
-  revokedAt: z.iso.datetime().nullable(),
-});
-export const calendarFeedCreateResponseSchema = z.object({
-  capability: calendarFeedCapabilitySchema,
-  url: z.string().min(1),
-});
-export const calendarFeedListResponseSchema = z.object({
-  capabilities: z.array(calendarFeedCapabilitySchema),
 });
 
 export type ApiError = z.infer<typeof apiErrorSchema>;
@@ -3716,3 +3939,25 @@ export const taskImportApplyResponseSchema = z
     applicationPreferences: z.number().int().nonnegative().optional(),
   })
   .strict();
+
+export type AutomationConnectorStatusResource = z.infer<
+  typeof automationConnectorStatusResourceSchema
+>;
+export type AutomationRecoveryStep = z.infer<
+  typeof automationRecoveryStepSchema
+>;
+export type AutomationCalendarImportSummary = z.infer<
+  typeof automationCalendarImportSummarySchema
+>;
+export type AutomationCalendarImportJob = z.infer<
+  typeof automationCalendarImportJobSchema
+>;
+export type AutomationCalendarImportResource = z.infer<
+  typeof automationCalendarImportResourceSchema
+>;
+export type AutomationCalendarFeed = z.infer<
+  typeof automationCalendarFeedSchema
+>;
+export type AutomationCalendarFeedResource = z.infer<
+  typeof automationCalendarFeedResourceSchema
+>;

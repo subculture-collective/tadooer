@@ -26,8 +26,14 @@ const permissionLabel = (scope: AutomationTokenScope): string => {
         ? "choice pools"
         : area === "plugin_data"
           ? "imported plugin data (names and sizes only)"
-          : area;
-  return `${action === "read" ? "Read" : "Manage"} ${subject ?? ""}`;
+          : area === "connectors"
+            ? "calendar connectors (status; never a credential)"
+            : area === "imports"
+              ? "owner-previewed calendar imports"
+              : area === "publication"
+                ? "read-only calendar feeds (never the address)"
+                : area;
+  return `${action === "read" ? "Read" : action === "recover" ? "Retry" : "Manage"} ${subject ?? ""}`;
 };
 
 export const AssistantAccess = ({

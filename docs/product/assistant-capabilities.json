@@ -28,7 +28,7 @@
       "catalog": [],
       "status": "owner-only",
       "issue": 60,
-      "authority": "Fresh provider consent and secret entry remain interactive. Future delegated disconnect needs explicit consequential approval.",
+      "authority": "Fresh provider consent, secret entry and grant disconnect remain interactive (ADR 0038); the assistant never receives or rotates a credential.",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -39,10 +39,13 @@
         "getGoogleStatus",
         "synchronizeGoogle"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": [
+        "connectors.status",
+        "connectors.resync"
+      ],
+      "status": "covered",
       "issue": 60,
-      "authority": "Proposed separate connector read/recovery scopes; existing grant permissions must not widen.",
+      "authority": "connectors:read returns Baikal verification with the stored credential, Google state, granted scopes and freshness plus recovery steps; never a credential. connectors:recover retries a Google sync with the stored grant only; scopes cannot widen and a rejected grant needs the owner (ADR 0038).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -759,10 +762,13 @@
         "previewCalendarImport",
         "applyCalendarImport"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": [
+        "imports.list",
+        "imports.apply"
+      ],
+      "status": "covered",
       "issue": 60,
-      "authority": "Read-only preview; reviewed provenance, exact target, permissions and retry-safe apply.",
+      "authority": "imports:read lists the owner's previewed jobs and candidates without rawIcs. imports:write applies one job bound to its exact input fingerprint and destination calendar; preview writes nothing, an applied job replays without writes (ADR 0038). Uploading the file stays owner-only.",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -773,10 +779,13 @@
         "createCalendarFeed",
         "revokeCalendarFeed"
       ],
-      "catalog": [],
-      "status": "gap",
+      "catalog": [
+        "calendar_feeds.list",
+        "calendar_feeds.revoke"
+      ],
+      "status": "partial",
       "issue": 60,
-      "authority": "Capability creation/revocation is consequential; never expose capability secrets in logs or read resources.",
+      "authority": "publication:read lists capabilities and per-calendar publication counts; no response carries the secret, its hash or the address. publication:write revokes a feed after preview. Creation stays owner-only because the address is shown once at creation (ADR 0038).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -787,9 +796,9 @@
         "applyTaskImport"
       ],
       "catalog": [],
-      "status": "gap",
+      "status": "owner-only",
       "issue": 60,
-      "authority": "Hash-bound reviewed export, all-or-nothing transaction; real source export must not be echoed in tools.",
+      "authority": "The Super Productivity preview is stateless and the export is never stored, so there is no owner-prepared preview for the assistant to bind to; imports.list reports recorded provenance counts only (ADR 0038).",
       "source": "apps/web/src/api.ts"
     },
     {
@@ -857,9 +866,9 @@
       "action": "Authenticated calendar ICS export",
       "webApi": [],
       "catalog": [],
-      "status": "gap",
+      "status": "owner-only",
       "issue": 60,
-      "authority": "The UI downloads through an authenticated link outside api.ts; delegated export needs an explicit read scope and bounded content delivery.",
+      "authority": "The ICS download is a browser file outside api.ts. calendar_feeds.list reports each calendar's published event count instead of delivering the content (ADR 0038).",
       "source": "apps/web/src/calendar-migration.tsx"
     }
   ]

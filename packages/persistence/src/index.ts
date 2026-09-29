@@ -2288,6 +2288,46 @@ export class SuiteDatabase {
     return this.getCalendarImportJob(ownerId, jobId);
   }
 
+  /** ADR 0038: every import job of the owner, newest first. */
+  listCalendarImportJobs(ownerId: string): readonly CalendarImportJobRecord[] {
+    const rows = this.#database
+      .prepare(
+        "SELECT id FROM calendar_import_jobs WHERE owner_id=? ORDER BY created_at DESC, id",
+      )
+      .all(ownerId) as unknown as readonly { id: string }[];
+    return rows.flatMap((row) => {
+      const job = this.getCalendarImportJob(ownerId, row.id);
+      return job === undefined ? [] : [job];
+    });
+  }
+
+  /**
+   * ADR 0038: Super Productivity import provenance per entity kind. The
+   * export itself is not stored; this counts what earlier imports recorded.
+   */
+  summarizeTaskImportSources(ownerId: string): readonly {
+    readonly entityKind: string;
+    readonly count: number;
+    readonly lastImportedAt: string;
+  }[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT entity_kind, COUNT(*) AS count, MAX(imported_at) AS last_imported_at
+         FROM task_import_sources WHERE owner_id=? AND source_kind='super_productivity'
+         GROUP BY entity_kind ORDER BY entity_kind`,
+      )
+      .all(ownerId) as unknown as readonly {
+      entity_kind: string;
+      count: number;
+      last_imported_at: string;
+    }[];
+    return rows.map((row) => ({
+      entityKind: row.entity_kind,
+      count: row.count,
+      lastImportedAt: row.last_imported_at,
+    }));
+  }
+
   listPublishedCalendarRaw(
     ownerId: string,
     calendarId: string,
