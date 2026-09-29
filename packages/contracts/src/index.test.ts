@@ -762,7 +762,7 @@ describe("Suite contracts", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(names).size).toBe(names.length);
     expect(new Set(uris).size).toBe(uris.length);
-    expect(automationCatalog).toHaveLength(99);
+    expect(automationCatalog).toHaveLength(102);
     expect(ids).toEqual(
       expect.arrayContaining([
         "tasks.update",
@@ -801,6 +801,9 @@ describe("Suite contracts", () => {
         "imports.apply",
         "calendar_feeds.list",
         "calendar_feeds.revoke",
+        "calendar_bridge.status",
+        "calendar_bridge.decide_deletion",
+        "calendar_bridge.resolve_conflict",
       ]),
     );
     for (const entry of automationCatalog) {
@@ -929,6 +932,23 @@ describe("ADR 0035 confirmation policy", () => {
       );
       expect(classify(operation, { action: "update" }).policy).toBe("ordinary");
     }
+    // ADR 0044: approving a bridge deletion lets the next pass delete the
+    // other copy; keeping it writes nothing. Resolution always replaces.
+    expect(
+      classify("calendar_bridge.decide_deletion", { decision: "approve" }),
+    ).toEqual({
+      policy: "consequential",
+      category: "deletion",
+      action: "approve",
+    });
+    expect(
+      classify("calendar_bridge.decide_deletion", { decision: "keep" }).policy,
+    ).toBe("ordinary");
+    expect(classify("calendar_bridge.resolve_conflict", {})).toEqual({
+      policy: "consequential",
+      category: "destructive_replacement",
+      action: null,
+    });
   });
 
   it("names only actions the operation input actually accepts", () => {

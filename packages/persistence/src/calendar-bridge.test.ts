@@ -363,3 +363,95 @@ it("restores mappings, links, tombstones and the outbox from a backup", async ()
     restored.close();
   });
 });
+
+// ADR 0044: declining a deletion keeps the surviving copy and unlinks the
+// event; a resolution can be bound to the link revision the owner reviewed.
+it("declines a pending deletion and binds resolution to the link revision", async () => {
+  await withTemporaryDirectory((directory) => {
+    const { database, store } = open(directory);
+    const operation = linkWithCreate(store);
+    store.completeOperation(operation.id, {
+      google: present('"g1"', "d1"),
+      baikal: present('"b1"', "d1"),
+      accepted: { kind: "present", digest: "d1", snapshot: "{}" },
+      now,
+    });
+    const link = store.getLink(linkId);
+    if (link === undefined) throw new Error("link missing");
+    const conflict = store.openConflict({
+      id: "88888888-8888-4888-8888-888888888888",
+      link,
+      reason: "concurrent-change",
+      google: {
+        kind: "present",
+        revision: '"g2"',
+        digest: "dg",
+        snapshot: '{"g":1}',
+      },
+      baikal: {
+        kind: "present",
+        revision: '"b2"',
+        digest: "db",
+        snapshot: '{"b":1}',
+      },
+      now,
+    });
+    const reviewed = store.getLink(linkId)?.revision ?? 0;
+    const resolve = (expectedLinkRevision: number) =>
+      store.resolveConflict({
+        ownerId: owner,
+        mappingId,
+        conflictId: conflict.id,
+        keep: "google",
+        operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        now,
+        expectedLinkRevision,
+      });
+    expect(resolve(reviewed + 1).kind).toBe("conflict");
+    expect(store.listOpenConflicts(mappingId)).toHaveLength(1);
+    expect(resolve(reviewed).kind).toBe("resolved");
+
+    // Settle, then observe a one-sided deletion awaiting approval.
+    const pending = store.listUnfinishedOperations(mappingId)[0];
+    if (pending === undefined) throw new Error("operation missing");
+    store.markDispatched(pending.id, now);
+    store.completeOperation(pending.id, {
+      google: present('"g2"', "dg"),
+      baikal: present('"b3"', "dg"),
+      accepted: { kind: "present", digest: "dg", snapshot: '{"g":1}' },
+      now,
+    });
+    store.observeSide(
+      linkId,
+      "google",
+      { kind: "deleted", revision: "proof-1", digest: null, snapshot: null },
+      now,
+    );
+    store.setLinkStatus(linkId, "blocked", "deletion-approval", now);
+    const blocked = store.getLink(linkId);
+    if (blocked === undefined) throw new Error("link missing");
+    const decline = (ownerId: string, expectedRevision: number) =>
+      store.declineDeletion({
+        ownerId,
+        mappingId,
+        linkId,
+        expectedRevision,
+        now,
+      });
+    expect(decline(other, blocked.revision).kind).toBe("not-found");
+    expect(decline(owner, blocked.revision + 1).kind).toBe("conflict");
+    const declined = decline(owner, blocked.revision);
+    expect(declined).toMatchObject({
+      kind: "declined",
+      link: {
+        status: "excluded",
+        statusReason: "deletion-declined",
+        deletionApproval: null,
+        revision: blocked.revision + 1,
+      },
+    });
+    expect(decline(owner, blocked.revision + 1).kind).toBe("not-pending");
+    expect(store.listUnfinishedOperations(mappingId)).toEqual([]);
+    database.close();
+  });
+});

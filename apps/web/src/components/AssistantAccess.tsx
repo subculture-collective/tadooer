@@ -33,8 +33,20 @@ const permissionLabel = (scope: AutomationTokenScope): string => {
               ? "owner-previewed calendar imports"
               : area === "publication"
                 ? "read-only calendar feeds (never the address)"
-                : area;
-  return `${action === "read" ? "Read" : action === "recover" ? "Retry" : "Manage"} ${subject ?? ""}`;
+                : area === "calendar_bridge"
+                  ? action === "review"
+                    ? "calendar bridge deletions and conflicts"
+                    : "calendar bridge status"
+                  : area;
+  return `${
+    action === "read"
+      ? "Read"
+      : action === "recover"
+        ? "Retry"
+        : action === "review"
+          ? "Decide"
+          : "Manage"
+  } ${subject ?? ""}`;
 };
 
 // ADR 0035: consequential actions (deletion, bulk, replacement, takeover,
