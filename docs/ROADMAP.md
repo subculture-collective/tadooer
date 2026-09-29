@@ -415,6 +415,7 @@ read-only calendar feed, and use provenance-aware import adapters.
 - Source adapter framework for later Super Productivity, Apple Reminders, Google
   Tasks, and other products
 - Historical Phase 7 scope covered one-time migration and publication. The separately approved opt-in Google/Baikal bridge follows ADR 0017 and issues #35–#50.
+  As of 2026-09-29, #35, #40, #45, #46 and #48 are implemented and tested against fake providers and disposable Baikal (ADRs 0039 and 0041–0044). #36 has consent and writable-role handling but no Google write adapters. No real Google account has been used; #50 owns that qualification, and the bridge stays opt-in with no mapping configured in production.
 
 ### Exit evidence
 
