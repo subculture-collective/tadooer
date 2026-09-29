@@ -252,6 +252,26 @@ export const baikalStatusResponseSchema = z.object({
   calendars: z.array(calendarCollectionSchema),
 });
 
+/** Read-only setup probe of the server-configured Baikal endpoint (ADR 0039). */
+export const baikalProbeCalendarSchema = z.object({
+  href: z.string().min(1),
+  displayName: z.string().min(1),
+  supportsEvents: z.boolean(),
+  supportsTodos: z.boolean(),
+  privileges: z.array(z.string().min(1).max(128)).max(64).nullable(),
+  canRead: z.boolean().nullable(),
+  canWrite: z.boolean().nullable(),
+});
+
+export const baikalProbeResponseSchema = z.object({
+  endpoint: z.url(),
+  davClasses: z.array(z.string().min(1).max(128)).max(64),
+  principalHref: z.string().min(1),
+  calendarHomeHref: z.string().min(1),
+  calendars: z.array(baikalProbeCalendarSchema).max(50),
+  writableEventCalendars: z.number().int().nonnegative(),
+});
+
 export const calendarProviderKindSchema = z.enum([
   "baikal",
   "caldav",
@@ -3230,6 +3250,7 @@ export type SessionResponse = z.infer<typeof sessionResponseSchema>;
 export type BaikalConnectRequest = z.infer<typeof baikalConnectRequestSchema>;
 export type CalendarCollection = z.infer<typeof calendarCollectionSchema>;
 export type BaikalStatusResponse = z.infer<typeof baikalStatusResponseSchema>;
+export type BaikalProbeResponse = z.infer<typeof baikalProbeResponseSchema>;
 export type CalendarEventIdentity = z.infer<typeof calendarEventIdentitySchema>;
 export type Task = z.infer<typeof taskSchema>;
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;

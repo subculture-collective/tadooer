@@ -38,6 +38,7 @@
     "verify:phase9": "./deploy/verify-phase9.sh",
     "verify:phase10": "./deploy/verify-phase10.sh",
     "verify:phase11": "./deploy/verify-phase11.sh",
+    "verify:baikal-setup": "./deploy/verify-baikal-setup.sh",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

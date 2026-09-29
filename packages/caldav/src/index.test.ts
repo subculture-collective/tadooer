@@ -5,9 +5,11 @@ import {
   deleteCalDavEvent,
   discoverCalDavCalendars,
   parseBoundedVEvent,
+  probeCalDavEndpoint,
   readBoundedCalDavEvents,
   replaceCalDavEvent,
   serializeBoundedVEvent,
+  summarizeCalDavPrivileges,
 } from "./index.ts";
 
 const fixture = (name: string): string =>
@@ -285,6 +287,213 @@ describe("bounded CalDAV event port", () => {
     expect((await request("replace", 412)).result).toEqual({
       ok: false,
       reason: "precondition-failed",
+    });
+  });
+});
+
+describe("CalDAV setup probe (ADR 0039)", () => {
+  const davHeader =
+    "1, 3, extended-mkcol, access-control, calendar-access, calendar-proxy";
+  const multistatus = (body: string): string =>
+    `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">${body}</d:multistatus>`;
+  const ok = (href: string, prop: string): string =>
+    `<d:response><d:href>${href}</d:href><d:propstat><d:prop>${prop}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
+  const privilegeSet = (names: readonly string[]): string =>
+    `<d:current-user-privilege-set>${names.map((name) => `<d:privilege><${name}/></d:privilege>`).join("")}</d:current-user-privilege-set>`;
+  const xml = (body: string): Response =>
+    new Response(multistatus(body), {
+      status: 207,
+      headers: { "Content-Type": "application/xml" },
+    });
+
+  const server = (
+    overrides: Readonly<Record<string, () => Response>> = {},
+  ): typeof fetch => {
+    const documents: Readonly<Record<string, () => Response>> = {
+      "OPTIONS http://baikal.test/dav.php/": () =>
+        new Response(null, { status: 200, headers: { DAV: davHeader } }),
+      "PROPFIND http://baikal.test/dav.php/": () =>
+        xml(
+          ok(
+            "/dav.php/",
+            "<d:current-user-principal><d:href>/dav.php/principals/alice/</d:href></d:current-user-principal>",
+          ),
+        ),
+      "PROPFIND http://baikal.test/dav.php/principals/alice/": () =>
+        xml(
+          ok(
+            "/dav.php/principals/alice/",
+            "<cal:calendar-home-set><d:href>/dav.php/calendars/alice/</d:href></cal:calendar-home-set>",
+          ),
+        ),
+      "PROPFIND http://baikal.test/dav.php/calendars/alice/": () =>
+        xml(
+          [
+            ["default", "Default", "VEVENT"],
+            ["shared", "Shared", "VEVENT"],
+            ["todo", "Tasks", "VTODO"],
+            ["unreported", "Unreported", "VEVENT"],
+          ]
+            .map(([name, label, component]) =>
+              ok(
+                `/dav.php/calendars/alice/${name ?? ""}/`,
+                `<d:resourcetype><d:collection/><cal:calendar/></d:resourcetype><d:displayname>${label ?? ""}</d:displayname><cal:supported-calendar-component-set><cal:comp name="${component ?? ""}"/></cal:supported-calendar-component-set>`,
+              ),
+            )
+            .join(""),
+        ),
+      "PROPFIND http://baikal.test/dav.php/calendars/alice/default/": () =>
+        xml(
+          ok(
+            "/dav.php/calendars/alice/default/",
+            privilegeSet([
+              "cal:read-free-busy",
+              "d:read",
+              "d:write",
+              "d:write-content",
+              "d:bind",
+              "d:unbind",
+            ]),
+          ),
+        ),
+      "PROPFIND http://baikal.test/dav.php/calendars/alice/shared/": () =>
+        xml(
+          ok(
+            "/dav.php/calendars/alice/shared/",
+            privilegeSet(["d:read", "cal:read-free-busy"]),
+          ),
+        ),
+      "PROPFIND http://baikal.test/dav.php/calendars/alice/todo/": () =>
+        new Response("", { status: 403 }),
+      "PROPFIND http://baikal.test/dav.php/calendars/alice/unreported/": () =>
+        xml(
+          `<d:response><d:href>/dav.php/calendars/alice/unreported/</d:href><d:propstat><d:prop><d:current-user-privilege-set/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response>`,
+        ),
+      ...overrides,
+    };
+    return (input, init) => {
+      expect(init?.redirect).toBe("manual");
+      const key = `${init?.method ?? "GET"} ${requestUrl(input)}`;
+      const response = documents[key];
+      return Promise.resolve(
+        response === undefined ? new Response("", { status: 404 }) : response(),
+      );
+    };
+  };
+
+  const probe = (fetcher: typeof fetch) =>
+    probeCalDavEndpoint({
+      endpoint: new URL("http://baikal.test/dav.php/"),
+      username: "alice",
+      password: "secret",
+      fetch: fetcher,
+    });
+
+  it("reports capability classes and per-calendar read/write access", async () => {
+    const result = await probe(server());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.davClasses).toContain("calendar-access");
+    expect(result.calendarHomeUrl.pathname).toBe("/dav.php/calendars/alice/");
+    expect(
+      result.calendars.map(({ displayName, canRead, canWrite }) => ({
+        displayName,
+        canRead,
+        canWrite,
+      })),
+    ).toEqual([
+      { displayName: "Default", canRead: true, canWrite: true },
+      { displayName: "Shared", canRead: true, canWrite: false },
+      { displayName: "Tasks", canRead: false, canWrite: false },
+      { displayName: "Unreported", canRead: null, canWrite: null },
+    ]);
+    expect(result.calendars[0]?.privileges).toContain("read-free-busy");
+    expect(result.calendars[3]?.privileges).toBeNull();
+  });
+
+  it("rejects a WebDAV endpoint without CalDAV calendar access", async () => {
+    expect(
+      await probe(
+        server({
+          "OPTIONS http://baikal.test/dav.php/": () =>
+            new Response(null, { status: 200, headers: { DAV: "1, 2, 3" } }),
+        }),
+      ),
+    ).toEqual({ ok: false, reason: "caldav-unsupported" });
+  });
+
+  it("reports redirects without following them", async () => {
+    const redirect = () =>
+      new Response(null, {
+        status: 301,
+        headers: { Location: "https://baikal.test/dav.php/" },
+      });
+    expect(
+      await probe(server({ "OPTIONS http://baikal.test/dav.php/": redirect })),
+    ).toEqual({ ok: false, reason: "redirected" });
+    expect(
+      await probe(
+        server({
+          "PROPFIND http://baikal.test/dav.php/principals/alice/": redirect,
+        }),
+      ),
+    ).toEqual({ ok: false, reason: "redirected" });
+  });
+
+  it("maps authentication, admin paths and transport failures", async () => {
+    expect(
+      await probe(
+        server({
+          "OPTIONS http://baikal.test/dav.php/": () =>
+            new Response("", { status: 401 }),
+        }),
+      ),
+    ).toEqual({ ok: false, reason: "authentication-required" });
+    expect(
+      await probe(
+        server({
+          "OPTIONS http://baikal.test/dav.php/": () =>
+            new Response("<html/>", { status: 405 }),
+        }),
+      ),
+    ).toEqual({ ok: false, reason: "invalid-protocol" });
+    expect(
+      await probe(() => Promise.reject(new TypeError("fetch failed"))),
+    ).toEqual({ ok: false, reason: "transport-failed" });
+  });
+
+  it("refuses a calendar href on another origin before reading privileges", async () => {
+    const requests: string[] = [];
+    const inner = server({
+      "PROPFIND http://baikal.test/dav.php/calendars/alice/": () =>
+        xml(
+          ok(
+            "http://169.254.169.254/dav.php/calendars/alice/default/",
+            "<d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>",
+          ),
+        ),
+    });
+    const result = await probe((input, init) => {
+      requests.push(requestUrl(input));
+      return inner(input, init);
+    });
+    expect(result).toEqual({ ok: false, reason: "unsafe-remote-url" });
+    expect(requests.every((url) => url.startsWith("http://baikal.test/"))).toBe(
+      true,
+    );
+  });
+
+  it("derives write access from RFC 3744 aggregates", () => {
+    expect(summarizeCalDavPrivileges(["all"])).toEqual({
+      canRead: true,
+      canWrite: true,
+    });
+    expect(
+      summarizeCalDavPrivileges(["read", "write-content", "bind", "unbind"]),
+    ).toEqual({ canRead: true, canWrite: true });
+    expect(summarizeCalDavPrivileges(["read", "write-content"])).toEqual({
+      canRead: true,
+      canWrite: false,
     });
   });
 });

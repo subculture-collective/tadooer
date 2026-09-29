@@ -325,6 +325,93 @@ export const connectorStatus = (reason: ConnectorFailure): number =>
         ? 409
         : 502;
 
+/**
+ * One actionable, credential-free message per connector failure (ADR 0039).
+ * Messages name the next step and never echo the username, password,
+ * request body or a remote response body.
+ */
+export const describeConnectorFailure = (
+  reason: ConnectorFailure,
+): {
+  readonly status: number;
+  readonly code: string;
+  readonly message: string;
+} => {
+  const status = connectorStatus(reason);
+  switch (reason) {
+    case "authentication-required":
+      return {
+        status,
+        code: "BAIKAL_AUTHENTICATION_FAILED",
+        message:
+          "Baïkal rejected the username or password. Check the DAV user under Users and resources in Baïkal's admin interface; the admin account cannot sign in to CalDAV.",
+      };
+    case "authorization-denied":
+      return {
+        status,
+        code: "BAIKAL_PERMISSION_DENIED",
+        message:
+          "Baïkal accepted the sign-in but denied access to this account's calendars. Check the user's calendar permissions in Baïkal.",
+      };
+    case "not-found":
+      return {
+        status,
+        code: "BAIKAL_ENDPOINT_NOT_FOUND",
+        message:
+          "The configured Baïkal endpoint has no CalDAV principal for this user. Set BAIKAL_ENDPOINT to Baïkal's /dav.php/ address.",
+      };
+    case "remote-unavailable":
+      return {
+        status,
+        code: "BAIKAL_SERVER_ERROR",
+        message:
+          "Baïkal answered with a server error. Check that the Baïkal service is healthy, then try again.",
+      };
+    case "invalid-protocol":
+      return {
+        status,
+        code: "BAIKAL_NOT_CALDAV",
+        message:
+          "The configured endpoint did not answer as a CalDAV server. Set BAIKAL_ENDPOINT to Baïkal's /dav.php/ address, not the admin interface or site root.",
+      };
+    case "caldav-unsupported":
+      return {
+        status,
+        code: "BAIKAL_CALDAV_DISABLED",
+        message:
+          "The endpoint answered WebDAV requests but does not offer CalDAV calendars. Enable CalDAV in Baïkal's settings and check that BAIKAL_ENDPOINT ends in /dav.php/.",
+      };
+    case "unsafe-remote-url":
+      return {
+        status,
+        code: "BAIKAL_UNSAFE_URL",
+        message:
+          "Baïkal advertised an address outside the configured endpoint origin. Make Baïkal's public host and port match BAIKAL_ENDPOINT; the Suite does not contact other hosts.",
+      };
+    case "redirected":
+      return {
+        status,
+        code: "BAIKAL_REDIRECTED",
+        message:
+          "The endpoint answered with a redirect, which the Suite does not follow. Set BAIKAL_ENDPOINT to the final /dav.php/ address, including https:// when Baïkal requires TLS.",
+      };
+    case "transport-failed":
+      return {
+        status,
+        code: "BAIKAL_UNREACHABLE",
+        message:
+          "The Suite could not reach the configured Baïkal endpoint. Check the hostname, port, network and TLS certificate; install a private certificate authority with NODE_EXTRA_CA_CERTS.",
+      };
+    case "credential-unavailable":
+      return {
+        status,
+        code: "BAIKAL_RECONNECT_REQUIRED",
+        message:
+          "The saved Baïkal credential no longer matches the configured endpoint or credential key. Connect again with the Baïkal username and password.",
+      };
+  }
+};
+
 export const sendEmpty = (response: ServerResponse, status: number): void => {
   response.writeHead(status, securityHeaders);
   response.end();

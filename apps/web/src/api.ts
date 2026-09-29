@@ -20,6 +20,7 @@ import {
   activeSessionCommandResponseSchema,
   activeSessionCommandSchema,
   activeSessionSchema,
+  baikalProbeResponseSchema,
   baikalStatusResponseSchema,
   clientRegistrationResponseSchema,
   projectSchema,
@@ -74,6 +75,7 @@ import {
   sessionResponseSchema,
   setupStatusResponseSchema,
   type BaikalConnectRequest,
+  type BaikalProbeResponse,
   type BaikalStatusResponse,
   type ActiveSession,
   type ActiveSessionCommand,
@@ -345,6 +347,17 @@ export const connectBaikal = (
 ): Promise<BaikalStatusResponse> =>
   request("/api/connectors/baikal", baikalStatusResponseSchema, {
     method: "PUT",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify(input),
+  });
+
+/** Read-only setup check; stores nothing (ADR 0039). */
+export const probeBaikal = (
+  input: BaikalConnectRequest,
+  csrfToken: string,
+): Promise<BaikalProbeResponse> =>
+  request("/api/connectors/baikal/probe", baikalProbeResponseSchema, {
+    method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
     body: JSON.stringify(input),
   });

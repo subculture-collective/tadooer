@@ -1,4 +1,7 @@
-import type { BaikalStatusResponse } from "@suite/contracts";
+import type {
+  BaikalProbeResponse,
+  BaikalStatusResponse,
+} from "@suite/contracts";
 import {
   baikalConnectRequestSchema,
   googleSyncRequestSchema,
@@ -11,7 +14,7 @@ import {
   securityHeaders,
 } from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
-import { connectorStatus } from "./shared.ts";
+import { describeConnectorFailure } from "./shared.ts";
 
 export const handleConnectors: RouteHandler = async (
   request,
@@ -30,12 +33,8 @@ export const handleConnectors: RouteHandler = async (
     }
     const result = await connector.status(session.owner.id);
     if (!result.ok) {
-      sendError(
-        response,
-        connectorStatus(result.reason),
-        "BAIKAL_UNAVAILABLE",
-        "Baïkal connection could not be verified",
-      );
+      const failure = describeConnectorFailure(result.reason);
+      sendError(response, failure.status, failure.code, failure.message);
       return true;
     }
     const body: BaikalStatusResponse = result.status;
@@ -85,17 +84,66 @@ export const handleConnectors: RouteHandler = async (
       parsed.data.password,
     );
     if (!result.ok) {
-      console.warn("connector.baikal.verification_failed");
-      sendError(
-        response,
-        connectorStatus(result.reason),
-        "BAIKAL_VERIFICATION_FAILED",
-        "Baïkal credentials or endpoint could not be verified",
-      );
+      console.warn("connector.baikal.verification_failed", {
+        reason: result.reason,
+      });
+      const failure = describeConnectorFailure(result.reason);
+      sendError(response, failure.status, failure.code, failure.message);
       return true;
     }
     console.info("connector.baikal.verified");
     sendJson(response, 200, result.status);
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/connectors/baikal/probe") {
+    if (!sameOrigin(request)) {
+      sendError(
+        response,
+        403,
+        "ORIGIN_REQUIRED",
+        "Same-origin request required",
+      );
+      return true;
+    }
+    const session = auth.authenticate(request, true);
+    if (session === undefined) {
+      sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
+      return true;
+    }
+    if (
+      !auth.csrfMatches(
+        session,
+        request.headers["x-csrf-token"] as string | undefined,
+      )
+    ) {
+      sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
+      return true;
+    }
+    const parsed = baikalConnectRequestSchema.safeParse(
+      await readJson(request),
+    );
+    if (!parsed.success) {
+      sendError(
+        response,
+        400,
+        "INVALID_CONNECTOR",
+        "Baïkal credentials are invalid",
+      );
+      return true;
+    }
+    const result = await connector.probe(
+      parsed.data.username,
+      parsed.data.password,
+    );
+    if (!result.ok) {
+      console.warn("connector.baikal.probe_failed", { reason: result.reason });
+      const failure = describeConnectorFailure(result.reason);
+      sendError(response, failure.status, failure.code, failure.message);
+      return true;
+    }
+    const body: BaikalProbeResponse = result.probe;
+    sendJson(response, 200, body);
     return true;
   }
 
