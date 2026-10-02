@@ -88,7 +88,7 @@ observes it read-only and must explicitly take over before controlling it.
 
 While the web app is open and signed in, it keeps one connection to
 `GET /api/sync/events` (ADR 0045). The server sends hints on it: the sync feed
-moved, or records outside the feed changed (notes, boards, time entries,
+moved, or records outside the feed changed (boards, time entries,
 preferences and the like). A hint carries no content. The app answers a feed
 hint with an ordinary sync round and a records hint by reloading the views
 that are open, so a change made on one device shows on another within a
@@ -216,11 +216,22 @@ replay, and the disposable recovery image. Live ntfy acceptance uses a dedicated
 write-only publisher on NUC's private `management` network as documented in
 [`docs/operations/tadooer-production.md`](docs/operations/tadooer-production.md).
 
-Build the desktop bundle with `pnpm package:desktop`. Its default authority is
-`http://127.0.0.1:18080`; set `SUITE_SERVER_URL` to an HTTPS origin for a remote
-deployment. The shell rejects non-loopback plaintext HTTP, URL credentials,
-paths, queries, fragments, cross-origin navigation, embedded webviews, and
-renderer Node access.
+Build the Linux desktop bundle, its `tar.gz` and a SHA-256 file with
+`pnpm package:desktop`; `pnpm desktop:artifact` prints the name and checksum
+for the release manifest. On first start the app asks for the server address
+and checks `/api/build` there before storing it; `SUITE_SERVER_URL` overrides
+the stored address. It accepts HTTPS, loopback HTTP, and plaintext HTTP to a
+private IP address only after an explicit confirmation. It rejects URL
+credentials, paths, queries, fragments, cross-origin navigation, embedded
+webviews, and renderer Node access.
+
+The shell adds a tray with sync status, "Quick capture" and "Sync now", a
+single-instance lock, opt-in start at login and close-to-tray, and
+`tadooer://open/<path>` links. The page reaches it through three validated
+preload calls and nothing else. It stores one settings file and no owner data.
+Installation, checks and what remains for macOS and Windows are in
+[`docs/operations/desktop.md`](docs/operations/desktop.md); the boundary is
+[ADR 0047](docs/adr/0047-desktop-shell-capabilities.md).
 
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).

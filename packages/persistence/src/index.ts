@@ -21,6 +21,7 @@ import {
 } from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 import { SqliteNoteStore } from "./note-store.ts";
+import type { NoteCreateInput, NotePatch, NoteRecord } from "./note-store.ts";
 import { captureMigration, SqliteCaptureStore } from "./capture-store.ts";
 import {
   DataRestoreError,
@@ -44,7 +45,12 @@ export type {
   CapturePreferencesRecord,
   CaptureUrlBehavior,
 } from "./capture-store.ts";
-export type { NoteMutationResult, NoteRecord } from "./note-store.ts";
+export type {
+  NoteCreateInput,
+  NoteMutationResult,
+  NotePatch,
+  NoteRecord,
+} from "./note-store.ts";
 import {
   SqliteTaskLinkStore,
   taskLinksMigration,
@@ -1736,6 +1742,19 @@ const migrations: readonly Migration[] = [
         DEFAULT 0 CHECK (retained_floor >= 0);
     `,
   },
+  {
+    // ADR 0046: notes join the sync feed. Notes written before this
+    // migration have no feed change, so a client with a valid cursor would
+    // never receive them. Resetting the epoch makes every client replace its
+    // cache from a snapshot once; queued outbox operations replay over it.
+    id: "0049_sync_notes_epoch_reset",
+    sql: `
+      DELETE FROM sync_changes;
+      UPDATE sync_owner_state
+        SET epoch=lower(hex(randomblob(16))),next_sequence=1,retained_floor=0,
+            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
+    `,
+  },
 ];
 
 /**
@@ -1904,7 +1923,20 @@ export class SuiteDatabase {
       getTask: (ownerId, taskId, includeInactive) =>
         this.getTask(ownerId, taskId, includeInactive),
     });
-    this.notes = new SqliteNoteStore(database);
+    // ADR 0046: a note write and its feed change share one transaction.
+    this.notes = new SqliteNoteStore(
+      database,
+      (ownerId, noteId, kind, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "note",
+          noteId,
+          kind,
+          revision,
+          now,
+        );
+      },
+    );
     this.pluginData = new SqlitePluginDataStore(database);
     this.taskArchive = new SqliteTaskArchiveStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
@@ -5306,6 +5338,7 @@ export class SuiteDatabase {
     readonly projects: readonly ProjectRecord[];
     readonly tags: readonly TagRecord[];
     readonly subtasks: readonly SubtaskRecord[];
+    readonly notes: readonly NoteRecord[];
     readonly templates: readonly TaskTemplateRecord[];
     readonly templateBlueprints: readonly TemplateSubtaskBlueprintRecord[];
     readonly templateSets: readonly TemplateSetRecord[];
@@ -5321,6 +5354,7 @@ export class SuiteDatabase {
       projects: this.listProjects(ownerId),
       tags: this.listTags(ownerId),
       subtasks,
+      notes: this.notes.list(ownerId),
       templates,
       templateBlueprints: templates.flatMap((template) =>
         this.listTemplateSubtaskBlueprints(template.id),
@@ -7388,6 +7422,119 @@ export class SuiteDatabase {
   }
 
   /**
+   * ADR 0046: note create, patch and delete from the outbox. A note keeps
+   * one record revision: a patch or delete whose base revision is not the
+   * current one is a resource conflict that changes nothing, and the
+   * canonical note is re-sent so the client can show both versions. A note
+   * that no longer exists cannot be told from one that never did; both are
+   * resource conflicts.
+   */
+  applyNoteSync(input: {
+    readonly ownerId: string;
+    readonly clientId: string;
+    readonly operationId: string;
+    readonly requestHash: string;
+    readonly command:
+      | ({ readonly action: "create" } & NoteCreateInput)
+      | {
+          readonly action: "update";
+          readonly id: string;
+          readonly baseRevision: number;
+          readonly patch: NotePatch;
+        }
+      | {
+          readonly action: "delete";
+          readonly id: string;
+          readonly baseRevision: number;
+        };
+    readonly now: string;
+  }): {
+    readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
+    readonly record?: NoteRecord;
+    readonly fields?: readonly string[];
+    readonly revision?: number;
+  } {
+    const { command } = input;
+    return this.#applySyncOperation<NoteRecord>(
+      { ...input, id: command.id, kind: "note" },
+      () => {
+        const current = this.notes.get(input.ownerId, command.id);
+        const failure = (fields: readonly string[]) => ({
+          kind: "conflict" as const,
+          fields,
+          revision: current?.revision ?? null,
+          record: current,
+        });
+        if (command.action === "create") {
+          // The ID may also belong to another owner; either way it is taken.
+          if (current !== undefined) return failure(["record"]);
+        } else if (current === undefined) return failure(["record"]);
+        else if (current.revision !== command.baseRevision)
+          return failure(["revision"]);
+        const association =
+          command.action === "create"
+            ? command
+            : command.action === "update"
+              ? command.patch
+              : {};
+        // An archived project or tag stays a valid target (ADR 0019); one
+        // that does not exist for this owner names the missing reference.
+        if (
+          association.projectId != null &&
+          !this.notes.associationExists(
+            input.ownerId,
+            association.projectId,
+            null,
+          )
+        )
+          return failure(["project"]);
+        if (
+          association.tagId != null &&
+          !this.notes.associationExists(input.ownerId, null, association.tagId)
+        )
+          return failure(["tag"]);
+        const result =
+          command.action === "create"
+            ? this.notes.create(
+                input.ownerId,
+                {
+                  id: command.id,
+                  content: command.content,
+                  projectId: command.projectId,
+                  tagId: command.tagId,
+                  pinnedToToday: command.pinnedToToday,
+                },
+                input.now,
+              )
+            : command.action === "update"
+              ? this.notes.update(
+                  input.ownerId,
+                  command.id,
+                  command.baseRevision,
+                  command.patch,
+                  input.now,
+                )
+              : this.notes.delete(
+                  input.ownerId,
+                  command.id,
+                  command.baseRevision,
+                  input.now,
+                );
+        if (result.kind === "conflict") return failure(["record"]);
+        if (result.kind === "invalid") return failure(["fields"]);
+        const record = result.notes[0];
+        return {
+          kind: "applied",
+          record,
+          revision:
+            record?.revision ??
+            (command.action === "delete" ? command.baseRevision + 1 : 1),
+        };
+      },
+    );
+  }
+
+  /**
    * Shared idempotent envelope for non-task outbox operations: a stored
    * outcome replays (or reports an idempotency conflict), otherwise the
    * body runs inside one transaction and its outcome is recorded.
@@ -7398,7 +7545,7 @@ export class SuiteDatabase {
       readonly clientId: string;
       readonly operationId: string;
       readonly requestHash: string;
-      readonly kind: "project" | "tag" | "subtask";
+      readonly kind: "project" | "tag" | "subtask" | "note";
       readonly id: string;
       readonly now: string;
     },
@@ -7418,24 +7565,32 @@ export class SuiteDatabase {
     readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
     readonly record?: Entity;
     readonly fields?: readonly string[];
+    /**
+     * The revision recorded with the outcome. A deletion has no record left
+     * to read it from, so the sync route reports this one.
+     */
+    readonly revision?: number;
   } {
     const load = (): Entity | undefined =>
       (input.kind === "project"
         ? this.#project(input.ownerId, input.id)
         : input.kind === "tag"
           ? this.#tag(input.ownerId, input.id)
-          : this.getSubtask(input.ownerId, input.id)) as Entity | undefined;
+          : input.kind === "note"
+            ? this.notes.get(input.ownerId, input.id)
+            : this.getSubtask(input.ownerId, input.id)) as Entity | undefined;
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
       const previous = this.#database
         .prepare(
-          "SELECT request_hash,state,conflict_fields FROM sync_operation_outcomes WHERE owner_id=? AND client_id=? AND operation_id=?",
+          "SELECT request_hash,state,conflict_fields,revision FROM sync_operation_outcomes WHERE owner_id=? AND client_id=? AND operation_id=?",
         )
         .get(input.ownerId, input.clientId, input.operationId) as
         | {
             request_hash: string;
             state: string;
             conflict_fields: string | null;
+            revision: number | null;
           }
         | undefined;
       if (previous !== undefined) {
@@ -7446,6 +7601,9 @@ export class SuiteDatabase {
         return {
           kind: previous.state === "conflict" ? "conflict" : "replayed",
           ...(record === undefined ? {} : { record }),
+          ...(previous.revision === null
+            ? {}
+            : { revision: previous.revision }),
           ...(previous.state === "conflict"
             ? {
                 fields: JSON.parse(
@@ -7486,6 +7644,7 @@ export class SuiteDatabase {
       return {
         kind: result.kind,
         ...(result.record === undefined ? {} : { record: result.record }),
+        ...(result.revision === null ? {} : { revision: result.revision }),
         ...(result.kind === "conflict" ? { fields: result.fields } : {}),
       };
     } catch (error) {

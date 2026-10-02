@@ -38,7 +38,7 @@ printf '%s' "$task_state" | node deploy/phase0-task-smoke.mjs verify "$base_url"
 image_id="$(compose images --quiet suite | xargs docker image inspect --format '{{.Id}}')"
 case "$image_id" in sha256:????????????????????????????????????????????????????????????????) ;; *) echo "Invalid image digest" >&2; exit 1;; esac
 candidate="$work_directory/candidate.json"
-node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({schemaVersion:1,version:process.argv[2],revision:process.argv[3],imageDigest:process.argv[4],desktopArtifact:"Productivity Suite-linux-x64",qualifiedAt:new Date().toISOString()}))' "$candidate" "$version" "$revision" "$image_id"
+node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({schemaVersion:1,version:process.argv[2],revision:process.argv[3],imageDigest:process.argv[4],desktopArtifact:process.argv[5],qualifiedAt:new Date().toISOString()}))' "$candidate" "$version" "$revision" "$image_id" "${SUITE_DESKTOP_ARTIFACT:-Productivity Suite-linux-x64}"
 node deploy/release-channel.mjs promote "$candidate" "$work_directory/channels" >/dev/null
 test "$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).imageDigest)' "$work_directory/channels/stable.json")" = "$image_id"
 echo "Phase 8 versioned production image, metrics, restart, restore, and candidate promotion verified"

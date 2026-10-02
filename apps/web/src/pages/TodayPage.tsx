@@ -3,6 +3,7 @@ import type {
   ActiveSession,
   BaikalStatusResponse,
   DayPlanResponse,
+  Note,
   PlanningPreferences,
   PlannerResponse,
   Task,
@@ -64,6 +65,11 @@ export interface TodayPageProps {
   readonly dayOrderApi?: DayOrderApi | undefined;
   /** ADR 0029: server timer state and the preset control. */
   readonly focus?: FocusPanelTimerProps | undefined;
+  /**
+   * ADR 0046: notes pinned to Today, read from the offline cache in the
+   * owner's order. They render without a connection.
+   */
+  readonly pinnedNotes?: readonly Note[] | undefined;
 }
 const calmStateLabel: Readonly<Record<DayPlanResponse["state"], string>> = {
   working: "Working",
@@ -108,6 +114,7 @@ export const TodayPage = (props: TodayPageProps) => {
     online = false,
     onTasksPlanned,
     dayOrderApi,
+    pinnedNotes = [],
     focus,
   } = props;
   const [logicalAt, setLogicalAt] = useState(
@@ -186,6 +193,24 @@ export const TodayPage = (props: TodayPageProps) => {
           </CardHeader>
           <CardContent>
             <NoteMarkdown content={dailySummaryNote} />
+          </CardContent>
+        </Card>
+      )}
+      {pinnedNotes.length > 0 && (
+        <Card aria-labelledby="pinned-notes-title">
+          <CardHeader>
+            <SectionHeading
+              as="h3"
+              id="pinned-notes-title"
+              title="Pinned notes"
+            />
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {pinnedNotes.map((note) => (
+              <article key={note.id} aria-label="Pinned note">
+                <NoteMarkdown content={note.content} />
+              </article>
+            ))}
           </CardContent>
         </Card>
       )}

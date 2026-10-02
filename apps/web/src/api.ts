@@ -117,17 +117,10 @@ import {
   liveSyncTriggerHeader,
 } from "@suite/contracts";
 import {
-  noteCreateRequestSchema,
-  noteListResponseSchema,
-  notePatchRequestSchema,
-  noteResponseSchema,
   organizationOrderRequestSchema,
   projectBacklogRequestSchema,
   projectPatchRequestSchema,
   tagPatchRequestSchema,
-  type Note,
-  type NoteCreateRequest,
-  type NotePatchRequest,
   type OrganizationOrderItem,
 } from "@suite/contracts";
 import {
@@ -958,53 +951,8 @@ export const setProjectBacklog = (
     ),
   }).then(({ project }) => project);
 
-/** Notes are online-only: they are not cached or queued offline (ADR 0019). */
-export const getNotes = (): Promise<readonly Note[]> =>
-  request("/api/notes", noteListResponseSchema).then(({ notes }) => notes);
-
-export const createNote = (
-  input: z.input<typeof noteCreateRequestSchema>,
-  csrfToken: string,
-): Promise<Note> =>
-  request("/api/notes", noteResponseSchema, {
-    method: "POST",
-    headers: { "X-CSRF-Token": csrfToken },
-    body: JSON.stringify(
-      noteCreateRequestSchema.parse(input) satisfies NoteCreateRequest,
-    ),
-  }).then(({ note }) => note);
-
-export const patchNote = (
-  noteId: string,
-  revision: number,
-  input: NotePatchRequest,
-  csrfToken: string,
-): Promise<Note> =>
-  request(`/api/notes/${noteId}`, noteResponseSchema, {
-    method: "PATCH",
-    headers: conditionalHeaders(revision, csrfToken),
-    body: JSON.stringify(notePatchRequestSchema.parse(input)),
-  }).then(({ note }) => note);
-
-export const deleteNote = (
-  noteId: string,
-  revision: number,
-  csrfToken: string,
-): Promise<void> =>
-  requestEmpty(`/api/notes/${noteId}`, {
-    method: "DELETE",
-    headers: conditionalHeaders(revision, csrfToken),
-  });
-
-export const reorderNotes = (
-  items: readonly OrganizationOrderItem[],
-  csrfToken: string,
-): Promise<readonly Note[]> =>
-  request("/api/notes/order", noteListResponseSchema, {
-    method: "PUT",
-    headers: { "X-CSRF-Token": csrfToken },
-    body: JSON.stringify(organizationOrderRequestSchema.parse({ items })),
-  }).then(({ notes }) => notes);
+// Notes have no HTTP client here: the web app reads them from the offline
+// cache and writes them through the sync outbox (ADR 0046).
 
 export const assignTaskProject = (
   taskId: string,

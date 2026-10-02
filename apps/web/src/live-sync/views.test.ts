@@ -21,21 +21,35 @@ describe("live sync resource families", () => {
     expect(liveSyncFamilyViews.all).toEqual(liveViews);
     expect(new Set(liveViews).size).toBe(liveViews.length);
   });
+
+  it("refetches nothing for the retired notes family (ADR 0046)", () => {
+    // Notes are feed records read from the offline cache; no view loads
+    // them over HTTP, so a hint from an older server has nothing to do.
+    expect(liveSyncFamilyViews.notes).toEqual([]);
+    expect(liveViews).not.toContain("notes");
+    const registry = new LiveViewRegistry();
+    const links = vi.fn();
+    registry.register("taskLinks", links);
+    expect(
+      registry.refetch(["notes"], { sourceClientId: null, ownClientId: own }),
+    ).toEqual([]);
+    expect(links).not.toHaveBeenCalled();
+  });
 });
 
 describe("LiveViewRegistry", () => {
   it("refetches only the loaded views of the named families", () => {
     const registry = new LiveViewRegistry();
-    const notes = vi.fn();
+    const links = vi.fn();
     const boards = vi.fn();
-    registry.register("notes", notes);
+    registry.register("taskLinks", links);
     registry.register("boards", boards);
-    const refetched = registry.refetch(["notes", "counters"], {
+    const refetched = registry.refetch(["task_links", "counters"], {
       sourceClientId: other,
       ownClientId: own,
     });
-    expect(refetched).toEqual(["notes"]);
-    expect(notes).toHaveBeenCalledTimes(1);
+    expect(refetched).toEqual(["taskLinks"]);
+    expect(links).toHaveBeenCalledTimes(1);
     expect(boards).not.toHaveBeenCalled();
   });
 
@@ -51,30 +65,36 @@ describe("LiveViewRegistry", () => {
 
   it("skips the refetch when this client caused the change", () => {
     const registry = new LiveViewRegistry();
-    const notes = vi.fn();
-    registry.register("notes", notes);
+    const links = vi.fn();
+    registry.register("taskLinks", links);
     expect(
-      registry.refetch(["notes"], { sourceClientId: own, ownClientId: own }),
+      registry.refetch(["task_links"], {
+        sourceClientId: own,
+        ownClientId: own,
+      }),
     ).toEqual([]);
-    expect(notes).not.toHaveBeenCalled();
+    expect(links).not.toHaveBeenCalled();
     // A server-side change has no source client and is always refetched.
-    registry.refetch(["notes"], { sourceClientId: null, ownClientId: own });
-    expect(notes).toHaveBeenCalledTimes(1);
+    registry.refetch(["task_links"], {
+      sourceClientId: null,
+      ownClientId: own,
+    });
+    expect(links).toHaveBeenCalledTimes(1);
   });
 
   it("refetches everything loaded on `all`, each view once", () => {
     const registry = new LiveViewRegistry();
-    const notes = vi.fn();
+    const links = vi.fn();
     const planner = vi.fn();
     const dayPlan = vi.fn();
-    registry.register("notes", notes);
+    registry.register("taskLinks", links);
     registry.register("planner", planner);
     registry.register("dayPlan", dayPlan);
     registry.refetch(["all", "calendar"], {
       sourceClientId: null,
       ownClientId: own,
     });
-    expect(notes).toHaveBeenCalledTimes(1);
+    expect(links).toHaveBeenCalledTimes(1);
     expect(planner).toHaveBeenCalledTimes(1);
     expect(dayPlan).toHaveBeenCalledTimes(1);
   });
@@ -86,14 +106,20 @@ describe("LiveViewRegistry", () => {
       throw new Error("broken");
     });
     const third = vi.fn();
-    const unregister = registry.register("notes", first);
-    registry.register("notes", second);
-    registry.register("notes", third);
-    registry.refetch(["notes"], { sourceClientId: null, ownClientId: own });
+    const unregister = registry.register("taskLinks", first);
+    registry.register("taskLinks", second);
+    registry.register("taskLinks", third);
+    registry.refetch(["task_links"], {
+      sourceClientId: null,
+      ownClientId: own,
+    });
     await Promise.resolve();
     expect(third).toHaveBeenCalledTimes(1);
     unregister();
-    registry.refetch(["notes"], { sourceClientId: null, ownClientId: own });
+    registry.refetch(["task_links"], {
+      sourceClientId: null,
+      ownClientId: own,
+    });
     expect(first).toHaveBeenCalledTimes(1);
     expect(third).toHaveBeenCalledTimes(2);
   });

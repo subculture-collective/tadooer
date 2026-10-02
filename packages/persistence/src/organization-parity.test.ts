@@ -295,7 +295,7 @@ it("keeps notes owner-scoped, revisioned and ordered across restart", async () =
     expect(db.notes.update("other", "n1", 1, { content: "x" }, now).kind).toBe(
       "conflict",
     );
-    expect(db.notes.delete("other", "n1", 1).kind).toBe("conflict");
+    expect(db.notes.delete("other", "n1", 1, later).kind).toBe("conflict");
     // Choosing a tag clears the project.
     expect(
       db.notes.update(
@@ -331,18 +331,28 @@ it("keeps notes owner-scoped, revisioned and ordered across restart", async () =
       { id: "n1", position: 1, content: "Moved" },
       { id: "n2", position: 2, pinnedToToday: true },
     ]);
-    expect(db.notes.delete("owner", "n2", 1).kind).toBe("conflict");
-    expect(db.notes.delete("owner", "n2", 2).kind).toBe("applied");
+    expect(db.notes.delete("owner", "n2", 1, later).kind).toBe("conflict");
+    expect(db.notes.delete("owner", "n2", 2, later).kind).toBe("applied");
     expect(db.notes.get("owner", "n2")).toBeUndefined();
-    // Notes stay outside the sync change feed.
+    // ADR 0046: every note write appended a feed change; failed writes and
+    // unmoved notes appended none.
     const raw = new DatabaseSync(path);
     expect(
       raw
         .prepare(
-          "SELECT count(*) AS count FROM sync_changes WHERE entity_type='note'",
+          "SELECT entity_id, kind, revision FROM sync_changes WHERE entity_type='note' ORDER BY sequence",
         )
-        .get(),
-    ).toMatchObject({ count: 0 });
+        .all(),
+    ).toEqual([
+      { entity_id: "n1", kind: "upsert", revision: 1 },
+      { entity_id: "n2", kind: "upsert", revision: 1 },
+      { entity_id: "n3", kind: "upsert", revision: 1 },
+      { entity_id: "n1", kind: "upsert", revision: 2 },
+      { entity_id: "n3", kind: "upsert", revision: 2 },
+      { entity_id: "n1", kind: "upsert", revision: 3 },
+      { entity_id: "n2", kind: "upsert", revision: 2 },
+      { entity_id: "n2", kind: "deleted", revision: 3 },
+    ]);
     raw.close();
     db.close();
   });
@@ -452,6 +462,18 @@ it("imports organization state, notes and backlog once and replays idempotently"
     // Local edits survive replay; replay creates nothing.
     const note = db.notes.list("owner")[0];
     if (note === undefined || open === undefined) throw new Error("missing");
+    // ADR 0046: the imported note is in the feed, in the import transaction.
+    const noteChanges = () =>
+      db
+        .listSyncChanges("owner", db.getSyncState("owner").epoch, 0)
+        .filter(({ entityType }) => entityType === "note")
+        .map(({ entityId, kind, revision }) => ({ entityId, kind, revision }));
+    expect(noteChanges()).toEqual([
+      { entityId: note.id, kind: "upsert", revision: 1 },
+    ]);
+    expect(db.fullSyncSnapshot("owner").notes).toMatchObject([
+      { id: note.id, pinnedToToday: true },
+    ]);
     db.notes.update("owner", note.id, 1, { content: "Edited" }, later);
     db.close();
     db = SuiteDatabase.open(path);
@@ -459,6 +481,11 @@ it("imports organization state, notes and backlog once and replays idempotently"
       created: 0,
       existing: 6,
     });
+    // Replay writes no note, so it appends no note change either.
+    expect(noteChanges()).toEqual([
+      { entityId: note.id, kind: "upsert", revision: 1 },
+      { entityId: note.id, kind: "upsert", revision: 2 },
+    ]);
     expect(db.notes.list("owner")).toMatchObject([{ content: "Edited" }]);
     expect(db.listProjects("owner")[0]?.backlogTaskIds).toHaveLength(1);
     // A changed source note is refused as a whole.

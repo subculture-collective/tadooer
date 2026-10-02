@@ -133,6 +133,11 @@ pruned, and a cursor below the retained floor gets the existing
 - Records outside the feed become live on other devices only while their view
   is open, by refetch. They are still not available offline. Moving them into
   the feed is wave 7B (#114).
+
+  > Note, 2026-10-02: notes moved first ([ADR 0046](0046-notes-in-the-sync-feed.md)).
+  > The `notes` resource family is retired: the server no longer emits it,
+  > and the name stays in the contract enum until a later cleanup.
+
 - A closed app receives nothing. Background delivery on desktop and mobile
   needs long-lived device sessions (wave 7C, #115) and platform shells (waves 7D
   and 7E); those are separate decisions.

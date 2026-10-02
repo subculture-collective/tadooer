@@ -9,6 +9,7 @@ import {
 } from "../components/tasks/TaskHierarchy.tsx";
 import type {
   BaikalStatusResponse,
+  Note,
   Project,
   Subtask,
   Tag,
@@ -27,6 +28,7 @@ import { NativeSelect } from "../components/ui/native-select.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
 import {
   OrganizationPanel,
+  type NoteQueue,
   type OrganizationQueue,
 } from "../components/organization/OrganizationPanel.tsx";
 import { TaskLinksPanel } from "../components/tasks/TaskLinksPanel.tsx";
@@ -108,6 +110,9 @@ export interface TasksPageProps extends TaskHierarchyActions {
     readonly onTagsChange: (tags: readonly Tag[]) => void;
     /** ADR 0033: lifecycle and appearance edits through the offline outbox. */
     readonly queue?: OrganizationQueue;
+    /** ADR 0046: notes from the offline cache and their outbox writes. */
+    readonly notes?: readonly Note[];
+    readonly noteQueue?: NoteQueue;
   };
   /** Owner planning zone for date-only plans (ADR 0020). */
   readonly timeZone?: string;

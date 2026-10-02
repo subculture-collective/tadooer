@@ -275,6 +275,20 @@ it("queues planning, assignment, project, tag and checklist writes through sync 
         plannedStart: "2026-09-27T09:00:00.000Z",
         plannedDay: null,
       });
+
+      // An applied deletion leaves no record to read; the outcome still
+      // names the item and the revision recorded with the operation, on the
+      // first attempt and on replay.
+      const removal = {
+        ...base(),
+        kind: "subtask.delete",
+        subtaskId: itemId,
+        baseRevision: 2,
+      };
+      for (const kind of ["applied", "replayed"])
+        expect((await round(laptop, [removal])).outcomes).toMatchObject([
+          { kind, entityId: itemId, entityRevision: 3 },
+        ]);
     } finally {
       await server.close();
     }

@@ -26,7 +26,21 @@ export interface NotePatch {
   readonly projectId?: string | null | undefined;
   readonly tagId?: string | null | undefined;
   readonly pinnedToToday?: boolean | undefined;
+  /** Only the sync feed's `note.patch` moves one note (ADR 0046). */
+  readonly position?: number | undefined;
 }
+
+/**
+ * Appends one sync feed change inside the caller's transaction (ADR 0046).
+ * A deletion reports the revision the note would have had next.
+ */
+export type NoteChangeAppender = (
+  ownerId: string,
+  noteId: string,
+  kind: "upsert" | "deleted",
+  revision: number,
+  now: string,
+) => void;
 
 export type NoteMutationResult =
   | { readonly kind: "applied"; readonly notes: readonly NoteRecord[] }
@@ -38,16 +52,20 @@ type Row = Record<string, string | number | null>;
 const maxContent = 20_000;
 
 /**
- * Owner-scoped project, tag and standalone notes. Notes are online HTTP
- * records: they are not part of the sync change feed or the offline cache
- * (ADR 0019). Mutations use savepoints so they nest inside automation
- * confirmation and import transactions.
+ * Owner-scoped project, tag and standalone notes (ADR 0019). Notes are sync
+ * feed records (ADR 0046): every method that writes a note appends its feed
+ * change in the same savepoint, so the browser routes, the assistant, the
+ * importer and the sync outbox cannot write a note the feed does not carry.
+ * Mutations use savepoints so they nest inside automation confirmation,
+ * import and sync operation transactions.
  */
 export class SqliteNoteStore {
   readonly #database: DatabaseSync;
+  readonly #appendChange: NoteChangeAppender;
 
-  constructor(database: DatabaseSync) {
+  constructor(database: DatabaseSync, appendChange: NoteChangeAppender) {
     this.#database = database;
+    this.#appendChange = appendChange;
   }
 
   list(ownerId: string): readonly NoteRecord[] {
@@ -89,7 +107,10 @@ export class SqliteNoteStore {
     return true;
   }
 
-  /** Inserts one note at the end of the owner's order without a savepoint. */
+  /**
+   * Inserts one note at the end of the owner's order without a savepoint and
+   * appends its feed change; the caller owns the transaction.
+   */
   insert(
     ownerId: string,
     input: NoteCreateInput & {
@@ -126,6 +147,7 @@ export class SqliteNoteStore {
       );
     const created = this.get(ownerId, input.id);
     if (created === undefined) throw new Error("Created note is missing");
+    this.#appendChange(ownerId, created.id, "upsert", 1, input.updatedAt);
     return created;
   }
 
@@ -164,7 +186,9 @@ export class SqliteNoteStore {
   ): NoteMutationResult {
     if (
       Object.values(patch).every((value) => value === undefined) ||
-      (patch.content !== undefined && !validContent(patch.content))
+      (patch.content !== undefined && !validContent(patch.content)) ||
+      (patch.position !== undefined &&
+        (!Number.isInteger(patch.position) || patch.position < 0))
     )
       return { kind: "invalid" };
     return this.#transaction(() => {
@@ -187,13 +211,14 @@ export class SqliteNoteStore {
         return { kind: "invalid" };
       this.#database
         .prepare(
-          "UPDATE notes SET content=?,project_id=?,tag_id=?,pinned_to_today=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=?",
+          "UPDATE notes SET content=?,project_id=?,tag_id=?,pinned_to_today=?,position=?,revision=revision+1,updated_at=? WHERE owner_id=? AND id=? AND revision=?",
         )
         .run(
           patch.content ?? current.content,
           projectId,
           tagId,
           (patch.pinnedToToday ?? current.pinnedToToday) ? 1 : 0,
+          patch.position ?? current.position,
           now,
           ownerId,
           id,
@@ -201,6 +226,7 @@ export class SqliteNoteStore {
         );
       const updated = this.get(ownerId, id);
       if (updated === undefined) throw new Error("Updated note is missing");
+      this.#appendChange(ownerId, id, "upsert", updated.revision, now);
       return { kind: "applied", notes: [updated] };
     });
   }
@@ -209,14 +235,15 @@ export class SqliteNoteStore {
     ownerId: string,
     id: string,
     expectedRevision: number,
+    now: string,
   ): NoteMutationResult {
     return this.#transaction(() => {
       const changed = this.#database
         .prepare("DELETE FROM notes WHERE owner_id=? AND id=? AND revision=?")
         .run(ownerId, id, expectedRevision).changes;
-      return changed === 1
-        ? { kind: "applied", notes: [] }
-        : { kind: "conflict" };
+      if (changed !== 1) return { kind: "conflict" };
+      this.#appendChange(ownerId, id, "deleted", expectedRevision + 1, now);
+      return { kind: "applied", notes: [] };
     });
   }
 
@@ -243,8 +270,10 @@ export class SqliteNoteStore {
       );
       items.forEach((item, position) => {
         const before = current.find(({ id }) => id === item.id);
-        if (before?.position !== position)
-          update.run(position, now, ownerId, item.id);
+        if (before === undefined || before.position === position) return;
+        update.run(position, now, ownerId, item.id);
+        // Only a moved note gains a revision, so only it is announced.
+        this.#appendChange(ownerId, item.id, "upsert", item.revision + 1, now);
       });
       return { kind: "applied", notes: this.list(ownerId) };
     });

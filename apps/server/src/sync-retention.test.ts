@@ -119,6 +119,17 @@ const readSnapshot = async (
   }
 };
 
+/**
+ * Seeding commits a thousand rows synchronously in the server's own process.
+ * Without a pause the event loop stays blocked past the HTTP keep-alive
+ * timeout, and the next request reuses a socket the server has already
+ * closed (ECONNRESET on a slow host).
+ */
+const yieldToEventLoop = (): Promise<void> =>
+  new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+
 describe("sync feed retention over HTTP", () => {
   it("expires a pruned cursor and lets the client recover by snapshot, then round", async () => {
     await withTemporaryDirectory(async (directory) => {
@@ -178,7 +189,7 @@ describe("sync feed retention over HTTP", () => {
         const old = new Date(Date.now() - 60 * dayMs).toISOString();
         const direct = SuiteDatabase.open(config.databasePath);
         const ownerId = direct.getActiveOwnerId() ?? "";
-        for (let index = 1; index <= seeded; index += 1)
+        for (let index = 1; index <= seeded; index += 1) {
           direct.createTaskIdempotently(ownerId, uuid(index), uuid(index), {
             id: uuid(index),
             title: `Task ${String(index)}`,
@@ -188,6 +199,8 @@ describe("sync feed retention over HTTP", () => {
             createdAt: old,
             updatedAt: old,
           });
+          if (index % 50 === 0) await yieldToEventLoop();
+        }
         const head = direct.getSyncState(ownerId).cursor;
         expect(head).toBeGreaterThanOrEqual(seeded);
         const floor = head - 1000;
@@ -318,7 +331,7 @@ describe("sync feed retention over HTTP", () => {
         await server.close();
       }
     });
-  }, 60_000);
+  }, 120_000);
 
   it("leaves the feed alone when retention is switched off", async () => {
     await withTemporaryDirectory(async (directory) => {
@@ -334,7 +347,7 @@ describe("sync feed retention over HTTP", () => {
         const direct = SuiteDatabase.open(config.databasePath);
         const ownerId = direct.getActiveOwnerId() ?? "";
         const old = new Date(Date.now() - 400 * dayMs).toISOString();
-        for (let index = 1; index <= 1010; index += 1)
+        for (let index = 1; index <= 1010; index += 1) {
           direct.appendSyncChange(
             ownerId,
             "task",
@@ -343,6 +356,8 @@ describe("sync feed retention over HTTP", () => {
             1,
             old,
           );
+          if (index % 50 === 0) await yieldToEventLoop();
+        }
         await server.runNotifications();
         expect(direct.getSyncRetention(ownerId).floor).toBe(0);
         expect(
@@ -357,7 +372,7 @@ describe("sync feed retention over HTTP", () => {
         await server.close();
       }
     });
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("sync feed pruner", () => {

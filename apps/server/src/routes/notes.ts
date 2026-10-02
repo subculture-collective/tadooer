@@ -40,8 +40,11 @@ const sendOutcome = (
 };
 
 /**
- * Online-only owner notes (ADR 0019). Notes are not in the sync change feed;
- * browsers read them over HTTP and do not cache them offline.
+ * Owner notes over HTTP (ADR 0019). Notes are sync feed records (ADR 0046):
+ * the store appends a feed change with every write here, so other devices
+ * receive it in their next round. The web app itself reads notes from its
+ * offline cache and writes them through the sync outbox; these routes remain
+ * for conditional online writes and the complete-membership reorder.
  */
 export const handleNotes: RouteHandler = async (
   request,
@@ -133,7 +136,7 @@ export const handleNotes: RouteHandler = async (
   const revision = expectedRevision(request, response);
   if (revision === undefined || id === undefined) return true;
   if (remove) {
-    const result = stores.notes.delete(ownerId, id, revision);
+    const result = stores.notes.delete(ownerId, id, revision, now);
     sendOutcome(response, result, () => {
       sendEmpty(response, 204);
     });

@@ -206,11 +206,11 @@ describe("live sync reactions", () => {
     const browser = profile();
     const leader = browser.tab("a");
     const follower = browser.tab("b");
-    const leaderNotes = vi.fn();
-    const followerNotes = vi.fn();
+    const leaderLinks = vi.fn();
+    const followerLinks = vi.fn();
     const followerBoards = vi.fn();
-    leader.registry.register("notes", leaderNotes);
-    follower.registry.register("notes", followerNotes);
+    leader.registry.register("taskLinks", leaderLinks);
+    follower.registry.register("taskLinks", followerLinks);
     follower.registry.register("boards", followerBoards);
     leader.start();
     follower.start();
@@ -225,23 +225,23 @@ describe("live sync reactions", () => {
         .stream()
         .send({ event: "resources", data: { families, sourceClientId } });
     };
-    resources(["notes"], otherClientId);
+    resources(["task_links"], otherClientId);
     await flush();
-    expect(leaderNotes).toHaveBeenCalledTimes(1);
-    expect(followerNotes).toHaveBeenCalledTimes(1);
+    expect(leaderLinks).toHaveBeenCalledTimes(1);
+    expect(followerLinks).toHaveBeenCalledTimes(1);
     expect(followerBoards).not.toHaveBeenCalled();
 
-    // This browser profile wrote the note: nothing to refetch.
-    resources(["notes"], ownClientId);
+    // This browser profile wrote the link: nothing to refetch.
+    resources(["task_links"], ownClientId);
     await flush();
-    expect(leaderNotes).toHaveBeenCalledTimes(1);
-    expect(followerNotes).toHaveBeenCalledTimes(1);
+    expect(leaderLinks).toHaveBeenCalledTimes(1);
+    expect(followerLinks).toHaveBeenCalledTimes(1);
 
     // A restore: everything that is loaded, from a server-side source.
     resources(["all"], null);
     await flush();
-    expect(leaderNotes).toHaveBeenCalledTimes(2);
-    expect(followerNotes).toHaveBeenCalledTimes(2);
+    expect(leaderLinks).toHaveBeenCalledTimes(2);
+    expect(followerLinks).toHaveBeenCalledTimes(2);
     expect(followerBoards).toHaveBeenCalledTimes(1);
     // Hints never start a sync round for records outside the feed.
     expect(leader.rounds).toEqual([]);
@@ -251,9 +251,9 @@ describe("live sync reactions", () => {
     const browser = profile();
     const leader = browser.tab("a");
     const follower = browser.tab("b");
-    const leaderNotes = vi.fn();
+    const leaderLinks = vi.fn();
     const followerBoards = vi.fn();
-    leader.registry.register("notes", leaderNotes);
+    leader.registry.register("taskLinks", leaderLinks);
     follower.registry.register("boards", followerBoards);
     leader.start();
     follower.start();
@@ -262,14 +262,14 @@ describe("live sync reactions", () => {
     // The first hello follows a page load: the views were just fetched.
     browser.stream().send(hello("epoch.4"));
     await flush();
-    expect(leaderNotes).not.toHaveBeenCalled();
+    expect(leaderLinks).not.toHaveBeenCalled();
     expect(followerBoards).not.toHaveBeenCalled();
 
     // A second hello means the stream was down in between, and hints for
     // records outside the feed may have been missed.
     browser.stream().send(hello("epoch.4"));
     await flush();
-    expect(leaderNotes).toHaveBeenCalledTimes(1);
+    expect(leaderLinks).toHaveBeenCalledTimes(1);
     expect(followerBoards).toHaveBeenCalledTimes(1);
   });
 

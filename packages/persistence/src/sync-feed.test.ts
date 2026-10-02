@@ -232,24 +232,29 @@ describe("sync feed maintenance", () => {
     });
   });
 
-  it("keeps at least 1000 changes by default", async () => {
-    await withTemporaryDirectory((directory) => {
-      const database = open(directory);
-      try {
-        expect(syncFeedMinimumRetainedChanges).toBe(1000);
-        const epoch = append(database, 1003, () => createdAt(1));
-        expect(
-          database.pruneSyncChanges(owner, createdAt(2), createdAt(2)),
-        ).toEqual({ deleted: 3, floor: 3 });
-        const retained = sequences(database, epoch);
-        expect(retained).toHaveLength(1000);
-        expect(retained[0]).toBe(4);
-        expect(retained.at(-1)).toBe(1003);
-      } finally {
-        database.close();
-      }
-    });
-  });
+  // Seeds over a thousand committed changes; slow on a loaded or containerised host.
+  it(
+    "keeps at least 1000 changes by default",
+    { timeout: 120_000 },
+    async () => {
+      await withTemporaryDirectory((directory) => {
+        const database = open(directory);
+        try {
+          expect(syncFeedMinimumRetainedChanges).toBe(1000);
+          const epoch = append(database, 1003, () => createdAt(1));
+          expect(
+            database.pruneSyncChanges(owner, createdAt(2), createdAt(2)),
+          ).toEqual({ deleted: 3, floor: 3 });
+          const retained = sequences(database, epoch);
+          expect(retained).toHaveLength(1000);
+          expect(retained[0]).toBe(4);
+          expect(retained.at(-1)).toBe(1003);
+        } finally {
+          database.close();
+        }
+      });
+    },
+  );
 
   it("prunes a contiguous prefix when timestamps are out of order", async () => {
     await withTemporaryDirectory((directory) => {
