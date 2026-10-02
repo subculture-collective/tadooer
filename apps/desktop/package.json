@@ -7,8 +7,11 @@
   "main": "src/main.mjs",
   "scripts": {
     "test": "vitest run src/policy.test.mjs",
-    "package:linux": "electron-packager . 'Productivity Suite' --platform=linux --arch=x64 --out=dist-packages --overwrite --prune=false --ignore='(^|/)(dist-packages|src/.*test.*)$'",
-    "smoke:linux": "'./dist-packages/Productivity Suite-linux-x64/Productivity Suite' --suite-smoke"
+    "build:preload": "esbuild src/preload.mjs src/setup-preload.mjs --bundle --platform=node --format=cjs --external:electron --out-extension:.js=.cjs --outdir=dist --log-level=warning",
+    "package:linux": "pnpm build:preload && electron-packager . 'Productivity Suite' --platform=linux --arch=x64 --out=dist-packages --overwrite --prune=false --ignore='(^|/)(dist-packages|node_modules|scripts|src/.*test.*)$' && node scripts/package-artifact.mjs",
+    "artifact:info": "node scripts/artifact-info.mjs",
+    "smoke:linux": "env -u ELECTRON_RUN_AS_NODE './dist-packages/Productivity Suite-linux-x64/Productivity Suite' --suite-smoke",
+    "smoke:linux:shell": "node scripts/selfcheck.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.2.0",

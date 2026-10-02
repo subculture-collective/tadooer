@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Connect to your server</title>
+    <link rel="stylesheet" href="setup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Connect to your server</h1>
+      <p id="intro">
+        Enter the address of your Tadooer server. This app shows that server;
+        your tasks and your sign-in stay with it.
+      </p>
+      <form id="setup-form" novalidate>
+        <label for="address">Server address</label>
+        <input
+          id="address"
+          name="address"
+          type="text"
+          inputmode="url"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="https://tasks.example.org"
+          aria-describedby="message"
+          required
+        />
+        <div id="lan" hidden>
+          <label class="check" for="allow-lan">
+            <input id="allow-lan" name="allow-lan" type="checkbox" />
+            Use this private network address without encryption
+          </label>
+          <p class="warning">
+            Anyone on the same network can read and change what this app sends,
+            including your password. Use it only on a network you control, or
+            put the server behind HTTPS.
+          </p>
+        </div>
+        <p id="message" role="status" aria-live="polite"></p>
+        <div class="actions">
+          <button id="cancel" type="button" hidden>Cancel</button>
+          <button id="connect" type="submit">Connect</button>
+        </div>
+      </form>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>

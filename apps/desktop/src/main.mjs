@@ -1,56 +1,42 @@
-import { app, BrowserWindow, shell } from "electron";
-import process from "node:process";
+import { app } from "electron";
 import console from "node:console";
-import {
-  allowedExternalOAuth,
-  allowedNavigation,
-  suiteOrigin,
-} from "./policy.mjs";
+import { existsSync } from "node:fs";
+import process from "node:process";
+import { bridgeVersion } from "./bridge.mjs";
+import { createShell, preloadPath, setupPreloadPath } from "./shell.mjs";
+
+const fail = (error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  app.exit(1);
+};
 
 if (process.argv.includes("--suite-smoke")) {
+  // Non-graphical check of the packaged bundle: the executable starts, the
+  // application code loads and the preload bundles were packaged. No window,
+  // no network, no settings file.
+  const preloads = existsSync(preloadPath) && existsSync(setupPreloadPath);
   console.log(
     JSON.stringify({
       application: "productivity-suite-desktop",
       electron: process.versions.electron,
       authority: "remote-suite-origin",
+      bridge: bridgeVersion,
+      preloads,
     }),
   );
+  app.exit(preloads ? 0 : 1);
+} else if (process.argv.includes("--suite-selfcheck")) {
+  // Hidden-window check against a throwaway loopback server. Started by
+  // `pnpm smoke:linux:shell`, which supplies a temporary profile. It needs a
+  // display; on a machine without one use `xvfb-run -a`.
+  const { runSelfCheck } = await import("./selfcheck.mjs");
+  void runSelfCheck().catch(fail);
+} else if (!app.requestSingleInstanceLock()) {
+  // Another instance owns the window; it receives this launch's arguments
+  // through `second-instance` and comes to the front.
   app.exit(0);
 } else {
-  const origin = suiteOrigin(
-    process.env.SUITE_SERVER_URL ?? "http://127.0.0.1:18080",
-  );
-  if (origin === undefined)
-    throw new Error(
-      "SUITE_SERVER_URL must be an HTTPS or loopback HTTP origin without credentials or a path",
-    );
-  const createWindow = () => {
-    const window = new BrowserWindow({
-      width: 1280,
-      height: 860,
-      minWidth: 760,
-      minHeight: 560,
-      title: "Productivity Suite",
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        webSecurity: true,
-        partition: "persist:suite-owner",
-      },
-    });
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      if (allowedExternalOAuth(url)) void shell.openExternal(url);
-      return { action: "deny" };
-    });
-    window.webContents.on("will-navigate", (event, url) => {
-      if (!allowedNavigation(url, origin)) event.preventDefault();
-    });
-    void window.loadURL(origin);
-  };
-  app.on("web-contents-created", (_event, contents) => {
-    contents.on("will-attach-webview", (event) => event.preventDefault());
-  });
-  void app.whenReady().then(createWindow);
-  app.on("window-all-closed", () => app.quit());
+  // Not awaited: Electron holds `ready` until this module has finished
+  // evaluating, and `start` waits for `ready`.
+  void createShell().start().catch(fail);
 }

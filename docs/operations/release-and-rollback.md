@@ -5,8 +5,11 @@
    image against health, readiness, metrics, restart, backup, and restore.
 2. Record the exact semantic version, full Git revision, registry OCI digest,
    desktop artifact name/checksum, and qualification timestamp in a manifest
-   matching `release/manifest.schema.json`. A local Docker image ID from the
-   disposable gate is not a substitute for the registry digest in production.
+   matching `release/manifest.schema.json`. For `desktopArtifact`, use the
+   string that `pnpm desktop:artifact` prints under the same name
+   (`<file>.tar.gz@sha256:<checksum>`; see [desktop.md](desktop.md)). A local
+   Docker image ID from the disposable gate is not a substitute for the
+   registry digest in production.
 3. Promote the candidate with `node deploy/release-channel.mjs promote ...`.
    Deploy that immutable digest, never a mutable tag. Confirm `/api/build`,
    `/api/ready`, `/api/metrics`, login, task read/write, and the configured
