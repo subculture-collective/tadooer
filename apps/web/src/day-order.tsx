@@ -1,30 +1,34 @@
-import { useCallback, useEffect, useState } from "react";
-import { ApiRequestError, type DayOrder, type Task } from "@suite/contracts";
+import { useState } from "react";
+import type { SavedDayOrder, Task } from "@suite/contracts";
 import { applyDayOrder, dayOrderMembers, moveInDayOrder } from "@suite/domain";
-import { getDayOrders, planTasksForDay, reorderDayOrder } from "./api.ts";
 import { Button } from "./components/ui/button.tsx";
-import { useLiveRefetch } from "./live-sync/views.ts";
 
 /**
- * Saved Today and planner-day order in the browser (ADR 0027). Day orders
- * are read and written online only; offline the derived order is shown and
- * the move controls are disabled.
+ * Saved Today and planner-day order in the browser (ADR 0027, ADR 0050).
+ * Saved day orders are read from the offline cache and reordered through the
+ * sync outbox, so both work without a connection. A date's members are
+ * derived from the cached tasks; the saved order only sorts them.
  */
-export interface DayOrderApi {
-  readonly getDayOrders: typeof getDayOrders;
-  readonly reorderDayOrder: typeof reorderDayOrder;
-  readonly planTasksForDay: typeof planTasksForDay;
+export interface DayOrderActions {
+  /** Saves the complete order of a date; queued when offline. */
+  readonly reorder: (date: string, taskIds: readonly string[]) => Promise<void>;
+  /**
+   * Gives each task the date as its planned day, then saves `order`, which
+   * names the date's other members followed by the planned tasks.
+   */
+  readonly plan: (
+    date: string,
+    tasks: readonly Task[],
+    order: readonly string[],
+  ) => Promise<void>;
 }
-
-export const defaultDayOrderApi: DayOrderApi = {
-  getDayOrders,
-  reorderDayOrder,
-  planTasksForDay,
-};
 
 export interface DayOrderedTask {
   readonly task: Task;
-  /** False when the server has not listed the task yet (offline edit). */
+  /**
+   * Every cached member can be moved: the server reconciles membership when
+   * it applies a reorder (ADR 0050).
+   */
   readonly movable: boolean;
 }
 
@@ -32,10 +36,9 @@ export interface DayOrderedTask {
 export const orderedDayTasks = (
   tasks: readonly Task[],
   date: string,
-  order: DayOrder | undefined,
+  order: Pick<SavedDayOrder, "taskIds"> | undefined,
 ): readonly DayOrderedTask[] => {
   const byId = new Map(tasks.map((task) => [task.id, task]));
-  const saved = new Set(order?.taskIds ?? []);
   return applyDayOrder(
     dayOrderMembers(
       tasks.map((task) => ({
@@ -51,112 +54,71 @@ export const orderedDayTasks = (
     order?.taskIds ?? [],
   ).flatMap((id) => {
     const task = byId.get(id);
-    return task === undefined ? [] : [{ task, movable: saved.has(id) }];
+    return task === undefined ? [] : [{ task, movable: true }];
   });
 };
 
-export const dayOrderConflictNotice =
-  "The day's tasks or order changed; the current order is shown. Try again.";
+export const dayOrderFailureNotice =
+  "The day order could not be saved on this device. Try again.";
 
-const failureMessage = (error: unknown): string =>
-  error instanceof ApiRequestError
-    ? error.status === 412
-      ? dayOrderConflictNotice
-      : error.message
-    : "The day order could not be saved. Check the connection and try again.";
-
-/** Loads the orders of [from, to] and saves moves with full-list reorders. */
+/**
+ * The cached orders by date, with moves and plan-for-a-day saved through
+ * `actions`. Without `actions` (no registered sync client) the derived
+ * order is shown and the controls are disabled.
+ */
 export const useDayOrders = (input: {
-  readonly from: string;
-  readonly to: string;
-  readonly csrfToken: string | undefined;
-  readonly online: boolean;
-  readonly api?: DayOrderApi | undefined;
-  /**
-   * Changes when the local members of the range change (a task planned,
-   * completed or moved), so the saved orders are read again.
-   */
-  readonly membersKey?: string | undefined;
+  readonly tasks: readonly Task[];
+  readonly saved: readonly SavedDayOrder[] | undefined;
+  readonly actions: DayOrderActions | undefined;
 }) => {
-  const api = input.api ?? defaultDayOrderApi;
-  const { from, to, csrfToken, online } = input;
-  const [orders, setOrders] = useState<ReadonlyMap<string, DayOrder>>(
-    new Map(),
+  const { tasks, actions } = input;
+  const orders: ReadonlyMap<string, SavedDayOrder> = new Map(
+    (input.saved ?? []).map((order) => [order.date, order]),
   );
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const enabled = online && csrfToken !== undefined;
+  const enabled = actions !== undefined;
 
-  const refresh = useCallback(async () => {
-    if (!enabled) return;
-    try {
-      const loaded = await api.getDayOrders(from, to);
-      setOrders(new Map(loaded.map((order) => [order.date, order])));
-    } catch (error: unknown) {
-      setMessage(failureMessage(error));
-    }
-  }, [api, enabled, from, to]);
+  const current = (date: string): readonly string[] =>
+    orderedDayTasks(tasks, date, orders.get(date)).map(({ task }) => task.id);
 
-  const { membersKey } = input;
-  useEffect(() => {
-    void refresh();
-  }, [refresh, membersKey]);
-  useLiveRefetch("dayOrders", refresh, enabled);
-
-  const move = async (date: string, taskId: string, direction: -1 | 1) => {
-    if (!enabled) return;
-    const current = orders.get(date) ?? { date, revision: 0, taskIds: [] };
-    const next = moveInDayOrder(current.taskIds, taskId, direction);
-    if (next === current.taskIds) return;
+  const run = async (write: () => Promise<void>): Promise<boolean> => {
     setPending(true);
     setMessage(null);
     try {
-      const saved = await api.reorderDayOrder(
-        date,
-        current.revision,
-        next,
-        csrfToken,
-      );
-      setOrders((existing) => new Map(existing).set(date, saved));
-    } catch (error: unknown) {
-      setMessage(failureMessage(error));
-      await refresh();
-    } finally {
-      setPending(false);
-    }
-  };
-
-  const plan = async (
-    date: string,
-    tasks: readonly Task[],
-  ): Promise<boolean> => {
-    if (!enabled || tasks.length === 0) return false;
-    setPending(true);
-    setMessage(null);
-    try {
-      const result = await api.planTasksForDay(
-        date,
-        {
-          expectedRevision: orders.get(date)?.revision ?? 0,
-          tasks: tasks.map((task) => ({
-            taskId: task.id,
-            expectedRevision: task.revision,
-          })),
-        },
-        csrfToken,
-      );
-      setOrders((existing) => new Map(existing).set(date, result.dayOrder));
+      await write();
       return true;
-    } catch (error: unknown) {
-      setMessage(failureMessage(error));
-      await refresh();
+    } catch {
+      setMessage(dayOrderFailureNotice);
       return false;
     } finally {
       setPending(false);
     }
   };
 
-  return { orders, message, pending, enabled, move, plan, refresh };
+  const move = async (date: string, taskId: string, direction: -1 | 1) => {
+    if (actions === undefined) return;
+    const shown = current(date);
+    const next = moveInDayOrder(shown, taskId, direction);
+    if (next === shown) return;
+    await run(() => actions.reorder(date, next));
+  };
+
+  const plan = async (
+    date: string,
+    planned: readonly Task[],
+  ): Promise<boolean> => {
+    if (actions === undefined || planned.length === 0) return false;
+    const plannedIds = new Set(planned.map(({ id }) => id));
+    return run(() =>
+      actions.plan(date, planned, [
+        ...current(date).filter((id) => !plannedIds.has(id)),
+        ...planned.map(({ id }) => id),
+      ]),
+    );
+  };
+
+  return { orders, message, pending, enabled, move, plan };
 };
 
 export interface DayOrderListProps {
@@ -215,17 +177,3 @@ export const DayOrderList = ({
     </ol>
   );
 };
-
-/** A key that changes when any date's local members change. */
-export const dayMembersKey = (
-  tasks: readonly Task[],
-  dates: readonly string[],
-): string =>
-  dates
-    .map(
-      (date) =>
-        `${date}:${orderedDayTasks(tasks, date, undefined)
-          .map(({ task }) => task.id)
-          .join(",")}`,
-    )
-    .join(";");

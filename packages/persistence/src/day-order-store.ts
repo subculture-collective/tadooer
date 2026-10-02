@@ -5,8 +5,13 @@ import type { DatabaseSync } from "node:sqlite";
  * date ranks task IDs. Membership is derived from the tasks: open, active
  * (not deleted or archived), no planned start, and a planned day equal to the
  * date. Saved IDs that stopped being members are ignored when read and pruned
- * by the next write of that date; hard-deleted tasks cascade away. Day orders
- * are online HTTP records outside the sync change feed and offline cache.
+ * by the next write of that date; hard-deleted tasks cascade away.
+ *
+ * Saved day orders are sync feed records (ADR 0050): every write of a date
+ * goes through `#write`, which appends the feed change in the caller's
+ * transaction, so the browser routes, the assistant, the importer and the
+ * sync outbox cannot save an order the feed does not carry. The feed record
+ * is the saved ranks (`getSaved`); members stay derived from the tasks.
  */
 export const dayOrderMigration = {
   id: "0031_day_order",
@@ -50,6 +55,33 @@ export interface DayOrderRecord {
   readonly taskIds: readonly string[];
 }
 
+/** The saved ranks of one date, as the sync feed carries them (ADR 0050). */
+export interface SavedDayOrderRecord {
+  readonly date: string;
+  readonly revision: number;
+  /** Saved ranks; may name tasks that stopped being members. */
+  readonly taskIds: readonly string[];
+  readonly updatedAt: string;
+}
+
+/**
+ * Appends one sync feed change for a date's saved order inside the caller's
+ * transaction (ADR 0050).
+ */
+export type DayOrderChangeAppender = (
+  ownerId: string,
+  date: string,
+  revision: number,
+  now: string,
+) => void;
+
+export type DayOrderSyncResult =
+  | { readonly kind: "applied"; readonly saved: SavedDayOrderRecord }
+  | {
+      readonly kind: "conflict";
+      readonly saved: SavedDayOrderRecord | undefined;
+    };
+
 export type DayOrderReorderResult =
   | { readonly kind: "applied"; readonly dayOrder: DayOrderRecord }
   | {
@@ -89,10 +121,64 @@ type Row = Record<string, string | number | null>;
 export class SqliteDayOrderStore {
   readonly #database: DatabaseSync;
   readonly #deps: DayOrderStoreDeps;
+  readonly #appendChange: DayOrderChangeAppender;
 
-  constructor(database: DatabaseSync, deps: DayOrderStoreDeps) {
+  constructor(
+    database: DatabaseSync,
+    deps: DayOrderStoreDeps,
+    appendChange: DayOrderChangeAppender,
+  ) {
     this.#database = database;
     this.#deps = deps;
+    this.#appendChange = appendChange;
+  }
+
+  /** ADR 0050: every saved order of the owner, by date, for a snapshot. */
+  listSaved(ownerId: string): readonly SavedDayOrderRecord[] {
+    const orders = new Map<
+      string,
+      SavedDayOrderRecord & { taskIds: string[] }
+    >();
+    for (const row of this.#database
+      .prepare(
+        "SELECT day, revision, updated_at FROM day_orders WHERE owner_id = ? ORDER BY day",
+      )
+      .all(ownerId) as unknown as readonly Row[])
+      orders.set(String(row.day), {
+        date: String(row.day),
+        revision: Number(row.revision),
+        taskIds: [],
+        updatedAt: String(row.updated_at),
+      });
+    for (const row of this.#database
+      .prepare(
+        "SELECT day, task_id FROM day_order_entries WHERE owner_id = ? ORDER BY day, position",
+      )
+      .all(ownerId) as unknown as readonly Row[])
+      orders.get(String(row.day))?.taskIds.push(String(row.task_id));
+    return [...orders.values()];
+  }
+
+  /** ADR 0050: the saved ranks of one date; undefined before a first write. */
+  getSaved(ownerId: string, date: string): SavedDayOrderRecord | undefined {
+    const row = this.#database
+      .prepare(
+        "SELECT revision, updated_at FROM day_orders WHERE owner_id = ? AND day = ?",
+      )
+      .get(ownerId, date) as unknown as Row | undefined;
+    if (row === undefined) return undefined;
+    return {
+      date,
+      revision: Number(row.revision),
+      taskIds: (
+        this.#database
+          .prepare(
+            "SELECT task_id FROM day_order_entries WHERE owner_id = ? AND day = ? ORDER BY position",
+          )
+          .all(ownerId, date) as unknown as readonly Row[]
+      ).map((entry) => String(entry.task_id)),
+      updatedAt: String(row.updated_at),
+    };
   }
 
   /** Members of each date in [from, to], in task ID order. */
@@ -174,7 +260,10 @@ export class SqliteDayOrderStore {
       .filter(({ revision, taskIds }) => revision > 0 || taskIds.length > 0);
   }
 
-  /** Replace the saved list with exactly the current members. */
+  /**
+   * Replace the saved list with exactly the current members and append the
+   * feed change (ADR 0050). Every write of a saved order passes through here.
+   */
   #write(
     ownerId: string,
     date: string,
@@ -205,6 +294,12 @@ export class SqliteDayOrderStore {
     taskIds.forEach((taskId, position) => {
       insert.run(ownerId, date, taskId, position);
     });
+    this.#appendChange(
+      ownerId,
+      date,
+      current === undefined ? 1 : Number(current.revision) + 1,
+      now,
+    );
   }
 
   #savedIds(ownerId: string, date: string): readonly string[] {
@@ -257,6 +352,42 @@ export class SqliteDayOrderStore {
         return { kind: "applied", dayOrder: current };
       this.#write(input.ownerId, input.date, input.taskIds, input.now);
       return { kind: "applied", dayOrder: this.get(input.ownerId, input.date) };
+    });
+  }
+
+  /**
+   * ADR 0050: a reorder from the sync outbox. Only the revision guards it:
+   * a base revision that is not the saved one (0 when nothing is saved) is a
+   * conflict that changes nothing. Membership is reconciled instead of
+   * checked, because the client derived it from its own cache: named tasks
+   * that are no longer members are dropped, and members the client did not
+   * name follow in their current order. An applied reorder always writes,
+   * so the revision is the base plus one, as the client assumed.
+   */
+  reorderFromSync(input: {
+    readonly ownerId: string;
+    readonly date: string;
+    readonly baseRevision: number;
+    readonly taskIds: readonly string[];
+    readonly now: string;
+  }): DayOrderSyncResult {
+    return this.#inSavepoint("day_order_sync", () => {
+      const saved = this.getSaved(input.ownerId, input.date);
+      if ((saved?.revision ?? 0) !== input.baseRevision)
+        return { kind: "conflict", saved };
+      const members = this.get(input.ownerId, input.date).taskIds;
+      const present = new Set(members);
+      const named = [...new Set(input.taskIds)].filter((id) => present.has(id));
+      const namedSet = new Set(named);
+      this.#write(
+        input.ownerId,
+        input.date,
+        [...named, ...members.filter((id) => !namedSet.has(id))],
+        input.now,
+      );
+      const written = this.getSaved(input.ownerId, input.date);
+      if (written === undefined) throw new Error("Saved day order is missing");
+      return { kind: "applied", saved: written };
     });
   }
 

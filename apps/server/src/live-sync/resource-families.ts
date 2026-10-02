@@ -6,7 +6,7 @@ import type {
 /**
  * Which resource families a mutating request touches (ADR 0045). The sync
  * feed covers tasks, projects, tags, checklist items, notes (ADR 0046),
- * templates, template sets, choice pools, planning placeholders, habits and
+ * saved day orders and stored time entries (ADR 0050), templates, template sets, choice pools, planning placeholders, habits and
  * the active session; a change there is announced as `changes` from the feed
  * head. Everything else an owner can change is outside the feed (ADR 0033)
  * and is announced as `resources` with the families named here.
@@ -141,7 +141,10 @@ const routeRules: readonly RouteRule[] = [
     "focus",
     "time_entries",
   ),
-  families("*", `time/entries(/${uuid})?`, "time_entries"),
+  // ADR 0050: stored time entries are feed records. The `time_entries`
+  // family stays for focus commands above, whose tracked time is projected
+  // from session intervals and is not in the feed.
+  feed("*", `time/entries(/${uuid})?`),
   none("time/report", readOnly),
   families("*", `counters(/${uuid}(/days/${date}|/stopwatch)?)?`, "counters"),
   families("*", `evaluations(/${date})?`, "evaluations"),
@@ -151,9 +154,12 @@ const routeRules: readonly RouteRule[] = [
     "recurrence",
   ),
 
-  // Day orders, boards, sections, saved views and menu folders.
-  families("*", `day-orders(/${date})?`, "day_orders"),
-  families("*", `day-orders/${date}/tasks`, "day_orders", "task_planning"),
+  // ADR 0050: saved day orders are feed records; the `day_orders` family is
+  // retired. Planning tasks for a date also changes their planned day, which
+  // shapes the day plan.
+  feed("*", `day-orders(/${date})?`),
+  families("*", `day-orders/${date}/tasks`, "task_planning"),
+  // Boards, sections, saved views and menu folders.
   families(
     "*",
     `boards(/order|/${uuid}(/panels/${uuid}/(order|tasks))?)?`,
@@ -290,11 +296,11 @@ export const automationOperationFamilies: Readonly<
   "recurrence.update": ["recurrence"],
   "recurrence.set_state": ["recurrence"],
   "recurrence.occurrence": ["recurrence"],
-  "time_entries.mutate": ["time_entries"],
+  "time_entries.mutate": feedOnly,
   "counters.mutate": ["counters"],
   "counters.record": ["counters"],
   "evaluations.write": ["evaluations"],
-  "day_order.reorder": ["day_orders"],
+  "day_order.reorder": feedOnly,
   "boards.mutate": ["boards"],
   "sections.mutate": ["boards"],
   "task_views.set": ["boards"],

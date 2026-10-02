@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Task } from "@suite/contracts";
-import { DayOrderList, dayMembersKey, orderedDayTasks } from "./day-order.tsx";
+import { DayOrderList, orderedDayTasks } from "./day-order.tsx";
 import { PlanTomorrowPanel, planCandidates } from "./plan-tomorrow.tsx";
 import { TodayQueue } from "./today-queue.tsx";
 
@@ -44,40 +44,26 @@ const tasks = [
   task("done", { status: "completed", plannedDay: tomorrow }),
 ];
 
-describe("day order in the browser (ADR 0027)", () => {
-  it("orders a date's local members by the saved order", () => {
+describe("day order in the browser (ADR 0027, ADR 0050)", () => {
+  it("orders a date's cached members by the saved ranks", () => {
+    // The saved ranks name a task that left the day ("done") and miss one
+    // that joined it ("b"): the first is ignored, the second follows the
+    // ranked members, and every member can be moved.
     const ordered = orderedDayTasks(tasks, today, {
-      date: today,
-      revision: 2,
-      taskIds: ["c", "a"],
+      taskIds: ["c", "done", "a"],
     });
     expect(ordered.map(({ task: { id }, movable }) => [id, movable])).toEqual([
       ["c", true],
       ["a", true],
-      ["b", false],
+      ["b", true],
     ]);
     expect(
       orderedDayTasks(tasks, today, undefined).map(({ task: { id } }) => id),
     ).toEqual(["a", "b", "c"]);
   });
 
-  it("keys the saved-order reload on each date's local members", () => {
-    const key = dayMembersKey(tasks, [today, tomorrow]);
-    expect(key).toBe("2026-09-24:a,b,c;2026-09-25:t");
-    expect(
-      dayMembersKey(
-        tasks.map((item) =>
-          item.id === "inbox" ? { ...item, plannedDay: tomorrow } : item,
-        ),
-        [today, tomorrow],
-      ),
-    ).not.toBe(key);
-  });
-
-  it("disables moves offline and at either end", () => {
+  it("disables moves at either end and before the device has synced", () => {
     const items = orderedDayTasks(tasks, today, {
-      date: today,
-      revision: 1,
       taskIds: ["b", "a", "c"],
     });
     const markup = (available: boolean) =>
@@ -110,7 +96,7 @@ describe("day order in the browser (ADR 0027)", () => {
         date={tomorrow}
         today={today}
         tasks={tasks}
-        order={{ date: tomorrow, revision: 0, taskIds: ["t"] }}
+        order={{ taskIds: ["t"] }}
         available={false}
         busy={false}
         onPlan={async () => await Promise.resolve(true)}
@@ -118,7 +104,9 @@ describe("day order in the browser (ADR 0027)", () => {
       />,
     );
     expect(markup).toContain(">Plan tomorrow</h2>");
-    expect(markup).toContain("Reconnect to plan tomorrow or change its order.");
+    expect(markup).toContain(
+      "Tomorrow can be planned once this device has synced.",
+    );
     expect(markup).toContain('aria-label="Order for 2026-09-25"');
     expect(markup).toContain("Add to tomorrow, in the order you pick them");
     expect(markup).not.toContain("TIMED");

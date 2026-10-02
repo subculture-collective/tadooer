@@ -40,6 +40,34 @@ export const dayOrderSchema = z
   })
   .strict();
 
+/**
+ * ADR 0050: a saved day order as the sync feed and the offline cache carry
+ * it. Unlike `dayOrderSchema`, `taskIds` holds the saved ranks only, not
+ * every current member: a client derives the members from its cached tasks
+ * and sorts them by these ranks (`applyDayOrder`), exactly as the server
+ * composes a read. The record exists only after the first saved write.
+ */
+export const savedDayOrderSchema = z
+  .object({
+    date: dayOrderDateSchema,
+    revision: z.number().int().positive(),
+    taskIds: uniqueTaskIds(dayOrderMaxTasks),
+    updatedAt: z.iso.datetime(),
+  })
+  .strict();
+
+/**
+ * ADR 0050: the fields of an offline `day_order.reorder`. `baseRevision` is
+ * the saved revision the client reordered, 0 when the date had no saved
+ * order. The server keeps the named tasks that are still members, in the
+ * named order, and appends members the client did not name.
+ */
+export const syncDayOrderReorderFields = {
+  date: dayOrderDateSchema,
+  taskIds: uniqueTaskIds(dayOrderMaxTasks),
+  baseRevision: z.number().int().nonnegative(),
+};
+
 export const dayOrderResponseSchema = z
   .object({ dayOrder: dayOrderSchema })
   .strict();
@@ -105,6 +133,7 @@ export const automationDayOrderReorderInputSchema = z
   .strict();
 
 export type DayOrder = z.infer<typeof dayOrderSchema>;
+export type SavedDayOrder = z.infer<typeof savedDayOrderSchema>;
 export type DayOrderReorderRequest = z.infer<
   typeof dayOrderReorderRequestSchema
 >;

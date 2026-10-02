@@ -13,7 +13,10 @@ import {
   type WorklogCsvRow,
 } from "@suite/domain";
 
-/** Worklog reads and corrections go straight to the server (ADR 0024). */
+/**
+ * Worklog reads and, with a connection, corrections go straight to the
+ * server (ADR 0024), so a broken day rule is reported at once.
+ */
 export interface WorklogApi {
   readonly getTimeReport: (from: string, to: string) => Promise<TimeReport>;
   readonly createTimeEntry: (
@@ -32,6 +35,49 @@ export interface WorklogApi {
     csrfToken: string,
   ) => Promise<TimeEntryMutationResponse>;
 }
+
+/**
+ * ADR 0050: time entry writes without a connection. Each queues one sync
+ * operation and updates the offline cache; the server checks the day rules
+ * when it applies the operation.
+ */
+export interface TimeEntryQueue {
+  readonly create: (entry: TimeEntryCreateRequest) => Promise<void>;
+  readonly patch: (
+    entry: TimeEntry,
+    patch: TimeEntryPatchRequest,
+  ) => Promise<void>;
+  readonly remove: (entry: TimeEntry) => Promise<void>;
+}
+
+export const offlineSavedNotice =
+  "Saved on this device. It syncs when you reconnect; the day's total is checked then.";
+
+/** Runs one queued write and reports it in the worklog state. */
+export const queueTimeEntryWrite = async (
+  state: WorklogState,
+  write: () => Promise<void>,
+): Promise<{ readonly state: WorklogState; readonly saved: boolean }> => {
+  try {
+    await write();
+    return {
+      saved: true,
+      state: { ...state, error: null, notice: offlineSavedNotice },
+    };
+  } catch (error) {
+    return {
+      saved: false,
+      state: {
+        ...state,
+        notice: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : "The change could not be saved on this device.",
+      },
+    };
+  }
+};
 
 export type WorklogPeriod = "week" | "month";
 

@@ -180,8 +180,13 @@ const sendOutcome = (
 };
 
 /**
- * Worklog reports and manual time entries (ADR 0024). Online-only: entries
- * are not in the sync change feed or the offline cache.
+ * Worklog reports and manual time entries over HTTP (ADR 0024). Stored
+ * entries are sync feed records (ADR 0050): the store appends a feed change
+ * with every write here, so other devices receive it in their next round.
+ * With a connection the web app writes through these routes, so a broken
+ * day rule is reported at once; offline it queues the same write in the
+ * sync outbox. The report stays online: it adds focus time and imported
+ * work context, which are not in the feed.
  */
 export const handleTimeHistory: RouteHandler = async (
   request,

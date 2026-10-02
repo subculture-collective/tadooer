@@ -19,9 +19,13 @@ import type { TaskRecord } from "./index.ts";
  * `time_work_context_days` keeps imported Super Productivity work start/end
  * and break records per project, tag or the Today context and day.
  *
- * Both are online HTTP records, outside the sync change feed and the offline
- * cache. Mutations use savepoints so they nest inside automation
- * confirmation and import transactions.
+ * Stored time entries are sync feed records (ADR 0050): every method that
+ * writes `time_entries` appends its feed change in the same savepoint, so the
+ * browser routes, the assistant, the importer and the sync outbox cannot
+ * write an entry the feed does not carry. Focus intervals and work context
+ * days are not feed records of this kind. Mutations use savepoints so they
+ * nest inside automation confirmation, import and sync operation
+ * transactions.
  */
 export const timeHistoryMigration = {
   id: "0028_time_history",
@@ -218,6 +222,18 @@ export interface TimeReportRecord {
   readonly entries: readonly (TimeEntryRecord | FocusEntryRecord)[];
 }
 
+/**
+ * Appends one sync feed change inside the caller's transaction (ADR 0050).
+ * A deletion reports the revision the entry would have had next.
+ */
+export type TimeEntryChangeAppender = (
+  ownerId: string,
+  entryId: string,
+  kind: "upsert" | "deleted",
+  revision: number,
+  now: string,
+) => void;
+
 export interface TimeEntryDependencies {
   readonly getTask: (
     ownerId: string,
@@ -265,7 +281,24 @@ export class SqliteTimeEntryStore {
   constructor(
     private readonly db: DatabaseSync,
     private readonly deps: TimeEntryDependencies,
+    private readonly appendChange: TimeEntryChangeAppender,
   ) {}
+
+  /**
+   * ADR 0050: the stored entries a sync snapshot carries, those dated on or
+   * after `from`. Entries of soft-deleted tasks are included; a client hides
+   * them by the task it caches, and a restore brings them back.
+   */
+  listSince(ownerId: string, from: string): readonly TimeEntryRecord[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM time_entries WHERE owner_id=? AND work_date >= ?
+           ORDER BY work_date, created_at, id`,
+        )
+        .all(ownerId, from) as Row[]
+    ).map(fromRow);
+  }
 
   get(ownerId: string, id: string): TimeEntryRecord | undefined {
     const row = this.db
@@ -361,6 +394,7 @@ export class SqliteTimeEntryStore {
           input.now,
           input.now,
         );
+      this.appendChange(input.ownerId, input.id, "upsert", 1, input.now);
       return {
         kind: "applied",
         entry: this.#required(input.ownerId, input.id),
@@ -453,6 +487,13 @@ export class SqliteTimeEntryStore {
           input.expectedRevision,
         ).changes;
       if (changed !== 1) throw new Error("Conditional time entry update lost");
+      this.appendChange(
+        input.ownerId,
+        input.id,
+        "upsert",
+        input.expectedRevision + 1,
+        input.now,
+      );
       return {
         kind: "applied",
         entry: this.#required(input.ownerId, input.id),
@@ -499,6 +540,13 @@ export class SqliteTimeEntryStore {
         )
         .run(input.ownerId, input.id, input.expectedRevision).changes;
       if (changed !== 1) throw new Error("Conditional time entry delete lost");
+      this.appendChange(
+        input.ownerId,
+        input.id,
+        "deleted",
+        input.expectedRevision + 1,
+        input.now,
+      );
       return {
         kind: "applied",
         entry: null,
@@ -765,7 +813,8 @@ export class SqliteTimeEntryStore {
 
   /**
    * Import helper; runs inside the caller's transaction for a newly created
-   * task, before the task is marked archived.
+   * task, before the task is marked archived. Each entry is announced in the
+   * sync feed (ADR 0050).
    */
   insertImported(
     ownerId: string,
@@ -779,9 +828,10 @@ export class SqliteTimeEntryStore {
          source_kind,import_kind,source_task_id,source_work_date,source_store)
        VALUES (?,?,?,?,?,'import','',1,?,?,'super_productivity',?,?,?,?)`,
     );
-    for (const entry of entries)
+    for (const entry of entries) {
+      const id = newId();
       insert.run(
-        newId(),
+        id,
         ownerId,
         taskId,
         entry.workDate,
@@ -793,6 +843,8 @@ export class SqliteTimeEntryStore {
         entry.workDate,
         entry.sourceStore,
       );
+      this.appendChange(ownerId, id, "upsert", 1, now);
+    }
   }
 
   /**

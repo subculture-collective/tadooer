@@ -1,5 +1,6 @@
 import type { CoreTaskField } from "@suite/contracts";
 import type {
+  DayOrderConflictVersions,
   NoteConflictVersions,
   ResolveTaskConflictInput,
   TaskConflictReview,
@@ -54,6 +55,94 @@ const entityLabel: Record<string, string> = {
   project: "Project",
   tag: "Tag",
   subtask: "Checklist item",
+  day_order: "Day order",
+  time_entry: "Time entry",
+};
+
+/** ADR 0050: why the server refused a queued time entry write. */
+const timeEntryReason: Record<string, string> = {
+  revision:
+    "The entry changed on another device before your change synced. The current entry is shown in the Worklog.",
+  record:
+    "The entry no longer exists, or its ID was already used. Nothing was changed.",
+  task_unavailable:
+    "Time can be recorded only on active tasks; this task was archived or deleted.",
+  entry_read_only:
+    "Focus time belongs to its session; add a manual correction for the day instead.",
+  duration_invalid:
+    "The duration must be nonzero and within one day; imported entries stay positive.",
+  day_total_negative:
+    "The task's time for that day would drop below zero once focus time is counted.",
+  day_total_exceeds_day:
+    "The task's time for that day would exceed 24 hours once focus time is counted.",
+  focus_running:
+    "A focus session was running on this task that day; stop it before lowering the day's time.",
+};
+
+/**
+ * ADR 0050: two devices reordered the same date. The saved order is shown
+ * on Today and the Planner; the local order stays in the outbox until the
+ * owner keeps the saved one or saves the local one over it.
+ */
+const DayOrderConflictCard = ({
+  review,
+  versions,
+  busy,
+  onResolve,
+}: {
+  readonly review: TaskConflictReview;
+  readonly versions: DayOrderConflictVersions;
+  readonly busy: boolean;
+  readonly onResolve: SyncConflictReviewProps["onResolve"];
+}) => {
+  const base = {
+    operationId: review.conflict.operationId,
+    reviewedTaskRevision:
+      versions.canonical?.revision ?? review.conflict.taskRevision,
+    reviewedFieldVersions: {},
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Day order conflict</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <Alert variant="warning">
+          <AlertTitle>Your order for {versions.date} was not saved</AlertTitle>
+          <AlertDescription>
+            The order of this day changed on another device before your change
+            synced. The current order is shown on Today and the Planner. Your
+            order is kept until you choose.
+          </AlertDescription>
+        </Alert>
+        {review.retryLocalUnavailableReason === "pending-local-sync" && (
+          <p role="status">
+            A newer local reorder of this day is still syncing. Wait for it
+            before using your order.
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void onResolve({ ...base, choice: "keep-current" })}
+          >
+            Keep current order
+          </Button>
+          {review.retryLocalSupported && (
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => void onResolve({ ...base, choice: "retry-local" })}
+            >
+              Use my order
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
 };
 
 /**
@@ -183,6 +272,16 @@ export const SyncConflictReview = ({
                 onResolve={onResolve}
               />
             );
+          if (review.dayOrder !== undefined)
+            return (
+              <DayOrderConflictCard
+                key={review.conflict.operationId}
+                review={review}
+                versions={review.dayOrder}
+                busy={busy}
+                onResolve={onResolve}
+              />
+            );
           if (entityKind !== "task")
             // ADR 0033: record conflicts are dismissed once the canonical
             // record has been pulled; nothing is retried locally.
@@ -195,9 +294,14 @@ export const SyncConflictReview = ({
                   <Alert variant="warning">
                     <AlertTitle>The local change was not applied</AlertTitle>
                     <AlertDescription>
-                      The record changed elsewhere, was already created, or its
-                      name is taken. The current record has been refreshed; make
-                      the change again if it still applies.
+                      {entityKind === "time_entry"
+                        ? `${
+                            (review.conflict.reasons ?? [])
+                              .map((reason) => timeEntryReason[reason])
+                              .find((text) => text !== undefined) ??
+                            "The server did not accept this time entry change."
+                          } Make the change again in the Worklog if it still applies.`
+                        : "The record changed elsewhere, was already created, or its name is taken. The current record has been refreshed; make the change again if it still applies."}
                     </AlertDescription>
                   </Alert>
                   <div className="flex flex-wrap gap-2">

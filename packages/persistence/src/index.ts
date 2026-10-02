@@ -3,6 +3,7 @@ import {
   notificationPreferencesSchema,
   checklistCommandSchema,
   organizationIconPattern,
+  syncTimeEntryWindowStart,
   type ApplicationPreferences,
   type ChecklistCommand,
   type FocusPreferenceProvenance,
@@ -90,6 +91,7 @@ import {
 } from "./task-planning-columns.ts";
 import {
   scheduledReminders,
+  zonedCalendarDate,
   type HistoricalReference,
   type TaskArchiveReviewReason,
 } from "@suite/domain";
@@ -99,6 +101,7 @@ import {
   timeHistoryMigration,
   type ImportedTimeEntry,
   type ImportedWorkContextDay,
+  type TimeEntryRecord,
 } from "./time-entry-store.ts";
 export {
   SqliteTimeEntryStore,
@@ -231,7 +234,11 @@ export {
   type CalendarBridgeJobRecord,
   type CalendarBridgeJobTarget,
 } from "./calendar-bridge-worker-store.ts";
-import { SqliteDayOrderStore, dayOrderMigration } from "./day-order-store.ts";
+import {
+  SqliteDayOrderStore,
+  dayOrderMigration,
+  type SavedDayOrderRecord,
+} from "./day-order-store.ts";
 import {
   SqliteBoardStore,
   boardsMigration,
@@ -272,6 +279,7 @@ export {
   type DayOrderPlanResult,
   type DayOrderRecord,
   type DayOrderReorderResult,
+  type SavedDayOrderRecord,
 } from "./day-order-store.ts";
 export {
   SqliteTaskHierarchyStore,
@@ -1764,11 +1772,24 @@ const migrations: readonly Migration[] = [
     `,
   },
   {
+    // ADR 0050: saved day orders and time entries join the sync feed. Those
+    // written before this migration have no feed change, so the epoch is
+    // reset as in 0049: every client replaces its cache from a snapshot once
+    // and replays its queued operations over it. One reset covers every kind
+    // of the release.
+    id: "0050_sync_day_orders_time_entries_epoch_reset",
+    sql: `
+      DELETE FROM sync_changes;
+      UPDATE sync_owner_state
+        SET epoch=lower(hex(randomblob(16))),next_sequence=1,retained_floor=0,
+            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
+    `,
+  },
+  {
     // ADR 0048: trusted-device sessions. A session with a device_id is the
     // device record. Its token rotates: next_token_hash is a successor that
     // was sent and not yet presented, and web_session_retired_tokens holds
     // every replaced hash so a replay can be told from a late request.
-    // 0050 is reserved by the sync wave that runs in parallel.
     id: "0051_trusted_device_sessions",
     sql: `
       ALTER TABLE web_sessions ADD COLUMN device_id TEXT;
@@ -1913,29 +1934,43 @@ export class SuiteDatabase {
           ),
       },
     );
-    this.dayOrders = new SqliteDayOrderStore(database, {
-      planTask: (ownerId, taskId, expectedRevision, date, now) => {
-        const task = this.getTask(ownerId, taskId);
-        if (task?.status !== "open") return "invalid";
-        if (task.revision !== expectedRevision) return "conflict";
-        if (task.plannedStart === null && task.plannedDay === date)
-          return "unchanged";
-        if (this.getTaskCalendarBlock(ownerId, taskId) !== undefined)
-          return "blocked";
-        const result = this.patchTask(
+    this.dayOrders = new SqliteDayOrderStore(
+      database,
+      {
+        planTask: (ownerId, taskId, expectedRevision, date, now) => {
+          const task = this.getTask(ownerId, taskId);
+          if (task?.status !== "open") return "invalid";
+          if (task.revision !== expectedRevision) return "conflict";
+          if (task.plannedStart === null && task.plannedDay === date)
+            return "unchanged";
+          if (this.getTaskCalendarBlock(ownerId, taskId) !== undefined)
+            return "blocked";
+          const result = this.patchTask(
+            ownerId,
+            taskId,
+            expectedRevision,
+            { plannedDay: date },
+            now,
+          );
+          return result.kind === "updated"
+            ? "applied"
+            : result.kind === "precondition-failed"
+              ? "conflict"
+              : "invalid";
+        },
+      },
+      // ADR 0050: a saved day order and its feed change share one transaction.
+      (ownerId, date, revision, now) => {
+        this.#appendSyncChangeInTransaction(
           ownerId,
-          taskId,
-          expectedRevision,
-          { plannedDay: date },
+          "day_order",
+          date,
+          "upsert",
+          revision,
           now,
         );
-        return result.kind === "updated"
-          ? "applied"
-          : result.kind === "precondition-failed"
-            ? "conflict"
-            : "invalid";
       },
-    });
+    );
     this.recurrence = new SqliteRecurrenceStore(database, {
       getTask: (ownerId, taskId, includeInactive) =>
         this.getTask(ownerId, taskId, includeInactive),
@@ -1964,10 +1999,25 @@ export class SuiteDatabase {
         );
       },
     });
-    this.timeEntries = new SqliteTimeEntryStore(database, {
-      getTask: (ownerId, taskId, includeInactive) =>
-        this.getTask(ownerId, taskId, includeInactive),
-    });
+    this.timeEntries = new SqliteTimeEntryStore(
+      database,
+      {
+        getTask: (ownerId, taskId, includeInactive) =>
+          this.getTask(ownerId, taskId, includeInactive),
+      },
+      // ADR 0050: a time entry write and its feed change share one
+      // transaction.
+      (ownerId, entryId, kind, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "time_entry",
+          entryId,
+          kind,
+          revision,
+          now,
+        );
+      },
+    );
     // ADR 0046: a note write and its feed change share one transaction.
     this.notes = new SqliteNoteStore(
       database,
@@ -5340,6 +5390,7 @@ export class SuiteDatabase {
     readonly tags: readonly TagRecord[];
     readonly subtasks: readonly SubtaskRecord[];
     readonly notes: readonly NoteRecord[];
+    readonly dayOrders: readonly SavedDayOrderRecord[];
     readonly templates: readonly TaskTemplateRecord[];
     readonly templateBlueprints: readonly TemplateSubtaskBlueprintRecord[];
     readonly templateSets: readonly TemplateSetRecord[];
@@ -5356,6 +5407,7 @@ export class SuiteDatabase {
       tags: this.listTags(ownerId),
       subtasks,
       notes: this.notes.list(ownerId),
+      dayOrders: this.dayOrders.listSaved(ownerId),
       templates,
       templateBlueprints: templates.flatMap((template) =>
         this.listTemplateSubtaskBlueprints(template.id),
@@ -7536,6 +7588,169 @@ export class SuiteDatabase {
   }
 
   /**
+   * ADR 0050: a day-order reorder from the outbox. The saved order of a date
+   * keeps one record revision (0 before the first write): a reorder of any
+   * other revision is a resource conflict that changes nothing, and the
+   * saved order is re-sent. Membership never conflicts; see
+   * `SqliteDayOrderStore.reorderFromSync`.
+   */
+  applyDayOrderSync(input: {
+    readonly ownerId: string;
+    readonly clientId: string;
+    readonly operationId: string;
+    readonly requestHash: string;
+    readonly date: string;
+    readonly baseRevision: number;
+    readonly taskIds: readonly string[];
+    readonly now: string;
+  }): {
+    readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
+    readonly record?: SavedDayOrderRecord;
+    readonly fields?: readonly string[];
+    readonly revision?: number;
+  } {
+    return this.#applySyncOperation<SavedDayOrderRecord>(
+      { ...input, id: input.date, kind: "day_order" },
+      () => {
+        const result = this.dayOrders.reorderFromSync(input);
+        return result.kind === "applied"
+          ? {
+              kind: "applied",
+              record: result.saved,
+              revision: result.saved.revision,
+            }
+          : {
+              kind: "conflict",
+              fields: ["revision"],
+              revision: result.saved?.revision ?? null,
+              record: result.saved,
+            };
+      },
+    );
+  }
+
+  /**
+   * ADR 0050: the stored time entries a sync snapshot carries: those dated
+   * inside the rolling window that ends on the owner's current calendar
+   * date, and any dated later. Older history is read through the report.
+   */
+  listSyncTimeEntries(
+    ownerId: string,
+    now: string,
+  ): readonly TimeEntryRecord[] {
+    return this.timeEntries.listSince(
+      ownerId,
+      syncTimeEntryWindowStart(
+        zonedCalendarDate(now, this.getPlanningPreferences(ownerId).timeZone),
+      ),
+    );
+  }
+
+  /**
+   * ADR 0050: time entry create, patch and delete from the outbox. An entry
+   * keeps one record revision: a patch or delete of another revision is a
+   * resource conflict that changes nothing, and the entry is re-sent. The
+   * rules of ADR 0024 (active task, day total within 0 to 24 hours, no
+   * lowering under a running focus interval) are checked here, because the
+   * client holds no focus time; a broken rule is a conflict named after it.
+   */
+  applyTimeEntrySync(input: {
+    readonly ownerId: string;
+    readonly clientId: string;
+    readonly operationId: string;
+    readonly requestHash: string;
+    readonly command:
+      | {
+          readonly action: "create";
+          readonly id: string;
+          readonly taskId: string;
+          readonly workDate: string;
+          readonly durationMs: number;
+          readonly note: string;
+        }
+      | {
+          readonly action: "update";
+          readonly id: string;
+          readonly baseRevision: number;
+          readonly patch: {
+            readonly workDate?: string | undefined;
+            readonly durationMs?: number | undefined;
+            readonly note?: string | undefined;
+          };
+        }
+      | {
+          readonly action: "delete";
+          readonly id: string;
+          readonly baseRevision: number;
+        };
+    readonly now: string;
+  }): {
+    readonly kind: "applied" | "replayed" | "conflict" | "idempotency-conflict";
+    readonly record?: TimeEntryRecord;
+    readonly fields?: readonly string[];
+    readonly revision?: number;
+  } {
+    const { command, ownerId, now } = input;
+    return this.#applySyncOperation<TimeEntryRecord>(
+      { ...input, id: command.id, kind: "time_entry" },
+      () => {
+        const timeZone = this.getPlanningPreferences(ownerId).timeZone;
+        const result =
+          command.action === "create"
+            ? this.timeEntries.create({
+                ownerId,
+                id: command.id,
+                taskId: command.taskId,
+                workDate: command.workDate,
+                durationMs: command.durationMs,
+                note: command.note,
+                timeZone,
+                now,
+              })
+            : command.action === "update"
+              ? this.timeEntries.update({
+                  ownerId,
+                  id: command.id,
+                  expectedRevision: command.baseRevision,
+                  patch: command.patch,
+                  timeZone,
+                  now,
+                })
+              : this.timeEntries.delete({
+                  ownerId,
+                  id: command.id,
+                  expectedRevision: command.baseRevision,
+                  timeZone,
+                  now,
+                });
+        if (result.kind === "applied")
+          return {
+            kind: "applied",
+            record: result.entry ?? undefined,
+            revision:
+              result.entry?.revision ??
+              (command.action === "create" ? 1 : command.baseRevision + 1),
+          };
+        const current = this.timeEntries.get(ownerId, command.id);
+        return {
+          kind: "conflict",
+          fields: [
+            result.kind === "invalid"
+              ? result.code
+              : result.kind === "precondition-failed"
+                ? "revision"
+                : // The ID is taken (`exists`, or `replayed` for an entry an
+                  // HTTP write already made) or names no entry.
+                  "record",
+          ],
+          revision: current?.revision ?? null,
+          record: current,
+        };
+      },
+    );
+  }
+
+  /**
    * Shared idempotent envelope for non-task outbox operations: a stored
    * outcome replays (or reports an idempotency conflict), otherwise the
    * body runs inside one transaction and its outcome is recorded.
@@ -7546,7 +7761,8 @@ export class SuiteDatabase {
       readonly clientId: string;
       readonly operationId: string;
       readonly requestHash: string;
-      readonly kind: "project" | "tag" | "subtask" | "note";
+      readonly kind:
+        "project" | "tag" | "subtask" | "note" | "day_order" | "time_entry";
       readonly id: string;
       readonly now: string;
     },
@@ -7579,7 +7795,12 @@ export class SuiteDatabase {
           ? this.#tag(input.ownerId, input.id)
           : input.kind === "note"
             ? this.notes.get(input.ownerId, input.id)
-            : this.getSubtask(input.ownerId, input.id)) as Entity | undefined;
+            : input.kind === "day_order"
+              ? this.dayOrders.getSaved(input.ownerId, input.id)
+              : input.kind === "time_entry"
+                ? this.timeEntries.get(input.ownerId, input.id)
+                : this.getSubtask(input.ownerId, input.id)) as
+        Entity | undefined;
     this.#database.exec("BEGIN IMMEDIATE;");
     try {
       const previous = this.#database

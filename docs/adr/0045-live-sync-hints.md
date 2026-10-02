@@ -138,6 +138,13 @@ pruned, and a cursor below the retained floor gets the existing
   > The `notes` resource family is retired: the server no longer emits it,
   > and the name stays in the contract enum until a later cleanup.
 
+  > Note, 2026-10-02: saved day orders followed
+  > ([ADR 0050](0050-day-orders-and-time-entries-in-the-sync-feed.md)) and
+  > the `day_orders` family is retired the same way. Stored time entries
+  > followed in the same ADR; their routes are feed routes, while focus
+  > commands keep emitting `time_entries` for the tracked time that is not
+  > in the feed.
+
 - A closed app receives nothing. Background delivery on desktop and mobile
   needs long-lived device sessions (wave 7C, #115) and platform shells (waves 7D
   and 7E); those are separate decisions.

@@ -209,6 +209,8 @@ it("syncs note create, edit, conflict, delete and replay between two clients", a
           entityKind: "note",
           taskId: noteId,
           taskRevision: 3,
+          // ADR 0050: record conflicts say why.
+          reasons: ["revision"],
         },
       ]);
       // Nothing was overwritten: the laptop is handed the phone's text and

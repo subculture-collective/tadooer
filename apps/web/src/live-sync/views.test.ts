@@ -22,6 +22,24 @@ describe("live sync resource families", () => {
     expect(new Set(liveViews).size).toBe(liveViews.length);
   });
 
+  it("refetches nothing for the retired day_orders family (ADR 0050)", () => {
+    // Saved day orders are feed records read from the offline cache.
+    expect(liveSyncFamilyViews.day_orders).toEqual([]);
+    expect(liveViews).not.toContain("dayOrders");
+    // A planned day still refreshes the day plan, not a day-order view.
+    expect(liveSyncFamilyViews.task_planning).toEqual(["dayPlan"]);
+    const registry = new LiveViewRegistry();
+    const plan = vi.fn();
+    registry.register("dayPlan", plan);
+    expect(
+      registry.refetch(["day_orders"], {
+        sourceClientId: null,
+        ownClientId: own,
+      }),
+    ).toEqual([]);
+    expect(plan).not.toHaveBeenCalled();
+  });
+
   it("refetches nothing for the retired notes family (ADR 0046)", () => {
     // Notes are feed records read from the offline cache; no view loads
     // them over HTTP, so a hint from an older server has nothing to do.
@@ -51,6 +69,23 @@ describe("LiveViewRegistry", () => {
     expect(refetched).toEqual(["taskLinks"]);
     expect(links).toHaveBeenCalledTimes(1);
     expect(boards).not.toHaveBeenCalled();
+  });
+
+  it("refetches named views for a feed kind whose routes send no hint (ADR 0050)", () => {
+    // Stored time entries are feed records: the app shell reloads the
+    // views that read the server's time report when a round delivers one.
+    const registry = new LiveViewRegistry();
+    const worklog = vi.fn();
+    const boards = vi.fn();
+    registry.register("worklog", worklog);
+    registry.register("boards", boards);
+    expect(registry.refetchViews(["worklog", "timeSpent"])).toEqual([
+      "worklog",
+    ]);
+    expect(worklog).toHaveBeenCalledTimes(1);
+    expect(boards).not.toHaveBeenCalled();
+    // Focus commands still emit the family for the same views.
+    expect(liveSyncFamilyViews.time_entries).toEqual(["worklog", "timeSpent"]);
   });
 
   it("does nothing for a family whose views are not loaded", () => {
