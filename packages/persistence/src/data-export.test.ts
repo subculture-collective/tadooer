@@ -443,6 +443,12 @@ describe("data export", () => {
           ids.parent,
         );
         expect(b.getPlanningPreferences("owner-b").workdayStart).toBe("08:30");
+        // ADR 0046: restored notes reach clients through the snapshot that
+        // the new epoch forces, not through per-note feed changes.
+        expect(b.fullSyncSnapshot("owner-b").notes).toEqual(
+          b.notes.list("owner-b"),
+        );
+        expect(b.notes.list("owner-b").length).toBeGreaterThan(0);
         // A new sync epoch: clients of the target resynchronize.
         const sqlite = raw(directory, "b");
         expect(

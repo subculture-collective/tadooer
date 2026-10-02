@@ -5,11 +5,14 @@ import type {
 
 /**
  * Which resource families a mutating request touches (ADR 0045). The sync
- * feed covers tasks, projects, tags, checklist items, templates, template
- * sets, choice pools, planning placeholders, habits and the active session;
- * a change there is announced as `changes` from the feed head. Everything
- * else an owner can change is outside the feed (ADR 0033) and is announced
- * as `resources` with the families named here.
+ * feed covers tasks, projects, tags, checklist items, notes (ADR 0046),
+ * templates, template sets, choice pools, planning placeholders, habits and
+ * the active session; a change there is announced as `changes` from the feed
+ * head. Everything else an owner can change is outside the feed (ADR 0033)
+ * and is announced as `resources` with the families named here.
+ *
+ * A record kind that moves into the feed changes its rules to `feed` and its
+ * automation operations to `feedOnly`; its family is then never emitted.
  *
  * `resource-families.test.ts` reads the path literals and patterns of every
  * route handler and fails when one of them has no entry in this table, and
@@ -113,7 +116,8 @@ const routeRules: readonly RouteRule[] = [
     `(projects|tags)(/order|/${uuid}|/${uuid}/backlog)?`,
     "organization",
   ),
-  families("*", `notes(/order|/${uuid})?`, "notes"),
+  // ADR 0046: notes are feed records; the `notes` family is retired.
+  feed("*", `notes(/order|/${uuid})?`),
 
   // Reusable work, pools, placeholders and habits are feed entities.
   feed("*", `templates(/${uuid}|/${uuid}/(archive|instantiate|pool-slots))?`),
@@ -265,7 +269,7 @@ export const automationOperationFamilies: Readonly<
   "projects.set_backlog": ["organization"],
   "tags.mutate": ["organization"],
   "tags.reorder": ["organization"],
-  "notes.mutate": ["notes"],
+  "notes.mutate": feedOnly,
   "task_links.mutate": ["task_links"],
   "tasks.assign_project": ["organization"],
   "tasks.set_tags": feedOnly,

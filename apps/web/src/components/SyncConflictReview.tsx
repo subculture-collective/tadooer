@@ -1,8 +1,10 @@
 import type { CoreTaskField } from "@suite/contracts";
 import type {
+  NoteConflictVersions,
   ResolveTaskConflictInput,
   TaskConflictReview,
 } from "../local-store.ts";
+import { NoteMarkdown } from "./notes/NoteMarkdown.tsx";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,6 +56,110 @@ const entityLabel: Record<string, string> = {
   subtask: "Checklist item",
 };
 
+/**
+ * ADR 0046: a note conflict shows the server's note and the local attempt
+ * side by side. Neither is discarded until the owner chooses.
+ */
+const NoteConflictCard = ({
+  review,
+  versions,
+  busy,
+  onResolve,
+}: {
+  readonly review: TaskConflictReview;
+  readonly versions: NoteConflictVersions;
+  readonly busy: boolean;
+  readonly onResolve: SyncConflictReviewProps["onResolve"];
+}) => {
+  const { canonical, local, attempted } = versions;
+  const base = {
+    operationId: review.conflict.operationId,
+    reviewedTaskRevision: canonical?.revision ?? review.conflict.taskRevision,
+    reviewedFieldVersions: {},
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Note conflict</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <Alert variant="warning">
+          <AlertTitle>The local change was not applied</AlertTitle>
+          <AlertDescription>
+            {canonical === null
+              ? "This note no longer exists on the server."
+              : "This note changed on another device before your change synced."}{" "}
+            Both versions are kept until you choose.
+          </AlertDescription>
+        </Alert>
+        <div className="grid gap-3 md:grid-cols-2">
+          <section aria-label="Current note">
+            <h3>Current note</h3>
+            {canonical === null ? (
+              <p>Deleted.</p>
+            ) : (
+              <>
+                <NoteMarkdown content={canonical.content} />
+                {canonical.pinnedToToday && <small>Pinned to Today</small>}
+              </>
+            )}
+          </section>
+          <section aria-label="Your version">
+            <h3>Your version</h3>
+            {attempted === "delete" ? (
+              <p>You deleted this note.</p>
+            ) : local === null ? (
+              <p>The local change is no longer available.</p>
+            ) : (
+              <>
+                <NoteMarkdown content={local.content} />
+                {local.pinnedToToday && <small>Pinned to Today</small>}
+              </>
+            )}
+          </section>
+        </div>
+        {review.retryLocalUnavailableReason === "pending-local-sync" && (
+          <p role="status">
+            A newer local change to this note is still syncing. Wait for it
+            before replacing the current note.
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void onResolve({ ...base, choice: "keep-current" })}
+          >
+            {canonical === null ? "Dismiss" : "Keep current note"}
+          </Button>
+          {versions.keepBothSupported && (
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => void onResolve({ ...base, choice: "keep-both" })}
+            >
+              Save mine as a new note
+            </Button>
+          )}
+          {review.retryLocalSupported && (
+            <Button
+              type="button"
+              variant={attempted === "delete" ? "destructive" : "outline"}
+              disabled={busy}
+              onClick={() => void onResolve({ ...base, choice: "retry-local" })}
+            >
+              {attempted === "delete"
+                ? "Delete the current note"
+                : "Replace with mine"}
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
 export const SyncConflictReview = ({
   reviews,
   busy,
@@ -67,6 +173,16 @@ export const SyncConflictReview = ({
       <div className="grid gap-3">
         {reviews.map((review) => {
           const entityKind = review.conflict.entityKind ?? "task";
+          if (review.note !== undefined)
+            return (
+              <NoteConflictCard
+                key={review.conflict.operationId}
+                review={review}
+                versions={review.note}
+                busy={busy}
+                onResolve={onResolve}
+              />
+            );
           if (entityKind !== "task")
             // ADR 0033: record conflicts are dismissed once the canonical
             // record has been pulled; nothing is retried locally.

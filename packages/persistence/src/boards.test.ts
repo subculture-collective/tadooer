@@ -985,7 +985,7 @@ describe("import", () => {
         expect(restored.boards.markersOf(owner, t2.id)).toEqual([
           "in_progress",
         ]);
-        expect(restored.state().appliedMigrationCount).toBe(42);
+        expect(restored.state().appliedMigrationCount).toBe(43);
       } finally {
         restored.close();
       }

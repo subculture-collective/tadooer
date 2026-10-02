@@ -358,21 +358,15 @@
     {
       "id": "notes",
       "action": "Project, tag and standalone notes: create, edit, pin, reorder and delete",
-      "webApi": [
-        "getNotes",
-        "createNote",
-        "patchNote",
-        "deleteNote",
-        "reorderNotes"
-      ],
+      "webApi": [],
       "catalog": [
         "notes.list",
         "notes.mutate"
       ],
       "status": "covered",
       "issue": 28,
-      "authority": "Dedicated notes read/write scopes; owner-checked project/tag association, note revisions, complete-membership reorder and atomic audit/replay. Deletion is permanent and needs explicit approval. Notes are online-only.",
-      "source": "apps/web/src/api.ts"
+      "authority": "Dedicated notes read/write scopes; owner-checked project/tag association, note revisions, complete-membership reorder and atomic audit/replay. Deletion is permanent and needs explicit approval. Notes are sync feed records (ADR 0046): an assistant write appends a feed change in the same transaction and reaches every device in its next round. The browser reads notes from its offline cache and writes them through the sync outbox, so it has no note API function.",
+      "source": "apps/web/src/local-store.ts"
     },
     {
       "id": "task-links",

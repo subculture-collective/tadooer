@@ -8,12 +8,15 @@ import { randomUUID, createHash, randomBytes } from "node:crypto";
 import type {
   ClientRegistrationResponse,
   CoreTaskField,
+  SyncOperation,
   SyncRoundResponse,
   SyncSnapshotResponse,
 } from "@suite/contracts";
 import type {
+  NoteRecord,
   ProjectRecord,
   SubtaskRecord,
+  SuiteDatabase,
   TagRecord,
   TaskRecord,
 } from "@suite/persistence";
@@ -39,6 +42,7 @@ import {
   projectResponse,
   tagResponse,
   subtaskResponse,
+  noteResponse,
   templateResponse,
   templateBlueprintResponse,
   templateSetResponse,
@@ -50,6 +54,30 @@ import {
   activeFromRecord,
   activeResponse,
 } from "./shared.ts";
+
+type NoteSyncOperation = Extract<
+  SyncOperation,
+  { readonly kind: "note.create" | "note.patch" | "note.delete" }
+>;
+
+/** ADR 0046: the persistence command for one queued note operation. */
+const noteSyncCommand = (
+  operation: NoteSyncOperation,
+): Parameters<SuiteDatabase["applyNoteSync"]>[0]["command"] =>
+  operation.kind === "note.create"
+    ? { action: "create", ...operation.note }
+    : operation.kind === "note.patch"
+      ? {
+          action: "update",
+          id: operation.noteId,
+          baseRevision: operation.baseRevision,
+          patch: operation.fields,
+        }
+      : {
+          action: "delete",
+          id: operation.noteId,
+          baseRevision: operation.baseRevision,
+        };
 
 export const handleSync: RouteHandler = async (request, response, url, ctx) => {
   const { stores: database, auth } = ctx;
@@ -347,6 +375,11 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
           entityKind: "subtask" as const,
           value: subtaskResponse(subtask),
         })),
+        // ADR 0046: notes travel whole, in the owner's order.
+        ...snapshot.notes.map((note) => () => ({
+          entityKind: "note" as const,
+          value: noteResponse(note),
+        })),
         ...snapshot.templates.map((template) => () => ({
           entityKind: "template" as const,
           value: {
@@ -523,8 +556,10 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         readonly kind:
           "applied" | "replayed" | "conflict" | "idempotency-conflict";
         readonly task?: TaskRecord;
-        readonly record?: ProjectRecord | TagRecord | SubtaskRecord;
+        readonly record?:
+          ProjectRecord | TagRecord | SubtaskRecord | NoteRecord;
         readonly fields?: readonly string[];
+        readonly revision?: number;
       } =
         operation.kind === "task.move"
           ? database.taskHierarchy.applyMoveSync({
@@ -632,24 +667,24 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                                     ),
                                   },
                                 })
-                              : database.applyChecklistSync({
-                                  ...common,
-                                  command: {
-                                    action: "delete",
-                                    id: (
-                                      operation as Extract<
-                                        typeof operation,
-                                        { readonly kind: "subtask.delete" }
-                                      >
-                                    ).subtaskId,
-                                    baseRevision: (
-                                      operation as Extract<
-                                        typeof operation,
-                                        { readonly kind: "subtask.delete" }
-                                      >
-                                    ).baseRevision,
-                                  },
-                                });
+                              : operation.kind === "subtask.delete"
+                                ? database.applyChecklistSync({
+                                    ...common,
+                                    command: {
+                                      action: "delete",
+                                      id: operation.subtaskId,
+                                      baseRevision: operation.baseRevision,
+                                    },
+                                  })
+                                : // ADR 0046: notes.
+                                  database.applyNoteSync({
+                                    ...common,
+                                    command: noteSyncCommand(
+                                      // The enum-kind task operations above
+                                      // are not narrowed away by TypeScript.
+                                      operation as NoteSyncOperation,
+                                    ),
+                                  });
       if (result.kind === "idempotency-conflict") {
         return {
           kind: "rejected" as const,
@@ -680,7 +715,10 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             : { conflictingFields: conflictFields }),
         };
       }
-      if (stored === undefined)
+      // An applied deletion leaves no record; its outcome carries the
+      // revision recorded with the operation.
+      const revision = stored?.revision ?? result.revision;
+      if (revision === undefined)
         return {
           kind: "rejected" as const,
           operationId: operation.operationId,
@@ -689,8 +727,8 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       return {
         kind: result.kind,
         operationId: operation.operationId,
-        entityId: stored.id,
-        entityRevision: stored.revision,
+        entityId: stored?.id ?? entity.entityId,
+        entityRevision: revision,
         changeSequence: database.getSyncState(session.owner.id).cursor,
       };
     });
@@ -770,6 +808,10 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                 .fullSyncSnapshot(session.owner.id)
                 .subtasks.find(({ id }) => id === change.entityId)
             : undefined;
+        const note =
+          change.entityType === "note"
+            ? database.notes.get(session.owner.id, change.entityId)
+            : undefined;
         const template =
           change.entityType === "template"
             ? database.getTaskTemplate(session.owner.id, change.entityId, true)
@@ -795,6 +837,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             | "project"
             | "tag"
             | "subtask"
+            | "note"
             | "template"
             | "template_set"
             | "choice_pool"
@@ -845,71 +888,78 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                         entityKind: "subtask" as const,
                         value: subtaskResponse(subtask),
                       }
-                    : template !== undefined
+                    : note !== undefined
                       ? {
-                          entityKind: "template" as const,
-                          value: {
-                            template: templateResponse(template),
-                            blueprints: database
-                              .listTemplateSubtaskBlueprints(template.id)
-                              .map(templateBlueprintResponse),
-                            poolSlots: [
-                              ...database.listTemplatePoolSlots(template.id),
-                            ],
-                          },
+                          entityKind: "note" as const,
+                          value: noteResponse(note),
                         }
-                      : templateSet !== undefined
+                      : template !== undefined
                         ? {
-                            entityKind: "template_set" as const,
+                            entityKind: "template" as const,
                             value: {
-                              set: templateSetResponse(templateSet),
-                              members: [
-                                ...database.listTemplateSetMembers(
-                                  templateSet.id,
-                                ),
+                              template: templateResponse(template),
+                              blueprints: database
+                                .listTemplateSubtaskBlueprints(template.id)
+                                .map(templateBlueprintResponse),
+                              poolSlots: [
+                                ...database.listTemplatePoolSlots(template.id),
                               ],
                             },
                           }
-                        : choicePool !== undefined
+                        : templateSet !== undefined
                           ? {
-                              entityKind: "choice_pool" as const,
+                              entityKind: "template_set" as const,
                               value: {
-                                pool: choicePoolResponse(choicePool),
-                                items: database
-                                  .listChoicePoolItems(choicePool.id, true)
-                                  .map(choicePoolItemResponse),
-                                history: database
-                                  .listChoicePoolHistory(choicePool.id)
-                                  .map(choicePoolHistoryResponse),
+                                set: templateSetResponse(templateSet),
+                                members: [
+                                  ...database.listTemplateSetMembers(
+                                    templateSet.id,
+                                  ),
+                                ],
                               },
                             }
-                          : planningPlaceholder !== undefined
+                          : choicePool !== undefined
                             ? {
-                                entityKind: "planning_placeholder" as const,
+                                entityKind: "choice_pool" as const,
                                 value: {
-                                  placeholder:
-                                    planningPlaceholderResponse(
-                                      planningPlaceholder,
-                                    ),
-                                  resolution: (() => {
-                                    const resolution =
-                                      database.getPlanningPlaceholderResolution(
-                                        planningPlaceholder.id,
-                                      );
-                                    return resolution === undefined
-                                      ? null
-                                      : planningResolutionResponse(resolution);
-                                  })(),
+                                  pool: choicePoolResponse(choicePool),
+                                  items: database
+                                    .listChoicePoolItems(choicePool.id, true)
+                                    .map(choicePoolItemResponse),
+                                  history: database
+                                    .listChoicePoolHistory(choicePool.id)
+                                    .map(choicePoolHistoryResponse),
                                 },
                               }
-                            : active?.id === change.entityId
+                            : planningPlaceholder !== undefined
                               ? {
-                                  entityKind: "active_session" as const,
-                                  value: activeResponse(
-                                    activeFromRecord(active, database),
-                                  ),
+                                  entityKind: "planning_placeholder" as const,
+                                  value: {
+                                    placeholder:
+                                      planningPlaceholderResponse(
+                                        planningPlaceholder,
+                                      ),
+                                    resolution: (() => {
+                                      const resolution =
+                                        database.getPlanningPlaceholderResolution(
+                                          planningPlaceholder.id,
+                                        );
+                                      return resolution === undefined
+                                        ? null
+                                        : planningResolutionResponse(
+                                            resolution,
+                                          );
+                                    })(),
+                                  },
                                 }
-                              : null,
+                              : active?.id === change.entityId
+                                ? {
+                                    entityKind: "active_session" as const,
+                                    value: activeResponse(
+                                      activeFromRecord(active, database),
+                                    ),
+                                  }
+                                : null,
         };
       }),
       nextCursor: cursorFor({

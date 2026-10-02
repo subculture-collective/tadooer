@@ -8,11 +8,13 @@ import {
   syncFieldVersionKey,
   syncOperationEntity,
   syncOperationSchema,
+  noteSchema,
   projectSchema,
   subtaskSchema,
   tagSchema,
   type ClientRegistrationResponse,
   type CoreTaskField,
+  type Note,
   type Project,
   type Subtask,
   type SyncChange,
@@ -29,6 +31,14 @@ import {
   planningPreferencesSchema,
 } from "@suite/contracts";
 import { compareChildren, planChildPosition } from "@suite/domain";
+import {
+  applyNoteOperation,
+  compareNotes,
+  isNoteOperation,
+  nextNotePosition,
+  noteIdForOperation,
+  type NoteOperation,
+} from "./local-notes.ts";
 
 const databaseName = "suite-local-v1";
 const databaseVersion = 2;
@@ -47,6 +57,7 @@ export type CachedEntityKind =
   | "project"
   | "tag"
   | "subtask"
+  | "note"
   | "template"
   | "template_set"
   | "choice_pool"
@@ -100,6 +111,15 @@ export interface LocalOrganizationPatch {
   readonly icon?: string | null;
 }
 
+/** Note fields the outbox can patch (ADR 0046). */
+export interface LocalNotePatch {
+  readonly content?: string;
+  readonly projectId?: string | null;
+  readonly tagId?: string | null;
+  readonly pinnedToToday?: boolean;
+  readonly position?: number;
+}
+
 export type LocalOutboxState =
   | "queued"
   | "sending"
@@ -114,8 +134,26 @@ export interface LocalOutboxEntry {
   readonly safeErrorCode: string | null;
   /** Local audit metadata retained with the immutable original operation. */
   readonly resolvedAt?: string;
-  readonly resolutionChoice?: "keep-current" | "retry-local";
+  readonly resolutionChoice?: "keep-current" | "retry-local" | "keep-both";
   readonly replacementOperationId?: string;
+}
+
+/**
+ * ADR 0046: both versions of a conflicted note operation. Nothing is merged
+ * or overwritten until the owner picks one, the other, or both.
+ */
+export interface NoteConflictVersions {
+  /** The server's note as cached after the conflict; null when it is gone. */
+  readonly canonical: Note | null;
+  /** What the conflicted operation did; null when it left the outbox. */
+  readonly attempted: "create" | "patch" | "delete" | null;
+  /** The note as the local operation wanted it; null for a delete. */
+  readonly local: Pick<
+    Note,
+    "content" | "projectId" | "tagId" | "pinnedToToday"
+  > | null;
+  /** The local text can be saved as a separate new note. */
+  readonly keepBothSupported: boolean;
 }
 
 type TaskPatchOperation = Extract<
@@ -134,11 +172,14 @@ export interface TaskConflictReview {
   /** Why retry is unavailable, so the UI can distinguish an unsupported resource. */
   readonly retryLocalUnavailableReason:
     "pending-local-sync" | "unsupported" | null;
+  /** Present for a note conflict (ADR 0046). */
+  readonly note?: NoteConflictVersions;
 }
 
 export interface ResolveTaskConflictInput {
   readonly operationId: string;
-  readonly choice: "keep-current" | "retry-local";
+  /** `keep-both` saves the local note text as a new note (ADR 0046). */
+  readonly choice: "keep-current" | "retry-local" | "keep-both";
   /** Revision displayed to the person resolving this conflict. */
   readonly reviewedTaskRevision: number;
   /** Field versions displayed to the person resolving this conflict. */
@@ -276,6 +317,86 @@ const hasNewerActiveTaskMutation = (
       (entry.state === "queued" || entry.state === "sending") &&
       taskIdForOperation(entry.operation) === taskId,
   );
+
+const hasNewerActiveNoteMutation = (
+  entries: readonly LocalOutboxEntry[],
+  noteId: string,
+  clientSequence: number,
+): boolean =>
+  entries.some(
+    ({ operation, state }) =>
+      operation.clientSequence > clientSequence &&
+      (state === "queued" || state === "sending") &&
+      isNoteOperation(operation) &&
+      noteIdForOperation(operation) === noteId,
+  );
+
+const noteEntity = (note: Note, changeSequence = 0): CachedEntity => ({
+  entityKind: "note",
+  id: note.id,
+  value: note,
+  revision: note.revision,
+  changeSequence,
+});
+
+/** ADR 0046: what a conflicted note operation wanted, beside the canonical note. */
+const noteConflictVersions = (
+  canonical: Note | null,
+  operation: SyncOperation | undefined,
+): NoteConflictVersions => {
+  if (operation === undefined || !isNoteOperation(operation))
+    return {
+      canonical,
+      attempted: null,
+      local: null,
+      keepBothSupported: false,
+    };
+  if (operation.kind === "note.delete")
+    return {
+      canonical,
+      attempted: "delete",
+      local: null,
+      keepBothSupported: false,
+    };
+  if (operation.kind === "note.create") {
+    const { content, projectId, tagId, pinnedToToday } = operation.note;
+    return {
+      canonical,
+      attempted: "create",
+      local: { content, projectId, tagId, pinnedToToday },
+      keepBothSupported: true,
+    };
+  }
+  const { fields } = operation;
+  const merged =
+    canonical === null ? null : applyNoteOperation(canonical, operation);
+  // With the note gone, only an edit that carried text describes a note.
+  const local =
+    merged ??
+    (fields.content === undefined
+      ? null
+      : {
+          content: fields.content,
+          projectId: fields.projectId ?? null,
+          tagId: fields.projectId != null ? null : (fields.tagId ?? null),
+          pinnedToToday: fields.pinnedToToday ?? false,
+        });
+  return {
+    canonical,
+    attempted: "patch",
+    local:
+      local === null
+        ? null
+        : {
+            content: local.content,
+            projectId: local.projectId,
+            tagId: local.tagId,
+            pinnedToToday: local.pinnedToToday,
+          },
+    // Only an edit that carried text has a second version worth keeping.
+    keepBothSupported: local !== null && fields.content !== undefined,
+  };
+};
 
 const compareOrganization = (
   left: { readonly archivedAt: string | null; readonly position: number },
@@ -502,6 +623,14 @@ export class LocalStore {
       );
   }
 
+  /** ADR 0046: cached notes in the owner's order, pending edits included. */
+  async loadCachedNotes(): Promise<readonly Note[]> {
+    return (await this.loadCachedEntities())
+      .filter(({ entityKind }) => entityKind === "note")
+      .map(({ value }) => noteSchema.parse(value))
+      .sort(compareNotes);
+  }
+
   /** Cache an acknowledged initial create without moving the sync cursor. */
   async cacheCreatedTask(task: Task): Promise<void> {
     if (task.revision !== 1) return;
@@ -566,6 +695,40 @@ export class LocalStore {
           cached !== undefined && isTaskSnapshot(cached.value)
             ? cached.value
             : null;
+        if (conflictEntityKind(conflict) === "note") {
+          // ADR 0046: the canonical note beside the local attempt.
+          const cachedNote = (await requestResult(
+            entities.get(entityKey("note", conflict.taskId)),
+          )) as CachedEntity | undefined;
+          const versions = noteConflictVersions(
+            cachedNote === undefined
+              ? null
+              : noteSchema.parse(cachedNote.value),
+            entry?.operation,
+          );
+          const pending =
+            entry !== undefined &&
+            hasNewerActiveNoteMutation(
+              allEntries,
+              conflict.taskId,
+              entry.operation.clientSequence,
+            );
+          const retryable =
+            versions.canonical !== null &&
+            (versions.attempted === "patch" || versions.attempted === "delete");
+          return {
+            conflict,
+            canonical: null,
+            attemptedFields: null,
+            retryLocalSupported: retryable && !pending,
+            retryLocalUnavailableReason: pending
+              ? "pending-local-sync"
+              : retryable
+                ? null
+                : "unsupported",
+            note: versions,
+          };
+        }
         const attemptedFields =
           entry?.operation.kind === "task.patch"
             ? entry.operation.fields
@@ -609,6 +772,10 @@ export class LocalStore {
     );
     if (review === undefined)
       throw new Error("Sync conflict is no longer available");
+    if (review.note !== undefined)
+      return this.#resolveNoteConflict(review, review.note, input);
+    if (input.choice === "keep-both")
+      throw new Error("Only a note conflict can keep both versions");
     if (conflictEntityKind(review.conflict) !== "task") {
       // ADR 0033: project, tag and checklist conflicts are dismissed once the
       // canonical record has been re-sent; nothing is retried locally.
@@ -990,6 +1157,59 @@ export class LocalStore {
     return operation;
   }
 
+  /** ADR 0046: write a note offline with a client-generated ID. */
+  async queueNoteCreate(input: {
+    readonly content: string;
+    readonly projectId?: string | null;
+    readonly tagId?: string | null;
+    readonly pinnedToToday?: boolean;
+  }): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const operation = await this.#noteOperation(metadata, "note.create", {
+      note: {
+        id: this.#uuid(),
+        content: input.content,
+        projectId: input.projectId ?? null,
+        tagId: input.tagId ?? null,
+        pinnedToToday: input.pinnedToToday ?? false,
+      },
+    });
+    await this.#queueNoteOperation(operation);
+    return operation;
+  }
+
+  /**
+   * ADR 0046: edit, re-associate, pin or move a cached note. The base
+   * revision is the cached one, which already counts this client's pending
+   * edits, so consecutive offline edits do not conflict with each other.
+   */
+  async queueNotePatch(
+    noteId: string,
+    fields: LocalNotePatch,
+  ): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const cached = await this.#requiredEntity("note", noteId);
+    const operation = await this.#noteOperation(metadata, "note.patch", {
+      noteId,
+      fields,
+      baseRevision: noteSchema.parse(cached.value).revision,
+    });
+    await this.#queueNoteOperation(operation);
+    return operation;
+  }
+
+  /** ADR 0046: deletion is permanent once the server applies it. */
+  async queueNoteDelete(noteId: string): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const cached = await this.#requiredEntity("note", noteId);
+    const operation = await this.#noteOperation(metadata, "note.delete", {
+      noteId,
+      baseRevision: noteSchema.parse(cached.value).revision,
+    });
+    await this.#queueNoteOperation(operation);
+    return operation;
+  }
+
   async queueTaskStatus(
     taskId: string,
     completed: boolean,
@@ -1121,9 +1341,27 @@ export class LocalStore {
           safeErrorCode: safeOutcomeCode(outcome),
         });
       }
+      // ADR 0046: a note the server did not create must not linger in the
+      // cache. If the ID already holds a note of this owner, its canonical
+      // value is among the changes applied next.
+      if (
+        outcome.kind !== "applied" &&
+        outcome.kind !== "replayed" &&
+        entry.operation.kind === "note.create"
+      )
+        entities.delete(entityKey("note", entry.operation.note.id));
     }
 
     for (const change of response.changes) this.#applyChange(entities, change);
+    await this.#rebasePendingNotes(
+      entities,
+      outbox,
+      new Set(
+        response.changes
+          .filter(({ entityKind }) => entityKind === "note")
+          .map(({ entityId }) => entityId),
+      ),
+    );
 
     const metadata = (await requestResult(
       metadataStoreHandle.get(metadataKey),
@@ -1182,7 +1420,8 @@ export class LocalStore {
       if (
         snapshot.entityKind === "project" ||
         snapshot.entityKind === "tag" ||
-        snapshot.entityKind === "subtask"
+        snapshot.entityKind === "subtask" ||
+        snapshot.entityKind === "note"
       )
         structural.set(`${snapshot.entityKind}:${snapshot.value.id}`, {
           entityKind: snapshot.entityKind,
@@ -1259,7 +1498,7 @@ export class LocalStore {
       const target = syncOperationEntity(operation);
       if (target === null) continue;
       if (target.entityKind !== "task") {
-        // ADR 0033: structural writes replay over the canonical records.
+        // ADR 0033, ADR 0046: record writes replay over the canonical records.
         this.#replayStructuralOperation(entities, structural, operation);
         continue;
       }
@@ -1558,6 +1797,218 @@ export class LocalStore {
     await transactionDone(transaction);
   }
 
+  async #noteOperation(
+    metadata: LocalMetadata,
+    kind: NoteOperation["kind"],
+    payload: Record<string, unknown>,
+  ): Promise<NoteOperation> {
+    const operation = await this.#operation(metadata, kind, payload);
+    if (!isNoteOperation(operation))
+      throw new Error("Expected a note operation");
+    return operation;
+  }
+
+  /**
+   * Queue one note operation and apply it to the cached note in the same
+   * transaction. With `resolves`, the conflicted operation it replaces is
+   * retired and its conflict removed atomically (ADR 0046).
+   */
+  async #queueNoteOperation(
+    operation: NoteOperation,
+    resolves?: {
+      readonly operationId: string;
+      readonly choice: "retry-local" | "keep-both";
+      /** The canonical revision the owner reviewed; null when it is gone. */
+      readonly reviewedRevision: number | null;
+    },
+  ): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [metadataStore, entityStore, outboxStore, conflictStore],
+      "readwrite",
+    );
+    const fail = (message: string): never => {
+      transaction.abort();
+      throw new Error(message);
+    };
+    const metadataHandle = transaction.objectStore(metadataStore);
+    const metadata = (await requestResult(metadataHandle.get(metadataKey))) as
+      LocalMetadata | undefined;
+    if (metadata === undefined)
+      return fail("A registered client is required before queueing");
+    // A replacement must follow the review it resolves without a gap.
+    if (
+      resolves !== undefined &&
+      metadata.nextClientSequence !== operation.clientSequence
+    )
+      return fail("A newer local change requires a fresh conflict review");
+    const entities = transaction.objectStore(entityStore);
+    const outbox = transaction.objectStore(outboxStore);
+    const noteId = noteIdForOperation(operation);
+    const cached = (await requestResult(
+      entities.get(entityKey("note", noteId)),
+    )) as CachedEntity | undefined;
+    const current =
+      cached === undefined ? undefined : noteSchema.parse(cached.value);
+    if (resolves !== undefined) {
+      const conflicts = transaction.objectStore(conflictStore);
+      const original = (await requestResult(
+        outbox.get(resolves.operationId),
+      )) as LocalOutboxEntry | undefined;
+      const conflict: unknown = await requestResult(
+        conflicts.get(resolves.operationId),
+      );
+      const conflicted =
+        original === undefined || !isNoteOperation(original.operation)
+          ? undefined
+          : (
+              (await requestResult(
+                entities.get(
+                  entityKey("note", noteIdForOperation(original.operation)),
+                ),
+              )) as CachedEntity | undefined
+            )?.revision;
+      if (
+        original === undefined ||
+        conflict === undefined ||
+        (conflicted ?? null) !== resolves.reviewedRevision
+      )
+        return fail("Sync conflict changed before it could be resolved");
+      outbox.put({
+        ...original,
+        state: "resolved",
+        resolvedAt: this.#now(),
+        resolutionChoice: resolves.choice,
+        replacementOperationId: operation.operationId,
+      } satisfies LocalOutboxEntry);
+      conflicts.delete(resolves.operationId);
+    }
+    const notes =
+      operation.kind === "note.create"
+        ? ((await requestResult(entities.getAll())) as CachedEntity[])
+            .filter(({ entityKind }) => entityKind === "note")
+            .map(({ value }) => noteSchema.parse(value))
+        : [];
+    const next = applyNoteOperation(
+      current,
+      operation,
+      nextNotePosition(notes),
+    );
+    if (next === undefined)
+      return fail("The note is not present in the local cache");
+    if (next === null) entities.delete(entityKey("note", noteId));
+    else entities.put(noteEntity(next, cached?.changeSequence));
+    metadataHandle.put(
+      { ...metadata, nextClientSequence: metadata.nextClientSequence + 1 },
+      metadataKey,
+    );
+    outbox.put({
+      operation,
+      state: "queued",
+      safeErrorCode: null,
+    } satisfies LocalOutboxEntry);
+    await transactionDone(transaction);
+  }
+
+  /**
+   * ADR 0046: after a round delivered canonical notes, re-apply this
+   * client's still-pending operations on them. Without this, an edit queued
+   * while the round was in flight would vanish from view until the next
+   * round, and a further edit would be queued against a stale revision.
+   */
+  async #rebasePendingNotes(
+    entities: IDBObjectStore,
+    outbox: IDBObjectStore,
+    noteIds: ReadonlySet<string>,
+  ): Promise<void> {
+    if (noteIds.size === 0) return;
+    const pending = (
+      (await requestResult(outbox.getAll())) as LocalOutboxEntry[]
+    )
+      .filter(({ state }) => state === "queued" || state === "sending")
+      .map(({ operation }) => operation)
+      .filter(isNoteOperation)
+      .filter((operation) => noteIds.has(noteIdForOperation(operation)))
+      .sort((left, right) => left.clientSequence - right.clientSequence);
+    for (const operation of pending) {
+      const key = entityKey("note", noteIdForOperation(operation));
+      const cached = (await requestResult(entities.get(key))) as
+        CachedEntity | undefined;
+      const next = applyNoteOperation(
+        cached === undefined ? undefined : noteSchema.parse(cached.value),
+        operation,
+      );
+      if (next === null) entities.delete(key);
+      else if (next !== undefined)
+        entities.put(noteEntity(next, cached?.changeSequence));
+    }
+  }
+
+  /**
+   * ADR 0046: a note conflict keeps both versions until the owner chooses.
+   * `keep-current` leaves the server's note, `retry-local` re-queues the
+   * local edit or delete against the note as reviewed, and `keep-both` saves
+   * the local text as a new note beside the server's.
+   */
+  async #resolveNoteConflict(
+    review: TaskConflictReview,
+    versions: NoteConflictVersions,
+    input: ResolveTaskConflictInput,
+  ): Promise<SyncOperation | null> {
+    const reviewedRevision = versions.canonical?.revision ?? null;
+    if (
+      input.reviewedTaskRevision !==
+      (reviewedRevision ?? review.conflict.taskRevision)
+    )
+      throw new Error("The note changed; review the latest values");
+    if (input.choice === "keep-current") {
+      await this.#dismissConflict(input.operationId);
+      return null;
+    }
+    const original = (await this.loadOutbox()).find(
+      ({ operation }) => operation.operationId === input.operationId,
+    )?.operation;
+    const metadata = await this.#requiredMetadata();
+    let operation: NoteOperation;
+    if (input.choice === "keep-both") {
+      if (!versions.keepBothSupported || versions.local === null)
+        throw new Error("This conflict has no local note text to keep");
+      operation = await this.#noteOperation(metadata, "note.create", {
+        note: { id: this.#uuid(), ...versions.local },
+      });
+    } else {
+      if (review.retryLocalUnavailableReason === "pending-local-sync")
+        throw new Error(
+          "A newer local change must finish syncing before retrying",
+        );
+      if (
+        !review.retryLocalSupported ||
+        reviewedRevision === null ||
+        original === undefined ||
+        !isNoteOperation(original) ||
+        original.kind === "note.create"
+      )
+        throw new Error("This sync conflict cannot be retried locally");
+      operation =
+        original.kind === "note.patch"
+          ? await this.#noteOperation(metadata, "note.patch", {
+              noteId: original.noteId,
+              fields: original.fields,
+              baseRevision: reviewedRevision,
+            })
+          : await this.#noteOperation(metadata, "note.delete", {
+              noteId: original.noteId,
+              baseRevision: reviewedRevision,
+            });
+    }
+    await this.#queueNoteOperation(operation, {
+      operationId: input.operationId,
+      choice: input.choice,
+      reviewedRevision,
+    });
+    return operation;
+  }
+
   /** Queue one structural operation and apply it to the cache atomically. */
   async #queueAndWriteEntity(
     operation: SyncOperation,
@@ -1706,6 +2157,17 @@ export class LocalStore {
       case "subtask.delete":
         next = null;
         break;
+      case "note.create":
+      case "note.patch":
+      case "note.delete": {
+        const note = applyNoteOperation(
+          current === undefined ? undefined : noteSchema.parse(current.value),
+          operation,
+        );
+        if (note === undefined) return;
+        next = note === null ? null : noteEntity(note, current?.changeSequence);
+        break;
+      }
       default:
         return;
     }

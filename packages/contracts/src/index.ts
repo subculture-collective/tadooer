@@ -38,9 +38,12 @@ import {
   automationTagMutationInputSchema as tagMutationInput,
   noteListResponseSchema,
   noteMutationResponseSchema,
+  noteSchema,
   organizationColorSchema,
   organizationIconSchema,
   projectPatchFields,
+  syncNoteCreateSchema,
+  syncNotePatchFieldsSchema,
   tagPatchFields,
 } from "./organization.ts";
 import {
@@ -1584,7 +1587,13 @@ const syncPatchBaseVersionsSchema = z
   })
   .strict();
 
-const syncEntityKindSchema = z.enum(["task", "project", "tag", "subtask"]);
+const syncEntityKindSchema = z.enum([
+  "task",
+  "project",
+  "tag",
+  "subtask",
+  "note",
+]);
 
 // ADR 0033: project and tag lifecycle. Records keep one revision, so a stale
 // patch is a resource conflict rather than a field conflict.
@@ -1730,6 +1739,23 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
     subtaskId: entityIdSchema,
     baseRevision: revisionSchema,
   }),
+  // ADR 0046: notes keep one record revision. A stale patch or delete is a
+  // resource conflict that changes nothing; the review keeps both versions.
+  syncOperationBaseSchema.extend({
+    kind: z.literal("note.create"),
+    note: syncNoteCreateSchema,
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("note.patch"),
+    noteId: entityIdSchema,
+    fields: syncNotePatchFieldsSchema,
+    baseRevision: revisionSchema,
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("note.delete"),
+    noteId: entityIdSchema,
+    baseRevision: revisionSchema,
+  }),
 ]);
 
 export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
@@ -1744,7 +1770,7 @@ export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("conflict"),
     operationId: entityIdSchema,
     code: z.enum(["SYNC_FIELD_CONFLICT", "SYNC_RESOURCE_CONFLICT"]),
-    /** ADR 0033: which record conflicted; absent means a task. */
+    /** ADR 0033, ADR 0046: which record conflicted; absent means a task. */
     entityKind: syncEntityKindSchema.optional(),
     /** The conflicting entity's ID and revision for every entity kind. */
     taskId: entityIdSchema,
@@ -1899,6 +1925,8 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   z.object({ entityKind: z.literal("project"), value: projectSchema }),
   z.object({ entityKind: z.literal("tag"), value: tagSchema }),
   z.object({ entityKind: z.literal("subtask"), value: subtaskSchema }),
+  // ADR 0046: the whole note, as the HTTP note routes return it.
+  z.object({ entityKind: z.literal("note"), value: noteSchema }),
   z.object({
     entityKind: z.literal("template"),
     value: syncTaskTemplateSnapshotSchema,
@@ -1930,6 +1958,7 @@ export const syncChangeSchema = z.object({
     "project",
     "tag",
     "subtask",
+    "note",
     "template",
     "template_set",
     "choice_pool",
@@ -2003,6 +2032,9 @@ export const syncDiagnosticOperationSchema = z
       "subtask.create",
       "subtask.patch",
       "subtask.delete",
+      "note.create",
+      "note.patch",
+      "note.delete",
     ]),
     state: z.enum([
       "queued",
@@ -4401,7 +4433,7 @@ export const isHabitSyncOperation = (
 
 export type SyncEntityKind = z.infer<typeof syncEntityKindSchema>;
 
-/** The cached record an operation writes (ADR 0033); habits are separate. */
+/** The cached record an operation writes (ADR 0033, 0046); habits are separate. */
 export const syncOperationEntity = (
   operation: SyncOperation,
 ): {
@@ -4431,6 +4463,11 @@ export const syncOperationEntity = (
     case "subtask.patch":
     case "subtask.delete":
       return { entityKind: "subtask", entityId: operation.subtaskId };
+    case "note.create":
+      return { entityKind: "note", entityId: operation.note.id };
+    case "note.patch":
+    case "note.delete":
+      return { entityKind: "note", entityId: operation.noteId };
     default:
       return null;
   }

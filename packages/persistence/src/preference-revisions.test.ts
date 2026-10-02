@@ -46,7 +46,7 @@ it("migrates existing preference values without changing them and starts default
     db.close();
     db = SuiteDatabase.open(path);
     expect(db.getPreferenceRevision(owner.id, "planning")).toBe(1);
-    expect(db.state().appliedMigrationCount).toBe(42);
+    expect(db.state().appliedMigrationCount).toBe(43);
     db.close();
   });
 });

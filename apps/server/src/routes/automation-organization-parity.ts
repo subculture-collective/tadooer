@@ -374,7 +374,12 @@ export const confirmOrganizationParity = (
                 now(),
               )
             : input.action === "delete"
-              ? database.notes.delete(ownerId, input.id, input.expectedRevision)
+              ? database.notes.delete(
+                  ownerId,
+                  input.id,
+                  input.expectedRevision,
+                  now(),
+                )
               : database.notes.reorder(ownerId, input.items, now());
       if (result.kind !== "applied")
         throw new Error("Note changed during atomic confirmation");

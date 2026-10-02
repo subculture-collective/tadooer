@@ -8,8 +8,6 @@ import { noteBackgroundReads } from "../api.ts";
  * mounted and loaded; a view that is not open has no entry and costs nothing.
  */
 export const liveViews = [
-  /** Notes list in the Tasks organization panel. */
-  "notes",
   /** Links and attachments of an expanded task. */
   "taskLinks",
   /** Archived tasks on History. */
@@ -76,7 +74,10 @@ export const liveSyncFamilyViews: Readonly<
 > = {
   // A restore, import or other wholesale change: everything that is loaded.
   all: liveViews,
-  notes: ["notes"],
+  // Retired (ADR 0046): notes are feed records read from the offline cache.
+  // The server no longer emits this family; a hint from an older server
+  // refetches nothing, and the next sync round delivers the notes.
+  notes: [],
   task_links: ["taskLinks"],
   // Planned days and reminders shape the day plan and the saved day orders.
   task_planning: ["dayPlan", "dayOrders"],
