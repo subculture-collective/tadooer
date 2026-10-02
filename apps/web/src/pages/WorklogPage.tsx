@@ -38,6 +38,7 @@ import {
   type WorklogPeriod,
   type WorklogState,
 } from "./worklog-controller.ts";
+import { useLiveRefetch } from "../live-sync/views.ts";
 
 const defaultApi: WorklogApi = {
   getTimeReport,
@@ -417,6 +418,11 @@ export const WorklogPage = ({
     load(state.period, state.anchor);
     // Load once per connection; later loads are explicit.
   }, [online]);
+  useLiveRefetch(
+    "worklog",
+    () => run(() => loadWorklog(api, state.period, state.anchor)),
+    online && initialState === undefined,
+  );
   const range = periodRange(state.anchor, state.period);
   const add = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();

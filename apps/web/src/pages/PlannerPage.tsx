@@ -41,6 +41,7 @@ import { Button } from "../components/ui/button.tsx";
 import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
 import { PageHeader } from "../components/ui/page-header.tsx";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs.tsx";
+import { useLiveRevision } from "../live-sync/views.ts";
 
 interface PlannerPageProps {
   readonly planner: PlannerResponse | null;
@@ -140,9 +141,12 @@ export const PlannerPage = ({
     }))
     .filter(({ items }) => items.length > 1);
 
+  // ADR 0045: the open range loads again when calendar data changes
+  // on another device.
+  const livePlanner = useLiveRevision("planner");
   useEffect(() => {
     void onLoadPlanner(range);
-  }, [onLoadPlanner, range]);
+  }, [onLoadPlanner, range, livePlanner]);
 
   return (
     <div className="today-page">

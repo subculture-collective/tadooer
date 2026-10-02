@@ -5,6 +5,18 @@ import type {
   SyncSnapshotResponse,
 } from "@suite/contracts";
 import type { LocalClientIdentity, LocalStore } from "./local-store.ts";
+import {
+  browserLocks,
+  syncRoundExclusive,
+  type RunExclusive,
+} from "./live-sync/locks.ts";
+
+/**
+ * Why a round runs when the owner did not ask for it. `push` rounds follow a
+ * live sync hint or the fallback interval and are sent with
+ * `x-suite-sync-trigger: push` (ADR 0045).
+ */
+export type SyncRoundTrigger = "push";
 
 export interface SyncTransport {
   registerClient(): Promise<ClientRegistrationResponse>;
@@ -12,6 +24,7 @@ export interface SyncTransport {
   syncRound(
     client: LocalClientIdentity,
     request: SyncRoundRequest,
+    trigger?: SyncRoundTrigger,
   ): Promise<SyncRoundResponse>;
 }
 
@@ -25,13 +38,31 @@ export class SyncEngine {
   constructor(
     private readonly store: LocalStore,
     private readonly transport: SyncTransport,
+    /**
+     * Serializes rounds across the tabs of one browser profile (ADR 0045).
+     * A round reads the outbox, sends it and applies the outcomes inside the
+     * lock, so a second tab reads entries only after they are acknowledged.
+     */
+    private readonly exclusive: RunExclusive = syncRoundExclusive(
+      browserLocks(),
+    ),
   ) {}
 
   async ensureClient(): Promise<LocalClientIdentity> {
     return this.store.ensureClient(() => this.transport.registerClient());
   }
 
-  async sync(pullLimit = 100): Promise<SyncRoundResponse> {
+  sync(
+    pullLimit = 100,
+    trigger?: SyncRoundTrigger,
+  ): Promise<SyncRoundResponse> {
+    return this.exclusive(() => this.#round(pullLimit, trigger));
+  }
+
+  async #round(
+    pullLimit: number,
+    trigger: SyncRoundTrigger | undefined,
+  ): Promise<SyncRoundResponse> {
     let client = await this.ensureClient();
     if (await this.store.requiresSnapshot()) {
       await this.store.replaceFromSnapshot(
@@ -49,7 +80,7 @@ export class SyncEngine {
     } satisfies SyncRoundRequest;
     let response: SyncRoundResponse;
     try {
-      response = await this.transport.syncRound(client, request);
+      response = await this.#send(client, request, trigger);
     } catch (error) {
       if (!(error instanceof SyncCursorResetRequired)) throw error;
       await this.store.markResetRequired();
@@ -57,13 +88,24 @@ export class SyncEngine {
         await this.transport.snapshot(client),
       );
       const resetClient = await this.ensureClient();
-      response = await this.transport.syncRound(resetClient, {
-        ...request,
-        cursor: resetClient.cursor,
-      });
+      response = await this.#send(
+        resetClient,
+        { ...request, cursor: resetClient.cursor },
+        trigger,
+      );
     }
     await this.store.applySyncRound(response);
     return response;
+  }
+
+  #send(
+    client: LocalClientIdentity,
+    request: SyncRoundRequest,
+    trigger: SyncRoundTrigger | undefined,
+  ): Promise<SyncRoundResponse> {
+    return trigger === undefined
+      ? this.transport.syncRound(client, request)
+      : this.transport.syncRound(client, request, trigger);
   }
 }
 

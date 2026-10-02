@@ -17,6 +17,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { useLiveRefetch } from "../live-sync/views.ts";
 
 const permissionLabel = (scope: AutomationTokenScope): string => {
   const [area, action] = scope.split(":");
@@ -91,6 +92,8 @@ export const AssistantAccess = ({
       setBusy(false);
     }
   };
+  // ADR 0045: once listed, the tokens follow changes from other devices.
+  useLiveRefetch("automationTokens", refresh, tokens !== null);
   const create = async () => {
     setBusy(true);
     setError(null);

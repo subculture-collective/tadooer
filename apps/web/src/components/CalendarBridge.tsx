@@ -59,6 +59,7 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { useLiveRefetch } from "../live-sync/views.ts";
 
 const defaultApi: CalendarBridgeApi = {
   overview: getCalendarBridgeOverview,
@@ -822,6 +823,7 @@ export const CalendarBridge = ({
     };
   }, [api, reloads]);
   const reload = () => setReloads((count) => count + 1);
+  useLiveRefetch("calendarBridge", reload);
   const run = async (work: () => Promise<string | null>, failure: string) => {
     setBusy(true);
     setError(null);

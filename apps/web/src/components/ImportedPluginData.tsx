@@ -20,6 +20,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { useLiveRevision } from "../live-sync/views.ts";
 
 const defaultApi: PluginDataApi = {
   list: getPluginData,
@@ -205,6 +206,7 @@ export const ImportedPluginData = ({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const liveRevision = useLiveRevision("pluginData");
   useEffect(() => {
     let current = true;
     api
@@ -218,7 +220,7 @@ export const ImportedPluginData = ({
     return () => {
       current = false;
     };
-  }, [api, refreshKey]);
+  }, [api, refreshKey, liveRevision]);
   const run = async (work: () => Promise<void>, failure: string) => {
     setBusy(true);
     setError(null);

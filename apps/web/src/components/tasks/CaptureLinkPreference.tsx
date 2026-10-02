@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { CapturePreferencesResponse } from "@suite/contracts";
 import { getCapturePreferences, updateCapturePreferences } from "../../api.ts";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select.tsx";
+import { useLiveRevision } from "../../live-sync/views.ts";
 
 const labels = {
   keep: "Keep the address in the title",
@@ -21,6 +22,7 @@ export const CaptureLinkPreference = ({
   const [state, setState] = useState<CapturePreferencesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const liveRevision = useLiveRevision("capturePreferences");
   useEffect(() => {
     let active = true;
     getCapturePreferences()
@@ -38,7 +40,7 @@ export const CaptureLinkPreference = ({
     return () => {
       active = false;
     };
-  }, []);
+  }, [liveRevision]);
 
   const save = async (urlBehavior: keyof typeof labels): Promise<void> => {
     if (state === null) return;

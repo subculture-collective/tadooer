@@ -51,6 +51,7 @@ import {
   type CountersApi,
   type CountersState,
 } from "./counters-controller.ts";
+import { useLiveRefetch } from "../live-sync/views.ts";
 
 const defaultApi: CountersApi = {
   getCounterHistory,
@@ -397,6 +398,11 @@ export const CountersPage = ({
     load(state.anchor);
     // Load once per connection; later loads are explicit.
   }, [online]);
+  useLiveRefetch(
+    "counters",
+    () => run(() => loadCounters(api, state.anchor)),
+    online && initialState === undefined,
+  );
   const invalid = (message: string) =>
     setState({ ...state, notice: null, error: message });
   const disabled = busy || !online;

@@ -21,6 +21,7 @@ import { SectionHeading } from "../ui/section-heading.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { NoteMarkdown } from "../notes/NoteMarkdown.tsx";
 import type { LocalOrganizationPatch } from "../../local-store.ts";
+import { useLiveRevision } from "../../live-sync/views.ts";
 
 /** ADR 0033: lifecycle and appearance edits that the offline outbox accepts. */
 export interface OrganizationQueue {
@@ -115,6 +116,7 @@ export const OrganizationPanel = ({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const liveNotes = useLiveRevision("notes", online);
   useEffect(() => {
     if (!online) return;
     let current = true;
@@ -130,7 +132,7 @@ export const OrganizationPanel = ({
     return () => {
       current = false;
     };
-  }, [online]);
+  }, [online, liveNotes]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
