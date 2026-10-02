@@ -19,7 +19,13 @@ import { WorklogPage } from "./pages/WorklogPage.tsx";
 import { CountersPage } from "./pages/CountersPage.tsx";
 import { BoardsPage } from "./pages/BoardsPage.tsx";
 import { deadlineFromForm } from "./components/tasks/DeadlineFields.tsx";
-import { useCallback, useEffect, useState, type SyntheticEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from "react";
 import type {
   ActiveSession,
   BaikalProbeResponse,
@@ -37,6 +43,7 @@ import type {
   PlannerResponse,
   Note,
   SavedDayOrder,
+  TimeEntry,
   Project,
   SessionResponse,
   Subtask,
@@ -106,6 +113,8 @@ import {
 } from "./local-store.ts";
 import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
 import type { DayOrderActions } from "./day-order.tsx";
+import type { TimeEntryQueue } from "./pages/worklog-controller.ts";
+import { liveViewRegistry } from "./live-sync/views.ts";
 import type {
   NoteQueue,
   OrganizationQueue,
@@ -307,6 +316,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const [notes, setNotes] = useState<readonly Note[]>([]);
   // ADR 0050: saved day orders are read from the offline cache.
   const [dayOrders, setDayOrders] = useState<readonly SavedDayOrder[]>([]);
+  // ADR 0050: stored time entries of the rolling window, from the cache.
+  const [timeEntries, setTimeEntries] = useState<readonly TimeEntry[]>([]);
+  const timeEntryFeedMark = useRef<string | null | undefined>(undefined);
   const pinnedNotes = notes.filter(({ pinnedToToday }) => pinnedToToday);
   const [subtasks, setSubtasks] = useState<
     Readonly<Record<string, readonly Subtask[]>>
@@ -448,17 +460,31 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       cachedSubtasks,
       cachedNotes,
       cachedDayOrders,
+      cachedTimeEntries,
+      feedMark,
     ] = await Promise.all([
       localStore.loadCachedProjects(),
       localStore.loadCachedTags(),
       localStore.loadCachedSubtasks(),
       localStore.loadCachedNotes(),
       localStore.loadCachedDayOrders(),
+      localStore.loadCachedTimeEntries(),
+      localStore.loadTimeEntryFeedMark(),
     ]);
     setProjects(cachedProjects);
     setTags(cachedTags);
     setNotes(cachedNotes);
     setDayOrders(cachedDayOrders);
+    setTimeEntries(cachedTimeEntries);
+    // ADR 0050: a round delivered a stored time entry, by this tab or by
+    // the leader tab. The views that read the server's time report reload;
+    // the entry's routes no longer send a `resources` hint.
+    if (
+      timeEntryFeedMark.current !== undefined &&
+      timeEntryFeedMark.current !== feedMark
+    )
+      liveViewRegistry.refetchViews(["worklog", "timeSpent"]);
+    timeEntryFeedMark.current = feedMark;
     setSubtasks(
       cachedSubtasks.reduce<Record<string, Subtask[]>>((grouped, subtask) => {
         (grouped[subtask.taskId] ??= []).push(subtask);
@@ -1523,6 +1549,26 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       for (const task of planned)
         await localStore.queueTaskPatch(task.id, { plannedDay: date });
       await localStore.queueDayOrderReorder(date, order);
+      await syncAfterLocalMutation();
+    },
+  };
+
+  // ADR 0050: time entry writes without a connection queue one operation
+  // each. With a connection the Worklog uses the conditional HTTP routes.
+  const timeEntryQueue: TimeEntryQueue = {
+    create: async (entry) => {
+      await localStore.queueTimeEntryCreate({
+        ...entry,
+        note: entry.note ?? "",
+      });
+      await syncAfterLocalMutation();
+    },
+    patch: async (entry, patch) => {
+      await localStore.queueTimeEntryPatch(entry.id, patch);
+      await syncAfterLocalMutation();
+    },
+    remove: async (entry) => {
+      await localStore.queueTimeEntryDelete(entry.id);
       await syncAfterLocalMutation();
     },
   };
@@ -2979,6 +3025,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             timeZone={state.planningPreferences?.timeZone ?? "UTC"}
             tasks={state.tasks.filter((task) => task.deletedAt === null)}
             projects={projects}
+            cachedEntries={timeEntries}
+            queue={state.client === undefined ? undefined : timeEntryQueue}
+            onEntriesChanged={() => void syncAfterLocalMutation()}
           />
         )}
         {route === "boards" && (

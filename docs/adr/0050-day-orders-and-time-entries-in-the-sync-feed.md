@@ -157,9 +157,104 @@ reordered. All of them are in the snapshot.
 
 ### Time entries
 
-Decided and implemented in the next commit of this slice; this section is
-completed there. Until then time entries stay online HTTP records (ADR
-0024).
+**Feed record.** `time_entry` carries one stored entry, as the HTTP routes
+return it (`timeEntrySchema`): an imported daily total or a manual entry,
+with its revision. Focus time is not a record of this kind. ADR 0024 keeps
+it as a projection of the active session's intervals, split at owner-zone
+midnights when a report is read; it has no row and no revision, and copying
+it would create the duplicate intervals ADR 0024 avoids. The active session
+was already a feed entity.
+
+**Write paths.** `SqliteTimeEntryStore` takes a change appender and every
+method that writes `time_entries` appends inside its savepoint:
+
+| Path                                | Store method     | Feed change                        |
+| ----------------------------------- | ---------------- | ---------------------------------- |
+| `POST /api/time/entries`            | `create`         | `upsert`, revision 1               |
+| `PATCH /api/time/entries/{id}`      | `update`         | `upsert`, new revision             |
+| `DELETE /api/time/entries/{id}`     | `delete`         | `deleted`, revision + 1            |
+| Assistant `time_entries.mutate`     | the same three   | the same                           |
+| Super Productivity import           | `insertImported` | `upsert`, revision 1 per entry     |
+| Sync outbox (`time_entry.*`)        | the same three   | the same                           |
+| Focus commands and the session tick | none             | none; they write session intervals |
+| Data restore                        | rows written     | none; the restore resets the epoch |
+
+A refused write and the replay of an identical `POST` append nothing.
+Imported work start and end records (`time_work_context_days`) are not feed
+records; they stay part of the online report.
+
+**Offline rule.** Manual entries are writable offline, and imported entries
+can be corrected or deleted offline, under the rules of ADR 0024. Three
+operations join protocol version 2:
+
+- `time_entry.create` carries a client-generated UUID, the task, the work
+  date, the duration and the note, all explicit;
+- `time_entry.patch` carries `baseRevision` and any of work date, duration
+  and note;
+- `time_entry.delete` carries `baseRevision`.
+
+**A time entry keeps one record revision. A patch or delete whose
+`baseRevision` is not the entry's revision is a `SYNC_RESOURCE_CONFLICT`
+with `entityKind: "time_entry"` and reason `revision`; the entry is
+re-sent.** A create whose ID exists, and a patch or delete of an entry that
+does not, are conflicts with reason `record`.
+
+**The day rules are checked on the server when the operation is applied.**
+A task-day total includes focus time, which the client does not hold, and a
+running focus interval is known only to the server. An operation that breaks
+a rule is a resource conflict that changes nothing, with the rule as its
+reason: `task_unavailable`, `entry_read_only`, `duration_invalid`,
+`day_total_negative`, `day_total_exceeds_day` or `focus_running`. An offline
+time entry is therefore provisional until it has synced. The browser checks
+what it can before queueing (a nonzero duration within a day, a task that is
+cached and neither deleted nor archived) and shows the entry at once.
+
+Conflict outcomes for kinds other than tasks now carry `reasons`, the list
+the server already stored with the outcome. The review names the rule and
+offers **Dismiss**; the owner makes the change again in the Worklog if it
+still applies. No merge and no automatic retry.
+
+**Online writes stay conditional HTTP writes.** With a connection the
+Worklog calls the time entry routes as before, so a broken rule is reported
+on the form at once instead of as a conflict a moment later. The store
+appends the feed change, and the round that follows brings the entry into
+the cache. Without a connection the same form queues the operation.
+
+**Bound.** Time entries are numerous (the September 24 import evidence in
+ADR 0024 has 419). The snapshot and the cache hold a rolling window:
+
+- `syncTimeEntryWindowDays` is 90. The snapshot carries the entries whose
+  work date is on or after the owner-zone date 89 days before the snapshot
+  is taken, including entries dated in the future.
+- A feed change is delivered for an entry of any date; a change is small.
+  The browser keeps an entry only when its work date is within the window
+  measured from its own UTC date, with one extra day of tolerance for the
+  difference between UTC and the owner's zone (91 days back). A change for
+  an older date, including an entry moved to an older date, removes the
+  entry from the cache.
+- Reads of the cache apply the same bound, and entries that have aged out
+  are deleted when a snapshot replaces the cache or a round delivers a time
+  entry change.
+- Older history is read online: `GET /api/time/report` is unchanged and
+  covers any range up to 366 days.
+
+**Reports.** Day totals and worklog reports that include focus time are
+online-only: they need the session intervals and the imported work context,
+which are not in the cache. Offline, the Worklog shows a report computed
+from the cache alone: the manual and imported entries of the window, per
+day, task and project, with a notice that focus time and history older than
+the window need a connection. All-time totals are not shown offline.
+
+**Browser.** `loadCachedTimeEntries` reads the window.
+`apps/web/src/local-time-entries.ts` holds `applyTimeEntryOperation` and the
+cached report. With a connection the Worklog shows the server report and
+reloads it when the cached time entries change, which is how a change made
+on another device, by the assistant or by an import arrives.
+
+**Live sync.** The time entry routes are classified `feed` and
+`time_entries.mutate` is feed-only. The `time_entries` family is not
+retired: focus commands still emit it, because the focus time they add to
+the Worklog and to time-spent totals is not in the feed.
 
 ### Epoch reset
 
@@ -189,11 +284,14 @@ Found while moving these two kinds; ADR 0046's list now names them.
 
 ## Consequences
 
-- A reorder and a plan for tomorrow work without a connection and reach
-  other devices after one hint and one round.
+- A reorder, a plan for tomorrow and a manual time entry work without a
+  connection and reach other devices after one hint and one round.
 - Every client replaces its cache once after migration 0050.
 - Two devices that reorder the same date get a conflict to review. A device
   that reorders while another changes which tasks are in the day does not.
+- An offline time entry can be refused later by a day rule; it then
+  disappears from the Worklog and appears in the conflict review with the
+  reason.
 - A tab running this bundle keeps syncing after a later release adds a
   kind, and takes one snapshot when it loads the newer bundle.
 - The HTTP day-order and time entry routes are unchanged.

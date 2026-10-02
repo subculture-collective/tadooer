@@ -515,7 +515,7 @@
       ],
       "status": "covered",
       "issue": 41,
-      "authority": "tasks:read for the owner-zone worklog report (at most 366 days); tasks:write for corrections. The preview freezes the entry revision, or the task revision and new entry ID for an addition; confirmation rechecks the 0 to 24 hour task-day bound and running focus. Focus entries and archived history are read-only. Online-only in the browser (ADR 0024).",
+      "authority": "tasks:read for the owner-zone worklog report (at most 366 days); tasks:write for corrections. The preview freezes the entry revision, or the task revision and new entry ID for an addition; confirmation rechecks the 0 to 24 hour task-day bound and running focus. Focus entries and archived history are read-only. Stored entries are sync feed records (ADR 0050): an assistant write appends a feed change in the same transaction and reaches every device in its next round. The browser keeps a 90-day window in its offline cache; with a connection it writes through these API functions, offline through the sync outbox.",
       "source": "apps/web/src/api.ts"
     },
     {

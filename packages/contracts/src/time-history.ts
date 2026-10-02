@@ -74,6 +74,51 @@ export const timeEntryPatchRequestSchema = z
     message: "Change at least one field",
   });
 
+/**
+ * ADR 0050: how many owner-zone days of time entries a sync snapshot and the
+ * offline cache hold, counting today. Older history is read online through
+ * the time report.
+ */
+export const syncTimeEntryWindowDays = 90;
+
+/**
+ * The first work date inside the window that ends on `today`. Calendar
+ * arithmetic on the date itself; no time zone is involved.
+ */
+export const syncTimeEntryWindowStart = (
+  today: string,
+  days: number = syncTimeEntryWindowDays,
+): string =>
+  new Date(Date.parse(`${today}T00:00:00.000Z`) - (days - 1) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+/**
+ * ADR 0050: the fields an offline `time_entry.create` carries. Every field
+ * is explicit so the operation's request hash never depends on a default.
+ */
+export const syncTimeEntryCreateSchema = z
+  .object({
+    id: z.uuid(),
+    taskId: z.uuid(),
+    workDate: workDateSchema,
+    durationMs: durationSchema,
+    note: noteSchema,
+  })
+  .strict();
+
+/** ADR 0050: the fields an offline `time_entry.patch` may change. */
+export const syncTimeEntryPatchFieldsSchema = z
+  .object({
+    workDate: workDateSchema.optional(),
+    durationMs: durationSchema.optional(),
+    note: noteSchema.optional(),
+  })
+  .strict()
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: "Change at least one field",
+  });
+
 export const timeEntryMutationResponseSchema = z
   .object({
     timeEntry: timeEntrySchema.nullable(),

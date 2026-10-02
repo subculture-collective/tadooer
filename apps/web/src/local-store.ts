@@ -14,6 +14,7 @@ import {
   projectSchema,
   subtaskSchema,
   tagSchema,
+  timeEntrySchema,
   type ClientRegistrationResponse,
   type CoreTaskField,
   type Note,
@@ -30,6 +31,7 @@ import {
   type Tag,
   type Task,
   type TaskFieldVersions,
+  type TimeEntry,
   type PlanningPreferences,
   planningPreferencesSchema,
 } from "@suite/contracts";
@@ -47,6 +49,14 @@ import {
   isDayOrderOperation,
   type DayOrderOperation,
 } from "./local-day-orders.ts";
+import {
+  applyTimeEntryOperation,
+  compareTimeEntries,
+  inCachedTimeEntryWindow,
+  isTimeEntryOperation,
+  timeEntryIdForOperation,
+  type TimeEntryOperation,
+} from "./local-time-entries.ts";
 
 const databaseName = "suite-local-v1";
 const databaseVersion = 2;
@@ -67,6 +77,7 @@ export type CachedEntityKind =
   | "subtask"
   | "note"
   | "day_order"
+  | "time_entry"
   | "template"
   | "template_set"
   | "choice_pool"
@@ -223,6 +234,12 @@ interface LocalMetadata extends LocalClientIdentity {
    */
   readonly skippedUnknownKinds?: number;
   readonly skippedByKinds?: string;
+  /**
+   * ADR 0050: the cursor of the last round that delivered a time entry
+   * change, whatever its work date. Views that read the server's time
+   * report reload when it changes.
+   */
+  readonly timeEntryFeedMark?: string;
 }
 
 /** What a sync round or snapshot skipped while it was read (ADR 0050). */
@@ -377,6 +394,17 @@ const dayOrderEntity = (
   id: order.date,
   value: order,
   revision: order.revision,
+  changeSequence,
+});
+
+const timeEntryEntity = (
+  entry: TimeEntry,
+  changeSequence = 0,
+): CachedEntity => ({
+  entityKind: "time_entry",
+  id: entry.id,
+  value: entry,
+  revision: entry.revision ?? 1,
   changeSequence,
 });
 
@@ -709,6 +737,27 @@ export class LocalStore {
       .filter(({ entityKind }) => entityKind === "day_order")
       .map(({ value }) => savedDayOrderSchema.parse(value))
       .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
+  /**
+   * ADR 0050: the stored time entries in the cache, pending writes
+   * included, bounded to the rolling window. Focus time is not cached.
+   */
+  async loadCachedTimeEntries(): Promise<readonly TimeEntry[]> {
+    const now = this.#now();
+    return (await this.loadCachedEntities())
+      .filter(({ entityKind }) => entityKind === "time_entry")
+      .map(({ value }) => timeEntrySchema.parse(value))
+      .filter(({ workDate }) => inCachedTimeEntryWindow(workDate, now))
+      .sort(compareTimeEntries);
+  }
+
+  /**
+   * ADR 0050: changes when a sync round delivered a time entry change of
+   * any date, including one outside the cached window.
+   */
+  async loadTimeEntryFeedMark(): Promise<string | null> {
+    return (await this.#metadata())?.timeEntryFeedMark ?? null;
   }
 
   /** Cache an acknowledged initial create without moving the sync cursor. */
@@ -1354,6 +1403,84 @@ export class LocalStore {
     return operation;
   }
 
+  /**
+   * ADR 0050: add manual time offline. The task must be cached and active;
+   * the server checks the day's total when it applies the operation, so the
+   * entry is provisional until then.
+   */
+  async queueTimeEntryCreate(input: {
+    readonly id?: string;
+    readonly taskId: string;
+    readonly workDate: string;
+    readonly durationMs: number;
+    readonly note: string;
+  }): Promise<SyncOperation> {
+    const { task } = await this.#requiredTask(input.taskId);
+    if (task.deletedAt != null || task.archivedAt != null)
+      throw new Error("Time can be recorded only on active tasks");
+    const metadata = await this.#requiredMetadata();
+    const operation = await this.#timeEntryOperation(
+      metadata,
+      "time_entry.create",
+      {
+        timeEntry: {
+          id: input.id ?? this.#uuid(),
+          taskId: input.taskId,
+          workDate: input.workDate,
+          durationMs: input.durationMs,
+          note: input.note,
+        },
+      },
+    );
+    const entry = applyTimeEntryOperation(undefined, operation);
+    await this.#queueAndWriteEntity(
+      operation,
+      entry == null ? null : timeEntryEntity(entry),
+    );
+    return operation;
+  }
+
+  /** ADR 0050: correct a cached manual or imported entry offline. */
+  async queueTimeEntryPatch(
+    timeEntryId: string,
+    fields: {
+      readonly workDate?: string | undefined;
+      readonly durationMs?: number | undefined;
+      readonly note?: string | undefined;
+    },
+  ): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const cached = await this.#requiredEntity("time_entry", timeEntryId);
+    const current = timeEntrySchema.parse(cached.value);
+    const operation = await this.#timeEntryOperation(
+      metadata,
+      "time_entry.patch",
+      { timeEntryId, fields, baseRevision: cached.revision },
+    );
+    const next = applyTimeEntryOperation(current, operation);
+    await this.#queueAndWriteEntity(
+      operation,
+      next == null ? null : timeEntryEntity(next, cached.changeSequence),
+    );
+    return operation;
+  }
+
+  /** ADR 0050: deletion is permanent once the server applies it. */
+  async queueTimeEntryDelete(timeEntryId: string): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const cached = await this.#requiredEntity("time_entry", timeEntryId);
+    const operation = await this.#timeEntryOperation(
+      metadata,
+      "time_entry.delete",
+      { timeEntryId, baseRevision: cached.revision },
+    );
+    await this.#queueAndWriteEntity(operation, null, [
+      "time_entry",
+      timeEntryId,
+    ]);
+    return operation;
+  }
+
   async queueTaskStatus(
     taskId: string,
     completed: boolean,
@@ -1508,6 +1635,14 @@ export class LocalStore {
         entry.operation.kind === "day_order.reorder"
       )
         entities.delete(entityKey("day_order", entry.operation.date));
+      // ADR 0050: a time entry the server did not create (a day rule, an
+      // unavailable task) must not linger either.
+      if (
+        outcome.kind !== "applied" &&
+        outcome.kind !== "replayed" &&
+        entry.operation.kind === "time_entry.create"
+      )
+        entities.delete(entityKey("time_entry", entry.operation.timeEntry.id));
     }
 
     for (const change of response.changes) this.#applyChange(entities, change);
@@ -1530,6 +1665,14 @@ export class LocalStore {
       ]),
     );
 
+    const timeEntryIds = new Set(
+      response.changes
+        .filter(({ entityKind }) => entityKind === "time_entry")
+        .map(({ entityId }) => entityId),
+    );
+    await this.#rebasePendingTimeEntries(entities, outbox, timeEntryIds);
+    if (timeEntryIds.size > 0) await this.#pruneTimeEntries(entities);
+
     const metadata = (await requestResult(
       metadataStoreHandle.get(metadataKey),
     )) as LocalMetadata | undefined;
@@ -1545,6 +1688,9 @@ export class LocalStore {
       {
         ...metadata,
         cursor: response.nextCursor,
+        ...(timeEntryIds.size === 0
+          ? {}
+          : { timeEntryFeedMark: response.nextCursor }),
         ...(skipped === 0
           ? {}
           : {
@@ -1611,7 +1757,14 @@ export class LocalStore {
           revision: snapshot.value.revision,
           changeSequence: 0,
         });
-      if (snapshot.entityKind === "day_order") {
+      if (snapshot.entityKind === "time_entry") {
+        // ADR 0050: only the rolling window is cached.
+        if (!inCachedTimeEntryWindow(snapshot.value.workDate, this.#now()))
+          continue;
+        const entity = timeEntryEntity(snapshot.value);
+        structural.set(`time_entry:${entity.id}`, entity);
+        entities.put(entity);
+      } else if (snapshot.entityKind === "day_order") {
         // ADR 0050: a saved day order is keyed by its date.
         const entity = dayOrderEntity(snapshot.value);
         structural.set(`day_order:${entity.id}`, entity);
@@ -1788,6 +1941,7 @@ export class LocalStore {
         // ADR 0050: the count restarts with the cache it describes.
         skippedUnknownKinds: response.skippedUnknownKinds ?? 0,
         skippedByKinds: syncEntityKindsSignature,
+        timeEntryFeedMark: response.nextCursor,
       },
       metadataKey,
     );
@@ -2200,6 +2354,65 @@ export class LocalStore {
     return operation;
   }
 
+  async #timeEntryOperation(
+    metadata: LocalMetadata,
+    kind: TimeEntryOperation["kind"],
+    payload: Record<string, unknown>,
+  ): Promise<TimeEntryOperation> {
+    const operation = await this.#operation(metadata, kind, payload);
+    if (!isTimeEntryOperation(operation))
+      throw new Error("Expected a time entry operation");
+    return operation;
+  }
+
+  /**
+   * ADR 0050: after a round delivered canonical time entries, re-apply this
+   * client's still-pending operations on them.
+   */
+  async #rebasePendingTimeEntries(
+    entities: IDBObjectStore,
+    outbox: IDBObjectStore,
+    entryIds: ReadonlySet<string>,
+  ): Promise<void> {
+    if (entryIds.size === 0) return;
+    const pending = (
+      (await requestResult(outbox.getAll())) as LocalOutboxEntry[]
+    )
+      .filter(({ state }) => state === "queued" || state === "sending")
+      .map(({ operation }) => operation)
+      .filter(isTimeEntryOperation)
+      .filter((operation) => entryIds.has(timeEntryIdForOperation(operation)))
+      .sort((left, right) => left.clientSequence - right.clientSequence);
+    for (const operation of pending) {
+      const key = entityKey("time_entry", timeEntryIdForOperation(operation));
+      const cached = (await requestResult(entities.get(key))) as
+        CachedEntity | undefined;
+      const next = applyTimeEntryOperation(
+        cached === undefined ? undefined : timeEntrySchema.parse(cached.value),
+        operation,
+      );
+      if (next === null) entities.delete(key);
+      else if (next !== undefined)
+        entities.put(timeEntryEntity(next, cached?.changeSequence));
+    }
+  }
+
+  /**
+   * ADR 0050: delete cached time entries that are older than the rolling
+   * window: those that aged out, and one a change moved to an older date.
+   */
+  async #pruneTimeEntries(entities: IDBObjectStore): Promise<void> {
+    const now = this.#now();
+    for (const record of (await requestResult(
+      entities.getAll(),
+    )) as CachedEntity[]) {
+      if (record.entityKind !== "time_entry") continue;
+      const entry = timeEntrySchema.safeParse(record.value);
+      if (!entry.success || !inCachedTimeEntryWindow(entry.data.workDate, now))
+        entities.delete(entityKey("time_entry", record.id));
+    }
+  }
+
   async #dayOrderOperation(
     metadata: LocalMetadata,
     date: string,
@@ -2521,6 +2734,22 @@ export class LocalStore {
         );
         if (note === undefined) return;
         next = note === null ? null : noteEntity(note, current?.changeSequence);
+        break;
+      }
+      case "time_entry.create":
+      case "time_entry.patch":
+      case "time_entry.delete": {
+        const entry = applyTimeEntryOperation(
+          current === undefined
+            ? undefined
+            : timeEntrySchema.parse(current.value),
+          operation,
+        );
+        if (entry === undefined) return;
+        next =
+          entry === null
+            ? null
+            : timeEntryEntity(entry, current?.changeSequence);
         break;
       }
       case "day_order.reorder":

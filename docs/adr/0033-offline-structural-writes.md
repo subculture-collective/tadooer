@@ -124,6 +124,13 @@ import qualification (#47) are recorded separately from this implementation.
 > records now carry `reasons`, and a client skips feed kinds it does not
 > know.
 
+> Note, 2026-10-02: time entries left this list too (ADR 0050). Stored
+> manual and imported entries are feed records in a rolling 90-day cache
+> window, with `time_entry.create`, `time_entry.patch` and
+> `time_entry.delete` under one record revision; the day rules of ADR 0024
+> are checked when the server applies them. Focus time, worklog reports and
+> older history stay online.
+
 ## Consequences
 
 - Migration 0037 forces one snapshot reset per client; queued operations

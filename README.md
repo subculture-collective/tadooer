@@ -88,8 +88,8 @@ observes it read-only and must explicitly take over before controlling it.
 
 While the web app is open and signed in, it keeps one connection to
 `GET /api/sync/events` (ADR 0045). The server sends hints on it: the sync feed
-moved, or records outside the feed changed (boards, time entries,
-preferences and the like). A hint carries no content. The app answers a feed
+moved, or records outside the feed changed (boards, preferences, focus time
+and the like). A hint carries no content. The app answers a feed
 hint with an ordinary sync round and a records hint by reloading the views
 that are open, so a change made on one device shows on another within a
 second or two.

@@ -9,10 +9,13 @@ import {
   initialWorklog,
   loadWorklog,
   minutesToMilliseconds,
+  offlineSavedNotice,
   periodRange,
+  queueTimeEntryWrite,
   shiftPeriod,
   worklogFileName,
   worklogRows,
+  type TimeEntryQueue,
   type WorklogApi,
 } from "./worklog-controller.ts";
 import { WorklogPage, WorklogView } from "./WorklogPage.tsx";
@@ -344,19 +347,74 @@ describe("Worklog view", () => {
     expect(html.match(/>Edit</g)).toHaveLength(1);
   });
 
-  it("shows the offline boundary and keeps the add form disabled", () => {
-    const html = renderToStaticMarkup(
-      <WorklogPage
-        csrfToken="csrf"
-        online={false}
-        timeZone="America/Chicago"
-        tasks={[{ id: ids.child, title: "Collect numbers" }]}
-        initialState={{ ...initialWorklog("2026-09-24"), report }}
-        api={fakeApi()}
-      />,
+  it("renders the cached entries offline and says what needs a connection (ADR 0050)", () => {
+    const manual = report.entries[2];
+    if (manual === undefined) throw new Error("fixture");
+    const page = (queue: TimeEntryQueue | undefined) =>
+      renderToStaticMarkup(
+        <WorklogPage
+          csrfToken="csrf"
+          online={false}
+          timeZone="America/Chicago"
+          tasks={[{ id: ids.child, title: "Collect numbers" }]}
+          // The last online report is not shown offline: it holds focus
+          // time the cache cannot keep current.
+          initialState={{ ...initialWorklog("2026-09-24"), report }}
+          api={fakeApi()}
+          cachedEntries={[manual]}
+          queue={queue}
+        />,
+      );
+    const queue: TimeEntryQueue = {
+      create: () => Promise.resolve(),
+      patch: () => Promise.resolve(),
+      remove: () => Promise.resolve(),
+    };
+    const html = page(queue);
+    expect(html).toContain("kept on this device for the last 90 days");
+    expect(html).toContain("Focus time, all-time totals and older history");
+    expect(html).toContain(
+      "Changes are saved here and sync when you reconnect",
     );
-    expect(html).toContain("The worklog needs a connection");
-    expect(html).toContain("Export CSV");
     expect(html).toContain("2026-09-21 to 2026-09-27");
+    // The cached manual entry is listed with its day total; the focus
+    // entry of the online report is not.
+    expect(html).toContain("0:30 tracked from 2026-09-21 to 2026-09-27");
+    expect(html).toContain("focus 0:00, imported 0:00, manual 0:30");
+    expect(html).toContain("Collect numbers");
+    expect(html).not.toContain("Running");
+    // The entry can be edited and time can be added without a connection.
+    expect(html.match(/>Edit</g)).toHaveLength(1);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Add time/);
+    // Before the device has synced once there is no queue: read-only.
+    const readOnly = page(undefined);
+    expect(readOnly).toContain(
+      "Changes need a connection until this device has synced.",
+    );
+    expect(readOnly).toMatch(/<button[^>]*disabled=""[^>]*>Add time/);
+  });
+});
+
+describe("offline time entry writes (ADR 0050)", () => {
+  it("reports a queued write and a refused one in the worklog state", async () => {
+    const state = initialWorklog("2026-09-24");
+    const write = vi.fn(() => Promise.resolve());
+    expect(await queueTimeEntryWrite(state, write)).toEqual({
+      saved: true,
+      state: { ...state, error: null, notice: offlineSavedNotice },
+    });
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(
+      await queueTimeEntryWrite(state, () =>
+        Promise.reject(new Error("Time can be recorded only on active tasks")),
+      ),
+    ).toEqual({
+      saved: false,
+      state: {
+        ...state,
+        notice: null,
+        error: "Time can be recorded only on active tasks",
+      },
+    });
   });
 });

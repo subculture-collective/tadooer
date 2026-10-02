@@ -73,7 +73,10 @@ import {
 } from "./recurrence.ts";
 import {
   automationTimeEntryMutationInputSchema,
+  syncTimeEntryCreateSchema,
+  syncTimeEntryPatchFieldsSchema,
   timeEntryMutationResponseSchema,
+  timeEntrySchema,
   timeReportQuerySchema,
   timeReportResponseSchema,
 } from "./time-history.ts";
@@ -1602,6 +1605,7 @@ const syncEntityKindSchema = z.enum([
   "note",
   // ADR 0050.
   "day_order",
+  "time_entry",
 ]);
 
 // ADR 0033: project and tag lifecycle. Records keep one revision, so a stale
@@ -1771,6 +1775,24 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
   syncOperationBaseSchema.extend({
     kind: z.literal("day_order.reorder"),
     ...syncDayOrderReorderFields,
+  }),
+  // ADR 0050: a stored time entry (manual or imported) keeps one record
+  // revision. The day rules of ADR 0024 need focus time the client does not
+  // hold, so the server checks them on apply and refuses with a reason.
+  syncOperationBaseSchema.extend({
+    kind: z.literal("time_entry.create"),
+    timeEntry: syncTimeEntryCreateSchema,
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("time_entry.patch"),
+    timeEntryId: entityIdSchema,
+    fields: syncTimeEntryPatchFieldsSchema,
+    baseRevision: revisionSchema,
+  }),
+  syncOperationBaseSchema.extend({
+    kind: z.literal("time_entry.delete"),
+    timeEntryId: entityIdSchema,
+    baseRevision: revisionSchema,
   }),
 ]);
 
@@ -1951,6 +1973,9 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   z.object({ entityKind: z.literal("note"), value: noteSchema }),
   // ADR 0050: the saved ranks of one date; members stay derived from tasks.
   z.object({ entityKind: z.literal("day_order"), value: savedDayOrderSchema }),
+  // ADR 0050: a stored time entry as the HTTP routes return it. Focus time
+  // is a projection of the active session and is never a feed record.
+  z.object({ entityKind: z.literal("time_entry"), value: timeEntrySchema }),
   z.object({
     entityKind: z.literal("template"),
     value: syncTaskTemplateSnapshotSchema,
@@ -1984,6 +2009,7 @@ export const syncChangeSchema = z.object({
     "subtask",
     "note",
     "day_order",
+    "time_entry",
     "template",
     "template_set",
     "choice_pool",
@@ -2122,6 +2148,9 @@ export const syncDiagnosticOperationSchema = z
       "note.patch",
       "note.delete",
       "day_order.reorder",
+      "time_entry.create",
+      "time_entry.patch",
+      "time_entry.delete",
     ]),
     state: z.enum([
       "queued",
@@ -4570,6 +4599,11 @@ export const syncOperationEntity = (
       return { entityKind: "note", entityId: operation.noteId };
     case "day_order.reorder":
       return { entityKind: "day_order", entityId: operation.date };
+    case "time_entry.create":
+      return { entityKind: "time_entry", entityId: operation.timeEntry.id };
+    case "time_entry.patch":
+    case "time_entry.delete":
+      return { entityKind: "time_entry", entityId: operation.timeEntryId };
     default:
       return null;
   }

@@ -6,7 +6,7 @@ import type {
 /**
  * Which resource families a mutating request touches (ADR 0045). The sync
  * feed covers tasks, projects, tags, checklist items, notes (ADR 0046),
- * saved day orders (ADR 0050), templates, template sets, choice pools, planning placeholders, habits and
+ * saved day orders and stored time entries (ADR 0050), templates, template sets, choice pools, planning placeholders, habits and
  * the active session; a change there is announced as `changes` from the feed
  * head. Everything else an owner can change is outside the feed (ADR 0033)
  * and is announced as `resources` with the families named here.
@@ -137,7 +137,10 @@ const routeRules: readonly RouteRule[] = [
     "focus",
     "time_entries",
   ),
-  families("*", `time/entries(/${uuid})?`, "time_entries"),
+  // ADR 0050: stored time entries are feed records. The `time_entries`
+  // family stays for focus commands above, whose tracked time is projected
+  // from session intervals and is not in the feed.
+  feed("*", `time/entries(/${uuid})?`),
   none("time/report", readOnly),
   families("*", `counters(/${uuid}(/days/${date}|/stopwatch)?)?`, "counters"),
   families("*", `evaluations(/${date})?`, "evaluations"),
@@ -289,7 +292,7 @@ export const automationOperationFamilies: Readonly<
   "recurrence.update": ["recurrence"],
   "recurrence.set_state": ["recurrence"],
   "recurrence.occurrence": ["recurrence"],
-  "time_entries.mutate": ["time_entries"],
+  "time_entries.mutate": feedOnly,
   "counters.mutate": ["counters"],
   "counters.record": ["counters"],
   "evaluations.write": ["evaluations"],

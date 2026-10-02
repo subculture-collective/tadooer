@@ -329,6 +329,24 @@ describe("live sync route classification (ADR 0045)", () => {
     expect(Object.values(automationOperationFamilies).flat()).not.toContain(
       "day_orders",
     );
+    // ADR 0050: stored time entries are feed records. Focus commands keep
+    // the `time_entries` family: their tracked time is not in the feed.
+    for (const [method, path] of [
+      ["POST", "/api/time/entries"],
+      ["PATCH", `/api/time/entries/${id}`],
+      ["DELETE", `/api/time/entries/${id}`],
+    ] as const)
+      expect(classifyLiveSyncRoute(method, path), path).toEqual({
+        kind: "feed",
+      });
+    expect(automationOperationFamilies["time_entries.mutate"]).toEqual([]);
+    expect(automationOperationFamilies["focus.complete"]).toEqual([
+      "focus",
+      "time_entries",
+    ]);
+    expect(
+      classifyLiveSyncRoute("POST", "/api/active-session/command"),
+    ).toEqual({ kind: "families", families: ["focus", "time_entries"] });
     expect(classifyLiveSyncRoute("PUT", `/api/boards/${id}`)).toEqual({
       kind: "families",
       families: ["boards"],

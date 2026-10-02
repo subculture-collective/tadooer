@@ -14,7 +14,10 @@ export const liveViews = [
   "history",
   /** Recurring series manager on Tasks, once opened. */
   "recurringSeries",
-  /** Time report on Worklog. */
+  /**
+   * Time report on Worklog. Also reloaded when a sync round delivers a
+   * stored time entry (ADR 0050), since those no longer send a hint.
+   */
   "worklog",
   /** Time-spent totals used by a saved task view's sort or filter. */
   "timeSpent",
@@ -81,6 +84,8 @@ export const liveSyncFamilyViews: Readonly<
   task_planning: ["dayPlan"],
   archive: ["history"],
   recurrence: ["recurringSeries"],
+  // Emitted by focus commands only: stored time entries are feed records
+  // (ADR 0050) and reload these views through `refetchViews`.
   time_entries: ["worklog", "timeSpent"],
   counters: ["counters"],
   // Daily evaluations are loaded with the counters page.
@@ -142,9 +147,17 @@ export class LiveViewRegistry {
       source.sourceClientId === source.ownClientId
     )
       return [];
-    const views = new Set(
-      families.flatMap((family) => liveSyncFamilyViews[family]),
-    );
+    return this.refetchViews([
+      ...new Set(families.flatMap((family) => liveSyncFamilyViews[family])),
+    ]);
+  }
+
+  /**
+   * Refetches the named views that are loaded and returns those it
+   * refetched. Used directly for views that read a server projection of a
+   * feed kind: they reload when a sync round delivered that kind (ADR 0050).
+   */
+  refetchViews(views: readonly LiveView[]): readonly LiveView[] {
     // The loaders run now or on the next render; either way within the
     // window, and their reads must not count as owner activity.
     noteBackgroundReads();

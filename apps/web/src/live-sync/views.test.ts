@@ -71,6 +71,23 @@ describe("LiveViewRegistry", () => {
     expect(boards).not.toHaveBeenCalled();
   });
 
+  it("refetches named views for a feed kind whose routes send no hint (ADR 0050)", () => {
+    // Stored time entries are feed records: the app shell reloads the
+    // views that read the server's time report when a round delivers one.
+    const registry = new LiveViewRegistry();
+    const worklog = vi.fn();
+    const boards = vi.fn();
+    registry.register("worklog", worklog);
+    registry.register("boards", boards);
+    expect(registry.refetchViews(["worklog", "timeSpent"])).toEqual([
+      "worklog",
+    ]);
+    expect(worklog).toHaveBeenCalledTimes(1);
+    expect(boards).not.toHaveBeenCalled();
+    // Focus commands still emit the family for the same views.
+    expect(liveSyncFamilyViews.time_entries).toEqual(["worklog", "timeSpent"]);
+  });
+
   it("does nothing for a family whose views are not loaded", () => {
     const registry = new LiveViewRegistry();
     expect(

@@ -125,6 +125,16 @@ them offline. Focus time already reaches every client through the active
 session; a second, synced copy would create the duplicate intervals this
 decision avoids. The Worklog view and its edits are disabled offline.
 
+> Note, 2026-10-02: superseded for stored entries by
+> [ADR 0050](0050-day-orders-and-time-entries-in-the-sync-feed.md). Import
+> and manual entries are sync feed records; the snapshot and the offline
+> cache hold a rolling 90-day window of them, and the Worklog shows them
+> and queues create, patch and delete without a connection. The rules
+> above are checked when the server applies a queued write; a refusal is a
+> visible conflict with its reason. Focus time stays a projection of the
+> session, exactly as decided here, and the report with focus time, work
+> context records and older history stay online.
+
 ### Super Productivity import
 
 Every tracked millisecond is imported once:
