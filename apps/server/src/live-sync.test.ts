@@ -351,15 +351,19 @@ describe("live sync hint stream (ADR 0045)", () => {
         const phoneStream = await stream(phone);
         expect((await phoneStream.event())?.event).toBe("hello");
 
-        // A note written by the laptop with its client proof.
-        const content = "Private garden notes";
-        const created = await call("/api/notes", "POST", { content }, laptop);
-        expect(created.status).toBe(201);
-        const { note } = (await created.json()) as { note: { id: string } };
+        // Planning preferences are outside the feed. The laptop saves them
+        // with its client proof.
+        const preferences = (await (
+          await call("/api/planning/preferences", "GET")
+        ).json()) as Record<string, unknown>;
+        expect(
+          (await call("/api/planning/preferences", "PUT", preferences, laptop))
+            .status,
+        ).toBe(200);
         expect(await phoneStream.event(1000)).toEqual({
           event: "resources",
           data: {
-            families: ["notes"],
+            families: ["planning_preferences"],
             sourceClientId: laptop["X-Suite-Client-Id"],
           },
         });
@@ -368,32 +372,31 @@ describe("live sync hint stream (ADR 0045)", () => {
         // unknown.
         expect(
           (
-            await call(`/api/notes/${note.id}`, "DELETE", undefined, {
-              "If-Match": '"1"',
+            await call("/api/planning/preferences", "PUT", preferences, {
               "X-Suite-Client-Id": laptop["X-Suite-Client-Id"],
               "X-Suite-Client-Credential": "A".repeat(43),
             })
           ).status,
-        ).toBe(204);
+        ).toBe(200);
         expect(await phoneStream.event(1000)).toEqual({
           event: "resources",
-          data: { families: ["notes"], sourceClientId: null },
+          data: { families: ["planning_preferences"], sourceClientId: null },
         });
 
         // A rejected mutation sends nothing.
         expect((await call("/api/notes", "POST", { content: "" })).status).toBe(
           400,
         );
-        // Preferences are another family.
-        const preferences = (await (
-          await call("/api/planning/preferences", "GET")
-        ).json()) as Record<string, unknown>;
-        expect(
-          (await call("/api/planning/preferences", "PUT", preferences)).status,
-        ).toBe(200);
-        expect(await phoneStream.event(1000)).toEqual({
-          event: "resources",
-          data: { families: ["planning_preferences"], sourceClientId: null },
+        expect(await phoneStream.quiet(300)).toBe(true);
+
+        // ADR 0046: a note is a feed record. The browser route announces it
+        // with `changes`, never with the retired `notes` family.
+        const content = "Private garden notes";
+        const created = await call("/api/notes", "POST", { content }, laptop);
+        expect(created.status).toBe(201);
+        const { note } = (await created.json()) as { note: { id: string } };
+        expect(await phoneStream.event(1000)).toMatchObject({
+          event: "changes",
         });
 
         // An automation operation names its families and no source client.
@@ -438,10 +441,20 @@ describe("live sync hint stream (ADR 0045)", () => {
         );
         expect(confirmed.status).toBe(200);
         automationConfirmationResponseSchema.parse(await confirmed.json());
-        expect(await phoneStream.event(1000)).toEqual({
+        // The note itself is announced from the feed head; the audit row of
+        // the execution is the only record outside the feed.
+        const hints = [
+          await phoneStream.event(1000),
+          await phoneStream.event(1000),
+        ];
+        expect(hints).toContainEqual({
           event: "resources",
-          data: { families: ["notes", "automation"], sourceClientId: null },
+          data: { families: ["automation"], sourceClientId: null },
         });
+        expect(hints.map((hint) => hint?.event).toSorted()).toEqual([
+          "changes",
+          "resources",
+        ]);
 
         for (const frame of phoneStream.raw) {
           expect(frame).not.toContain(content);
@@ -452,11 +465,13 @@ describe("live sync hint stream (ADR 0045)", () => {
           await fetch(`${server.baseUrl}/api/metrics`)
         ).text();
         expect(metrics).toContain(
-          'suite_live_sync_hints_total{event="resources"} 5',
+          'suite_live_sync_hints_total{event="resources"} 4',
         );
         expect(metrics).toContain(
           "suite_live_sync_unclassified_mutations_total 0",
         );
+        for (const frame of phoneStream.raw)
+          expect(frame).not.toContain('"notes"');
         await phoneStream.cancel();
       } finally {
         await server.close();

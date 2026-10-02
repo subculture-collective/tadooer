@@ -302,10 +302,21 @@ describe("live sync route classification (ADR 0045)", () => {
 
   it("names the families of online-only records and leaves feed routes without one", () => {
     const id = "6f1c2c3e-4f0a-4d53-9d6e-0c3b2f6f8a10";
-    expect(classifyLiveSyncRoute("POST", "/api/notes")).toEqual({
-      kind: "families",
-      families: ["notes"],
-    });
+    // ADR 0046: notes are feed records; their family is retired and no
+    // route or automation operation emits it.
+    for (const [method, path] of [
+      ["POST", "/api/notes"],
+      ["PUT", "/api/notes/order"],
+      ["PATCH", `/api/notes/${id}`],
+      ["DELETE", `/api/notes/${id}`],
+    ] as const)
+      expect(classifyLiveSyncRoute(method, path), path).toEqual({
+        kind: "feed",
+      });
+    expect(automationOperationFamilies["notes.mutate"]).toEqual([]);
+    expect(Object.values(automationOperationFamilies).flat()).not.toContain(
+      "notes",
+    );
     expect(classifyLiveSyncRoute("PUT", `/api/boards/${id}`)).toEqual({
       kind: "families",
       families: ["boards"],

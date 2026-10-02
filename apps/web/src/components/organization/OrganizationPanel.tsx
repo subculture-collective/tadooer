@@ -1,13 +1,8 @@
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useState, type SyntheticEvent } from "react";
 import type { Note, Project, Tag, Task } from "@suite/contracts";
 import {
-  createNote,
-  deleteNote,
-  getNotes,
-  patchNote,
   patchProject,
   patchTag,
-  reorderNotes,
   reorderProjects,
   reorderTags,
   setProjectBacklog,
@@ -20,8 +15,10 @@ import { NativeSelect } from "../ui/native-select.tsx";
 import { SectionHeading } from "../ui/section-heading.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { NoteMarkdown } from "../notes/NoteMarkdown.tsx";
-import type { LocalOrganizationPatch } from "../../local-store.ts";
-import { useLiveRevision } from "../../live-sync/views.ts";
+import type {
+  LocalNotePatch,
+  LocalOrganizationPatch,
+} from "../../local-store.ts";
 
 /** ADR 0033: lifecycle and appearance edits that the offline outbox accepts. */
 export interface OrganizationQueue {
@@ -33,6 +30,23 @@ export interface OrganizationQueue {
     tag: Tag,
     fields: LocalOrganizationPatch,
   ) => Promise<void>;
+}
+
+/**
+ * ADR 0046: note writes go through the offline outbox. Each call queues the
+ * operation, updates the cached notes and syncs when a connection exists.
+ */
+export interface NoteQueue {
+  readonly create: (input: {
+    readonly content: string;
+    readonly projectId: string | null;
+    readonly tagId: string | null;
+    readonly pinnedToToday: boolean;
+  }) => Promise<void>;
+  readonly patch: (note: Note, fields: LocalNotePatch) => Promise<void>;
+  readonly remove: (note: Note) => Promise<void>;
+  /** Exchanges the order of two notes with one position patch each. */
+  readonly swap: (note: Note, neighbour: Note) => Promise<void>;
 }
 
 const queueableKeys = new Set([
@@ -53,6 +67,10 @@ export interface OrganizationPanelProps {
   readonly onTagsChange: (tags: readonly Tag[]) => void;
   /** When present, lifecycle and appearance changes queue offline. */
   readonly queue?: OrganizationQueue;
+  /** Notes from the offline cache (ADR 0046), in the owner's order. */
+  readonly notes?: readonly Note[];
+  /** When present, notes can be written, online or offline. */
+  readonly noteQueue?: NoteQueue;
 }
 
 const move = <T,>(items: readonly T[], index: number, offset: -1 | 1): T[] => {
@@ -65,6 +83,8 @@ const move = <T,>(items: readonly T[], index: number, offset: -1 | 1): T[] => {
   next[target] = item;
   return next;
 };
+
+const noNotes: readonly Note[] = [];
 
 const replace = <T extends { readonly id: string }>(
   items: readonly T[],
@@ -96,8 +116,10 @@ const Swatch = ({
 );
 
 /**
- * Project, tag, backlog and note management. Writes are online HTTP requests
- * with revision preconditions; notes are read online and are not cached.
+ * Project, tag, backlog and note management. Project and tag reorder, menu
+ * visibility and backlog are online HTTP requests with revision
+ * preconditions. Notes are read from the offline cache and written through
+ * the sync outbox (ADR 0046), so they work without a connection.
  */
 export const OrganizationPanel = ({
   projects,
@@ -108,31 +130,13 @@ export const OrganizationPanel = ({
   onProjectsChange,
   onTagsChange,
   queue,
+  notes = noNotes,
+  noteQueue,
 }: OrganizationPanelProps) => {
-  const [notes, setNotes] = useState<readonly Note[]>([]);
-  const [notesLoaded, setNotesLoaded] = useState(false);
   const [noteFilter, setNoteFilter] = useState("all");
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const liveNotes = useLiveRevision("notes", online);
-  useEffect(() => {
-    if (!online) return;
-    let current = true;
-    getNotes()
-      .then((loaded) => {
-        if (!current) return;
-        setNotes(loaded);
-        setNotesLoaded(true);
-      })
-      .catch((cause: unknown) => {
-        if (current) setError(failure(cause));
-      });
-    return () => {
-      current = false;
-    };
-  }, [online, liveNotes]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -146,6 +150,7 @@ export const OrganizationPanel = ({
     }
   };
   const disabled = busy || !online;
+  const notesDisabled = busy || noteQueue === undefined;
   const lifecycleDisabled = busy || (!online && queue === undefined);
   const queueable = (input: object): boolean =>
     queue !== undefined &&
@@ -233,8 +238,11 @@ export const OrganizationPanel = ({
         {!online && (
           <p role="status">
             {queue === undefined
-              ? "Organization changes and notes need a connection. Notes are not available offline."
-              : "Completion, archive, restore and appearance changes are saved locally and sync later. Reorder, menu visibility, backlog and notes need a connection."}
+              ? "Organization changes need a connection."
+              : "Completion, archive, restore and appearance changes are saved locally and sync later. Project and tag reorder, menu visibility and backlog need a connection."}{" "}
+            {noteQueue === undefined
+              ? "Notes are shown from this device and cannot be changed here."
+              : "Notes are saved on this device and sync later."}
           </p>
         )}
         {error !== null && <p role="alert">{error}</p>}
@@ -577,16 +585,13 @@ export const OrganizationPanel = ({
               event.preventDefault();
               const form = event.currentTarget;
               const data = new FormData(form);
+              if (noteQueue === undefined) return;
               void run(async () => {
-                const note = await createNote(
-                  {
-                    content: text(data, "content"),
-                    ...parseAssociation(text(data, "association")),
-                    pinnedToToday: data.get("pinnedToToday") === "on",
-                  },
-                  csrfToken,
-                );
-                setNotes((current) => [...current, note]);
+                await noteQueue.create({
+                  content: text(data, "content"),
+                  ...parseAssociation(text(data, "association")),
+                  pinnedToToday: data.get("pinnedToToday") === "on",
+                });
                 form.reset();
               });
             }}
@@ -604,7 +609,7 @@ export const OrganizationPanel = ({
             <label>
               <input type="checkbox" name="pinnedToToday" /> Pin to Today
             </label>
-            <Button disabled={disabled}>Add note</Button>
+            <Button disabled={notesDisabled}>Add note</Button>
           </form>
           <label className="field">
             <span>Show notes for</span>
@@ -616,29 +621,15 @@ export const OrganizationPanel = ({
               {associationOptions}
             </NativeSelect>
           </label>
-          {notesLoaded && visibleNotes.length === 0 && <p>No notes here.</p>}
+          {visibleNotes.length === 0 && <p>No notes here.</p>}
           <ul className="organization-list">
             {visibleNotes.map((note) => {
               const visibleIndex = visibleNotes.indexOf(note);
               // Swap with the neighbouring visible note, even under a filter.
               const reorder = (offset: -1 | 1) => {
                 const neighbour = visibleNotes[visibleIndex + offset];
-                if (neighbour === undefined) return;
-                const next = notes.map((item) =>
-                  item.id === note.id
-                    ? neighbour
-                    : item.id === neighbour.id
-                      ? note
-                      : item,
-                );
-                void run(async () => {
-                  setNotes(
-                    await reorderNotes(
-                      next.map(({ id, revision }) => ({ id, revision })),
-                      csrfToken,
-                    ),
-                  );
-                });
+                if (neighbour === undefined || noteQueue === undefined) return;
+                void run(() => noteQueue.swap(note, neighbour));
               };
               return (
                 <li key={note.id} className="organization-note">
@@ -655,17 +646,12 @@ export const OrganizationPanel = ({
                       onSubmit={(event) => {
                         event.preventDefault();
                         const data = new FormData(event.currentTarget);
+                        if (noteQueue === undefined) return;
                         void run(async () => {
-                          const saved = await patchNote(
-                            note.id,
-                            note.revision,
-                            {
-                              content: text(data, "content"),
-                              ...parseAssociation(text(data, "association")),
-                            },
-                            csrfToken,
-                          );
-                          setNotes((current) => replace(current, saved));
+                          await noteQueue.patch(note, {
+                            content: text(data, "content"),
+                            ...parseAssociation(text(data, "association")),
+                          });
                           setEditingNote(null);
                         });
                       }}
@@ -688,7 +674,7 @@ export const OrganizationPanel = ({
                           {associationOptions}
                         </NativeSelect>
                       </label>
-                      <Button size="sm" disabled={disabled}>
+                      <Button size="sm" disabled={notesDisabled}>
                         Save note
                       </Button>
                       <Button
@@ -708,7 +694,7 @@ export const OrganizationPanel = ({
                       type="button"
                       size="xs"
                       variant="outline"
-                      disabled={disabled}
+                      disabled={notesDisabled}
                       onClick={() => setEditingNote(note.id)}
                     >
                       Edit
@@ -717,16 +703,12 @@ export const OrganizationPanel = ({
                       type="button"
                       size="xs"
                       variant="outline"
-                      disabled={disabled}
+                      disabled={notesDisabled}
                       onClick={() =>
                         void run(async () => {
-                          const saved = await patchNote(
-                            note.id,
-                            note.revision,
-                            { pinnedToToday: !note.pinnedToToday },
-                            csrfToken,
-                          );
-                          setNotes((current) => replace(current, saved));
+                          await noteQueue?.patch(note, {
+                            pinnedToToday: !note.pinnedToToday,
+                          });
                         })
                       }
                     >
@@ -736,7 +718,7 @@ export const OrganizationPanel = ({
                       type="button"
                       size="xs"
                       variant="outline"
-                      disabled={disabled || visibleIndex === 0}
+                      disabled={notesDisabled || visibleIndex === 0}
                       onClick={() => reorder(-1)}
                     >
                       Move up
@@ -746,7 +728,8 @@ export const OrganizationPanel = ({
                       size="xs"
                       variant="outline"
                       disabled={
-                        disabled || visibleIndex === visibleNotes.length - 1
+                        notesDisabled ||
+                        visibleIndex === visibleNotes.length - 1
                       }
                       onClick={() => reorder(1)}
                     >
@@ -756,13 +739,10 @@ export const OrganizationPanel = ({
                       type="button"
                       size="xs"
                       variant="destructive"
-                      disabled={disabled}
+                      disabled={notesDisabled}
                       onClick={() =>
                         void run(async () => {
-                          await deleteNote(note.id, note.revision, csrfToken);
-                          setNotes((current) =>
-                            current.filter(({ id }) => id !== note.id),
-                          );
+                          await noteQueue?.remove(note);
                         })
                       }
                     >

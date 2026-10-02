@@ -35,6 +35,7 @@ import type {
   PlanningPlaceholder,
   PlanningPreferences,
   PlannerResponse,
+  Note,
   Project,
   SessionResponse,
   Subtask,
@@ -103,7 +104,10 @@ import {
   type ResolveTaskConflictInput,
 } from "./local-store.ts";
 import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
-import type { OrganizationQueue } from "./components/organization/OrganizationPanel.tsx";
+import type {
+  NoteQueue,
+  OrganizationQueue,
+} from "./components/organization/OrganizationPanel.tsx";
 import {
   SyncEngine,
   installOnlineSync,
@@ -296,6 +300,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const [liveSync] = useState(() => new LiveSyncController());
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [tags, setTags] = useState<readonly Tag[]>([]);
+  // ADR 0046: notes are read from the offline cache.
+  const [notes, setNotes] = useState<readonly Note[]>([]);
+  const pinnedNotes = notes.filter(({ pinnedToToday }) => pinnedToToday);
   const [subtasks, setSubtasks] = useState<
     Readonly<Record<string, readonly Subtask[]>>
   >({});
@@ -426,16 +433,20 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     };
   }, [localStore]);
 
-  // ADR 0033: projects, tags and checklists are read from the local cache so
-  // offline-created records are usable before they have synced.
+  // ADR 0033, ADR 0046: projects, tags, checklists and notes are read from
+  // the local cache so offline-created records are usable before they have
+  // synced.
   const refreshCachedOrganization = useCallback(async () => {
-    const [cachedProjects, cachedTags, cachedSubtasks] = await Promise.all([
-      localStore.loadCachedProjects(),
-      localStore.loadCachedTags(),
-      localStore.loadCachedSubtasks(),
-    ]);
+    const [cachedProjects, cachedTags, cachedSubtasks, cachedNotes] =
+      await Promise.all([
+        localStore.loadCachedProjects(),
+        localStore.loadCachedTags(),
+        localStore.loadCachedSubtasks(),
+        localStore.loadCachedNotes(),
+      ]);
     setProjects(cachedProjects);
     setTags(cachedTags);
+    setNotes(cachedNotes);
     setSubtasks(
       cachedSubtasks.reduce<Record<string, Subtask[]>>((grouped, subtask) => {
         (grouped[subtask.taskId] ??= []).push(subtask);
@@ -562,6 +573,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       } catch {
         // Direct authenticated reads remain a safe first-run fallback. Existing
         // browser profiles retain their IndexedDB cache for offline use.
+        // ADR 0046: notes have no direct read; show what the cache holds.
+        setNotes(await localStore.loadCachedNotes().catch(() => []));
       }
       const visibleTasks = local?.tasks ?? taskList.tasks;
       try {
@@ -631,8 +644,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             cachedTaskState(),
             localStore.loadPlanningPreferences(),
             localStore.clientIdentity(),
+            localStore.loadCachedNotes(),
           ])
-            .then(([cached, planningPreferences, identity]) => {
+            .then(([cached, planningPreferences, identity, cachedNotes]) => {
+              // ADR 0046: pinned notes stay readable with no session.
+              if (!cancelled() && identity !== undefined) setNotes(cachedNotes);
               if (!cancelled() && identity !== undefined)
                 setState({
                   kind: "offline",
@@ -1053,7 +1069,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
       if (local.conflictCount > 0)
         setFormError(
-          "A task field changed on another client. Review the visible sync conflict before retrying.",
+          "A record changed on another client. Review the visible sync conflict before retrying.",
         );
     } catch (error: unknown) {
       setState((current) =>
@@ -1109,7 +1125,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
       if (local.conflictCount > 0)
         setFormError(
-          "A task field changed on another client. Review the visible sync conflict before retrying.",
+          "A record changed on another client. Review the visible sync conflict before retrying.",
         );
     } catch (error: unknown) {
       setState((current) =>
@@ -1451,6 +1467,34 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     },
     patchTag: async (tag, fields) => {
       await localStore.queueOrganizationPatch("tag", tag.id, fields);
+      await syncAfterLocalMutation();
+    },
+  };
+
+  // ADR 0046: note writes queue offline with one record revision each.
+  // Moving a note swaps two positions with two revisioned patches, as the
+  // checklist does; the complete-membership reorder stays an online route.
+  const noteQueue: NoteQueue = {
+    create: async (input) => {
+      await localStore.queueNoteCreate(input);
+      await syncAfterLocalMutation();
+    },
+    patch: async (note, fields) => {
+      await localStore.queueNotePatch(note.id, fields);
+      await syncAfterLocalMutation();
+    },
+    remove: async (note) => {
+      await localStore.queueNoteDelete(note.id);
+      await syncAfterLocalMutation();
+    },
+    swap: async (note, neighbour) => {
+      const [mine, theirs] =
+        note.position === neighbour.position
+          ? [notes.indexOf(neighbour), notes.indexOf(note)]
+          : [neighbour.position, note.position];
+      if (mine < 0 || theirs < 0) return;
+      await localStore.queueNotePatch(note.id, { position: mine });
+      await localStore.queueNotePatch(neighbour.id, { position: theirs });
       await syncAfterLocalMutation();
     },
   };
@@ -2365,6 +2409,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           onSubmitTimeBlock={submitTimeBlock}
           onRemoveTimeBlock={removeTimeBlock}
           onViewTasks={() => navigate("tasks")}
+          pinnedNotes={pinnedNotes}
         />
         <section aria-label="Offline sync status">
           <p>Visible sync conflicts: {renderedOfflineState.conflictCount}</p>
@@ -2770,6 +2815,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             csrfToken={state.session.csrfToken}
             online={networkOnline}
             onTasksPlanned={() => void syncNow()}
+            pinnedNotes={pinnedNotes}
           />
         )}
         {route === "inbox" && (
@@ -2845,6 +2891,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               onProjectsChange: setProjects,
               onTagsChange: setTags,
               queue: organizationQueue,
+              notes,
+              noteQueue,
             }}
             timeZone={state.planningPreferences?.timeZone ?? "UTC"}
             onSubmitTaskPlanning={submitTaskPlanning}

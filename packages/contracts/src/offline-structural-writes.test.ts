@@ -176,7 +176,8 @@ describe("ADR 0033 sync operation contracts", () => {
         kind: "conflict",
         operationId: id("01"),
         code: "SYNC_RESOURCE_CONFLICT",
-        entityKind: "note",
+        // Not a sync entity kind (notes became one in ADR 0046).
+        entityKind: "board",
         taskId: id("02"),
         taskRevision: 2,
       }).success,

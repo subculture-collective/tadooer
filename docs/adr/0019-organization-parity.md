@@ -82,3 +82,8 @@ remain provenance only.
   remain open (#63, #92).
 - Notes need a connection. A later offline design must add note operations to
   the outbox with revision conflicts rather than overwrite silently.
+
+> Note, 2026-10-02: [ADR 0046](0046-notes-in-the-sync-feed.md) is that
+> design. Notes are sync feed records, cached offline and written through the
+> outbox with one record revision. Decision 9 and the last consequence above
+> describe the state before it.

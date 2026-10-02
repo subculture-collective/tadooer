@@ -107,6 +107,13 @@ time entries, focus control and application preferences. Sync remains
 foreground-only (ADR 0010). Two-profile browser evidence and real-data
 import qualification (#47) are recorded separately from this implementation.
 
+> Note, 2026-10-02: notes left this list. [ADR 0046](0046-notes-in-the-sync-feed.md)
+> makes them sync feed records in the offline cache, with `note.create`,
+> `note.patch` and `note.delete` under the same one-revision rule as
+> projects, tags and checklist items. The complete-membership note reorder
+> stays an online write. The other records above are unchanged; wave 7B
+> (#114) moves them one kind at a time.
+
 ## Consequences
 
 - Migration 0037 forces one snapshot reset per client; queued operations

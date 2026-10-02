@@ -118,6 +118,40 @@ export const notePatchRequestSchema = z
   })
   .refine(singleAssociation, singleAssociationMessage);
 
+/**
+ * ADR 0046: the note fields an offline `note.create` carries. Every field is
+ * explicit so the operation's request hash never depends on a default.
+ */
+export const syncNoteCreateSchema = z
+  .object({
+    id,
+    content: noteContentSchema,
+    projectId: id.nullable(),
+    tagId: id.nullable(),
+    pinnedToToday: z.boolean(),
+  })
+  .strict()
+  .refine(singleAssociation, singleAssociationMessage);
+
+/**
+ * ADR 0046: the fields an offline `note.patch` may change. `position` is
+ * accepted here and not by the HTTP patch: the browser moves a note by
+ * swapping two positions, each guarded by its own record revision.
+ */
+export const syncNotePatchFieldsSchema = z
+  .object({
+    content: noteContentSchema.optional(),
+    projectId: id.nullable().optional(),
+    tagId: id.nullable().optional(),
+    pinnedToToday: z.boolean().optional(),
+    position: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine((input) => Object.keys(input).length > 0, {
+    message: "A note edit is required",
+  })
+  .refine(singleAssociation, singleAssociationMessage);
+
 export const noteResponseSchema = z.object({ note: noteSchema }).strict();
 export const noteListResponseSchema = z
   .object({ notes: z.array(noteSchema) })
