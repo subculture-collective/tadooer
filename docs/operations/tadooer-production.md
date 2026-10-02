@@ -148,6 +148,53 @@ change; 0 for an empty feed). With the default window the age settles near 30
 days on an instance with more than 1000 retained changes. Pruned rows free
 pages inside the SQLite file for reuse; the file itself does not shrink.
 
+## Live sync hint stream
+
+Each signed-in client with the app open holds one long-lived request,
+`GET /api/sync/events` (ADR 0045). The response is `text/event-stream` and
+carries hints only: that the sync feed advanced, or which kinds of online
+records changed. It never carries titles, record content or record IDs. A
+client that receives no hints still synchronizes on load, on focus and on its
+fallback interval, so a proxy that breaks the stream costs latency, not data.
+
+What the stream needs from the proxy chain:
+
+- **No response buffering.** The server sets `Cache-Control: no-store` and
+  `X-Accel-Buffering: no`. Caddy's `reverse_proxy` flushes
+  `text/event-stream` responses as they arrive, and the Cloudflare tunnel
+  passes them through. If hints arrive in bursts after a proxy change, check
+  for a buffering or response-rewriting step first, including `encode`.
+- **Idle time above 25 seconds.** The server writes a `: hb` comment line
+  every 25 seconds. A proxy idle or read timeout below that closes the stream
+  between heartbeats; clients then reconnect with backoff and fall back to
+  interval sync.
+- **The request headers of a sync round.** The session cookie,
+  `x-suite-client-id`, `x-suite-client-credential` and
+  `x-suite-sync-version` must reach Suite unchanged.
+- **One connection per stream.** Over HTTP/2 the stream shares the browser's
+  connection. The Suite side of the proxy uses one upstream connection per
+  open stream, and the server closes it when the stream ends
+  (`Connection: close`).
+
+Limits: one stream per registered client (a second replaces the first), at
+most eight streams per owner (a ninth request gets `429
+LIVE_SYNC_STREAM_LIMIT`), and a stream whose socket accepts no data for 30
+seconds is dropped. The stream does not refresh the session idle timer and
+ends when the session expires, the owner signs out or the client is revoked.
+On shutdown every stream receives `bye: shutdown` before the listener stops,
+so a restart does not wait for open streams.
+
+`/api/metrics` exports, without identifiers:
+
+| Metric                                         | Meaning                                                                                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `suite_live_sync_streams_open`                 | Streams open in this process.                                                                                                           |
+| `suite_live_sync_hints_total{event}`           | Events written, by name: `hello`, `changes`, `resources`, `bye`.                                                                        |
+| `suite_live_sync_streams_dropped_total`        | Streams dropped because the socket could not be written for 30 seconds. A steady rise points at a proxy or client that stopped reading. |
+| `suite_live_sync_unclassified_mutations_total` | Successful mutations whose route has no resource family. Each one sent the `all` hint. Expected to stay 0; a nonzero value is a defect. |
+
+`/api/ready` does not depend on the stream.
+
 ## Owner data export versus operator backups
 
 Two copies exist, with different jobs (ADR 0034):

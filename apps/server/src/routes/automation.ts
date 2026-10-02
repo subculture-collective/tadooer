@@ -3302,6 +3302,8 @@ export const handleAutomation: RouteHandler = async (
       return undefined;
     }
     if (body === undefined) throw new Error("Confirmation result missing");
+    // ADR 0045: other devices refetch what this operation changed.
+    ctx.liveSync.noteAutomation(response, token.ownerId, command.operation);
     return body;
   }
 

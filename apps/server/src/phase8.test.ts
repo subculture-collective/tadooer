@@ -37,6 +37,7 @@ describe("Phase 8 operations surface", () => {
         );
         expect(metrics).toContain("suite_uptime_seconds");
         expect(metrics).toContain("suite_database_migrations 42");
+        expect(metrics).toContain("suite_database_migrations_expected 42");
         expect(metrics).toContain('suite_http_requests_total{status="200"} 2');
         expect(metrics).not.toContain("owner");
       } finally {

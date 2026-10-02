@@ -9,12 +9,12 @@ groups:
         annotations:
           summary: Tadooer is unavailable
       - alert: TadooerMigrationMismatch
-        expr: suite_database_migrations{job="tadooer"} != 19
+        expr: suite_database_migrations{job="tadooer"} != suite_database_migrations_expected{job="tadooer"}
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: Tadooer database migration count differs from the release
+          summary: Tadooer applied migrations differ from what the running build expects
       - alert: TadooerServerErrors
         expr: increase(suite_http_requests_total{job="tadooer",status=~"5.."}[10m]) > 2
         for: 5m

@@ -33,6 +33,8 @@ import {
 } from "./calendar-bridge/worker.ts";
 import { loadNtfyPublisherConfig, NtfyPublisher } from "./notifications.ts";
 import type { RouteContext } from "./routes/shared.ts";
+import { LiveSyncService } from "./live-sync/service.ts";
+import type { LiveSyncTimers } from "./live-sync/hub.ts";
 import { handleHealth } from "./routes/health.ts";
 import { handleAuthSetup } from "./routes/auth-setup.ts";
 import { handleTasks } from "./routes/tasks.ts";
@@ -97,6 +99,8 @@ export interface SuiteServerOptions {
   readonly disableCalendarBridgeTimer?: boolean;
   /** Lease holder identity; defaults to a random ID per process start. */
   readonly leaseHolder?: string;
+  /** ADR 0045: hint stream timers; tests use a manual clock. */
+  readonly liveSyncTimers?: LiveSyncTimers;
 }
 
 export const startSuiteServer = async (
@@ -197,6 +201,7 @@ export const startSuiteServer = async (
             : { random: options.schedulerRandom }),
         });
   const requestCounts = new Map<number, number>();
+  const liveSync = new LiveSyncService(database, auth, options.liveSyncTimers);
   const notificationConfig = loadNtfyPublisherConfig(
     config.ntfyPublisherConfigPath,
   );
@@ -432,6 +437,7 @@ export const startSuiteServer = async (
     sessionClock,
     requestCounts,
     triggerNotifications,
+    liveSync,
   };
 
   const routes = [
@@ -474,12 +480,14 @@ export const startSuiteServer = async (
 
   const server = createServer(
     (request: IncomingMessage, response: ServerResponse) => {
-      response.once("finish", () =>
+      response.once("finish", () => {
         requestCounts.set(
           response.statusCode,
           (requestCounts.get(response.statusCode) ?? 0) + 1,
-        ),
-      );
+        );
+        // ADR 0045: announce what a finished mutation changed.
+        liveSync.afterRequest(request, response);
+      });
       const handleRequest = async (): Promise<void> => {
         const url = new URL(
           request.url ?? "/",
@@ -583,6 +591,9 @@ export const startSuiteServer = async (
     calendarBridgeWorker,
     close: async () => {
       if (notificationTimer !== undefined) clearInterval(notificationTimer);
+      // ADR 0045: streams get `bye: shutdown` before the listener stops;
+      // an open stream would otherwise hold `server.close` open.
+      liveSync.close();
       // Let in-flight passes finish or reach a checkpoint before the
       // database closes (ADR 0043).
       await calendarBridgeWorker?.stop();

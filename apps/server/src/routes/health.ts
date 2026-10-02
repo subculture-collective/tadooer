@@ -40,6 +40,9 @@ export const handleHealth: RouteHandler = async (
       "# HELP suite_database_migrations Applied SQLite migrations.",
       "# TYPE suite_database_migrations gauge",
       `suite_database_migrations ${String(state.appliedMigrationCount)}`,
+      "# HELP suite_database_migrations_expected SQLite migrations this build expects.",
+      "# TYPE suite_database_migrations_expected gauge",
+      `suite_database_migrations_expected ${String(state.expectedMigrationCount)}`,
       ...syncFeedMetricLines(database, Date.now()),
       "# HELP suite_http_requests_total Completed HTTP responses by status.",
       "# TYPE suite_http_requests_total counter",
@@ -55,6 +58,7 @@ export const handleHealth: RouteHandler = async (
         worker: ctx.calendarBridgeWorker,
         throttle: ctx.googleThrottle,
       }),
+      ...ctx.liveSync.metricLines(),
       "",
     ];
     response.writeHead(200, {

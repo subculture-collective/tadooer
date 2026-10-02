@@ -19,8 +19,8 @@
    `deploy/restore-stack.sh` and the matching backup after maintenance-mode
    coordination. Never point older code at an unreviewed newer schema.
 
-Alert when readiness is non-200, `suite_database_migrations` differs from the
-release expectation, restarts recur, backup qualification fails, or HTTP 5xx
+Alert when readiness is non-200, `suite_database_migrations` differs from
+`suite_database_migrations_expected`, restarts recur, backup qualification fails, or HTTP 5xx
 counters increase. Metrics contain status counts and process/database state,
 not task content, owner identity, credentials, capability URLs, or request
 bodies.
