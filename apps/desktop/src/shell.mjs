@@ -39,6 +39,17 @@ import {
   normalizeServerInput,
   suiteOrigin,
 } from "./policy.mjs";
+import {
+  applicationMenu,
+  bindMenu,
+  createDeepLinkInbox,
+  loginItemOutcome,
+  quitsWhenAllWindowsClose,
+  registersSchemeAtRuntime,
+  trayClickTogglesWindow,
+  trayImageFile,
+  trayImageIsTemplate,
+} from "./platform.mjs";
 import { checkServer, serverCheckMessage } from "./server-check.mjs";
 import {
   defaultSettings,
@@ -54,9 +65,15 @@ import {
  * notifications. It holds no owner data and calls no Suite API except the
  * public `GET /api/build` during setup.
  *
- * Auto-update, code signing and the macOS and Windows packages are not here.
- * They are owner decisions; `start()` is the place a later update check would
- * be scheduled, and the platform branches are marked.
+ * What differs per platform is decided in `platform.mjs`: the macOS menu
+ * layout, the menu-bar template image, staying alive without windows, and
+ * links arriving through `open-url`. The macOS paths are written from the
+ * documentation and unit-tested as data; they have not run on a Mac (see
+ * docs/operations/desktop.md for the checklist).
+ *
+ * Auto-update, code signing and the Windows package are not here. They are
+ * owner decisions; `start()` is the place a later update check would be
+ * scheduled.
  */
 
 const sourceDirectory = import.meta.dirname;
@@ -72,12 +89,17 @@ const setupPagePath = join(setupDirectory, "index.html");
 const setupPageUrl = pathToFileURL(setupPagePath).href;
 const setupDirectoryUrl = `${pathToFileURL(setupDirectory).href}/`;
 const windowIconPath = join(applicationDirectory, "assets", "icon.png");
-const trayIconPath = join(applicationDirectory, "assets", "tray.png");
+const trayIconPath = join(
+  applicationDirectory,
+  "assets",
+  trayImageFile(process.platform),
+);
 
 const suitePartition = "persist:suite-owner";
 // No `persist:` prefix: the setup page's session lives in memory only.
 const setupPartition = "tadooer-setup";
 const serverCheckTimeoutMs = 8000;
+const testNotificationFlag = "--suite-test-notification";
 
 /**
  * `headless` is the self-check mode: windows stay hidden and the tray, the
@@ -98,7 +120,7 @@ export const createShell = ({
   let trayKey = "";
   let quitting = false;
   let ready = false;
-  let pendingDeepLink;
+  const deepLinks = createDeepLinkInbox();
   let pageStatus;
   let pageFocus;
   const notifications = new Map();
@@ -110,6 +132,9 @@ export const createShell = ({
     if (!hasPage()) {
       if (setupWindow !== null) setupWindow.focus();
       else if (origin !== undefined) createMainWindow(origin);
+      // macOS only: the app outlives its windows, so the setup window can
+      // have been closed before a server was chosen.
+      else openSetup();
       return;
     }
     if (headless) return;
@@ -177,8 +202,11 @@ export const createShell = ({
   const createTray = () => {
     if (headless) return;
     try {
-      tray = new Tray(nativeImage.createFromPath(trayIconPath));
-      tray.on("click", toggleMainWindow);
+      const image = nativeImage.createFromPath(trayIconPath);
+      if (trayImageIsTemplate(process.platform)) image.setTemplateImage(true);
+      tray = new Tray(image);
+      if (trayClickTogglesWindow(process.platform))
+        tray.on("click", toggleMainWindow);
       refreshTray();
     } catch {
       // No tray host on this desktop. The window and the menu still work,
@@ -206,9 +234,16 @@ export const createShell = ({
           // An AppImage must start through its own file, not the mount.
           executable: environment.APPIMAGE ?? process.execPath,
         });
-      // macOS and Windows: Electron's login item API. Untested until those
-      // packages exist.
-      else app.setLoginItemSettings({ openAtLogin: enabled });
+      else {
+        // macOS (and Windows, which has no package yet): Electron's login
+        // item API. The system has the last word, so the stored setting
+        // follows what it reports.
+        app.setLoginItemSettings({ openAtLogin: enabled });
+        const outcome = loginItemOutcome(enabled, app.getLoginItemSettings());
+        await saveSettings({ startAtLogin: outcome.enabled });
+        if (outcome.message !== undefined) throw new Error(outcome.message);
+        return;
+      }
       await saveSettings({ startAtLogin: enabled });
     } catch (error) {
       buildMenu();
@@ -222,58 +257,34 @@ export const createShell = ({
   // --- Application menu ---------------------------------------------------
 
   function buildMenu() {
+    // The layout per platform is data in `platform.mjs`.
+    const template = applicationMenu({
+      platform: process.platform,
+      appName: app.getName(),
+      packaged: app.isPackaged,
+      closeToTray: settings.closeToTray,
+      startAtLogin: settings.startAtLogin,
+      startAtLoginAvailable: startAtLoginAvailable(),
+      serverFromEnvironment: originFromEnvironment,
+    });
     Menu.setApplicationMenu(
-      Menu.buildFromTemplate([
-        {
-          label: "App",
-          submenu: [
-            {
-              label: "Quick capture",
-              click: () => sendCommand("quick-capture"),
-            },
-            { label: "Sync now", click: () => sendCommand("sync-now") },
-            { type: "separator" },
-            {
-              label: originFromEnvironment
-                ? "Server set by SUITE_SERVER_URL"
-                : "Change server…",
-              enabled: !originFromEnvironment,
-              click: openSetup,
-            },
-            { type: "separator" },
-            {
-              label: "Close to tray",
-              type: "checkbox",
-              checked: settings.closeToTray,
-              click: (item) => void saveSettings({ closeToTray: item.checked }),
-            },
-            {
-              label: "Start at login",
-              type: "checkbox",
-              checked: settings.startAtLogin,
-              enabled: startAtLoginAvailable(),
-              click: (item) => void setStartAtLogin(item.checked),
-            },
-            { type: "separator" },
-            { label: "Quit", accelerator: "CmdOrCtrl+Q", click: quit },
-          ],
-        },
-        { role: "editMenu" },
-        {
-          label: "View",
-          submenu: [
-            { role: "reload" },
-            { type: "separator" },
-            { role: "resetZoom" },
-            { role: "zoomIn" },
-            { role: "zoomOut" },
-            { type: "separator" },
-            { role: "togglefullscreen" },
-            ...(app.isPackaged ? [] : [{ role: "toggleDevTools" }]),
-          ],
-        },
-        { role: "windowMenu" },
-      ]),
+      Menu.buildFromTemplate(
+        bindMenu(template, {
+          // Without a window (macOS) the command has no page to go to, so
+          // the window opens instead.
+          "quick-capture": () => {
+            if (!sendCommand("quick-capture")) showMainWindow();
+          },
+          "sync-now": () => {
+            if (!sendCommand("sync-now")) showMainWindow();
+          },
+          "change-server": openSetup,
+          "set-close-to-tray": (checked) =>
+            void saveSettings({ closeToTray: checked }),
+          "set-start-at-login": (checked) => void setStartAtLogin(checked),
+          quit,
+        }),
+      ),
     );
   }
 
@@ -341,7 +352,12 @@ export const createShell = ({
       if (quitting || window !== mainWindow) return;
       if (settings.closeToTray && tray !== null) {
         event.preventDefault();
-        window.hide();
+        // macOS: hiding a full-screen window leaves its empty space behind,
+        // so it leaves full screen first.
+        if (process.platform === "darwin" && window.isFullScreen()) {
+          window.once("leave-full-screen", () => window.hide());
+          window.setFullScreen(false);
+        } else window.hide();
       }
     });
     window.on("show", refreshTray);
@@ -398,11 +414,10 @@ export const createShell = ({
   // --- Deep links ---------------------------------------------------------
 
   const openDeepLink = (raw) => {
-    if (!ready) {
-      pendingDeepLink = raw;
-      return false;
-    }
-    const target = deepLinkTarget(raw, origin);
+    // Before `start` has finished the link is held for the first window.
+    const link = deepLinks.receive(raw);
+    if (link === undefined) return false;
+    const target = deepLinkTarget(link, origin);
     if (target === undefined) return false;
     if (hasPage()) {
       showMainWindow();
@@ -538,15 +553,27 @@ export const createShell = ({
     app.on("before-quit", () => {
       quitting = true;
     });
-    app.on("window-all-closed", () => app.quit());
+    app.on("window-all-closed", () => {
+      if (quitsWhenAllWindowsClose(process.platform)) app.quit();
+    });
+    // macOS: a click on the Dock icon. With no visible window it shows the
+    // hidden one or opens a new one. It can fire during launch, before
+    // there is anything to show.
+    app.on("activate", (_event, hasVisibleWindows) => {
+      if (ready && !hasVisibleWindows) showMainWindow();
+    });
     app.on("second-instance", (_event, argv) => {
       const link = deepLinkFromArguments(argv);
       if (link === undefined || !openDeepLink(link)) showMainWindow();
     });
-    // macOS delivers links here instead of on the command line.
+    // macOS delivers links here instead of on the command line, and before
+    // `ready` when the link is what started the app. This listener is in
+    // place before `ready` because `start` runs while the main module is
+    // still evaluating. A link that cannot be opened (no server yet, or a
+    // refused target) still brings the window forward.
     app.on("open-url", (event, url) => {
       event.preventDefault();
-      openDeepLink(url);
+      if (!openDeepLink(url) && ready) showMainWindow();
     });
 
     await app.whenReady();
@@ -565,7 +592,12 @@ export const createShell = ({
 
     // Linux registers the scheme through the installed desktop entry
     // (`MimeType=x-scheme-handler/tadooer`); see docs/operations/desktop.md.
-    if (app.isPackaged && !headless && process.platform !== "linux")
+    // The macOS bundle declares it in its Info.plist as well.
+    if (
+      app.isPackaged &&
+      !headless &&
+      registersSchemeAtRuntime(process.platform)
+    )
       app.setAsDefaultProtocolClient(deepLinkScheme);
 
     configureSessions();
@@ -574,10 +606,20 @@ export const createShell = ({
     createTray();
     ready = true;
 
-    const link = pendingDeepLink ?? deepLinkFromArguments(process.argv);
-    pendingDeepLink = undefined;
+    const link = deepLinks.start(process.argv);
     if (origin === undefined) openSetup();
     else createMainWindow(deepLinkTarget(link, origin) ?? origin);
+
+    // For the manual smoke run (docs/operations/desktop.md): one fixed
+    // notification, so the system's permission and delivery can be checked
+    // before the web app raises notifications of its own.
+    if (!headless && process.argv.includes(testNotificationFlag))
+      showNotification({
+        title: app.getName(),
+        body: "Test notification from the desktop shell.",
+        tag: "shell-test",
+        path: null,
+      });
   };
 
   return {
