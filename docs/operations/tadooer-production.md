@@ -107,6 +107,47 @@ Two Suite processes on the same database (for example during a restart
 overlap) exclude each other through leases in SQLite. A crashed process's lease
 expires after 10 minutes.
 
+## Sync feed retention
+
+Every change to a synced record adds one row to the owner's sync feed, and
+each device reads the feed from its own cursor. Since ADR 0045 the Suite
+process prunes the feed: at most once per hour, the 60-second server tick
+deletes changes older than the retention window.
+
+| Variable                    | Default | Effect                                                                                               |
+| --------------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `SUITE_SYNC_RETENTION_DAYS` | `30`    | Days of feed changes to keep. Minimum 7, maximum 3650. `0` switches pruning off and keeps every row. |
+
+The production Compose file passes the variable through from the Compose
+environment file (`deploy/production/env.example` shows the entry); recreate
+the container after changing it. A value from 1 to 6, or anything that is not a whole number, stops the
+server at start with a configuration error.
+
+What pruning removes and what it never removes:
+
+- Only rows of `sync_changes`. Tasks, projects and other records are not
+  touched, and neither are the stored outcomes of client operations, so a
+  device that resends an old queued change still gets its original result.
+- The newest 1000 changes always stay, whatever the window.
+- Pruning removes a contiguous run from the start of the feed and stops at
+  the first change inside the window.
+
+A device whose cursor is older than the pruned range gets
+`SYNC_CURSOR_EXPIRED` on its next sync round. It then replaces its offline
+cache from a snapshot and sends its queued changes in the following round;
+no user action is needed. In practice this affects a device that has not
+synced for longer than the window. The same recovery already happens after an
+owner data restore, which starts a new sync epoch and resets the pruned range.
+
+When rows were deleted the server logs `sync.feed.pruned` with the number of
+rows and nothing else; a failed attempt logs `sync.feed.prune_failed` and is
+retried an hour later. `/api/metrics` exports two gauges without identifiers:
+`suite_sync_feed_pruned_changes` (changes pruned in the current sync epoch)
+and `suite_sync_feed_oldest_change_age_seconds` (age of the oldest retained
+change; 0 for an empty feed). With the default window the age settles near 30
+days on an instance with more than 1000 retained changes. Pruned rows free
+pages inside the SQLite file for reuse; the file itself does not shrink.
+
 ## Owner data export versus operator backups
 
 Two copies exist, with different jobs (ADR 0034):

@@ -22,6 +22,11 @@ export interface ServerConfig {
    * environment loader always supplies it (enabled unless switched off).
    */
   readonly calendarBridgeWorker?: BridgeWorkerSettings;
+  /**
+   * ADR 0045: days of sync feed changes to retain. Absent or 0 means the
+   * feed is never pruned; the environment loader supplies 30 by default.
+   */
+  readonly syncRetentionDays?: number;
   readonly build: {
     readonly version: string;
     readonly revision: string;
@@ -139,6 +144,28 @@ const parseCount = (
   return count;
 };
 
+export const defaultSyncRetentionDays = 30;
+const minimumSyncRetentionDays = 7;
+const maximumSyncRetentionDays = 3650;
+
+/**
+ * ADR 0045 feed retention. `0` switches pruning off. Windows shorter than a
+ * week are rejected: a device that was offline for less than that should
+ * catch up from the feed, not from a snapshot.
+ */
+export const parseSyncRetentionDays = (value: string | undefined): number => {
+  if (value === undefined || value === "") return defaultSyncRetentionDays;
+  const days = /^\d+$/.test(value) ? Number(value) : Number.NaN;
+  if (
+    days !== 0 &&
+    !(days >= minimumSyncRetentionDays && days <= maximumSyncRetentionDays)
+  )
+    throw new Error(
+      `SUITE_SYNC_RETENTION_DAYS must be 0 or an integer from ${String(minimumSyncRetentionDays)} to ${String(maximumSyncRetentionDays)}`,
+    );
+  return days;
+};
+
 /** ADR 0043 toggles; see docs/operations/tadooer-production.md. */
 export const loadBridgeWorkerSettings = (
   environment: NodeJS.ProcessEnv,
@@ -226,6 +253,9 @@ export const loadConfig = (
       environment.SUITE_TRUSTED_PROXY_CIDRS,
     ),
     calendarBridgeWorker: loadBridgeWorkerSettings(environment),
+    syncRetentionDays: parseSyncRetentionDays(
+      environment.SUITE_SYNC_RETENTION_DAYS,
+    ),
     build: {
       version: environment.SUITE_VERSION ?? "0.0.0-dev",
       revision: environment.SUITE_REVISION ?? "development",

@@ -454,7 +454,7 @@ export class SqliteDataExportStore {
       .run(ownerId);
     this.db
       .prepare(
-        "INSERT INTO sync_owner_state (owner_id, epoch, next_sequence, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(owner_id) DO UPDATE SET epoch=excluded.epoch, next_sequence=1, updated_at=excluded.updated_at",
+        "INSERT INTO sync_owner_state (owner_id, epoch, next_sequence, retained_floor, updated_at) VALUES (?, ?, 1, 0, ?) ON CONFLICT(owner_id) DO UPDATE SET epoch=excluded.epoch, next_sequence=1, retained_floor=0, updated_at=excluded.updated_at",
       )
       .run(ownerId, randomUUID(), now);
   }

@@ -58,6 +58,7 @@ import { handleBoards } from "./routes/boards.ts";
 import { handleBoardViews } from "./routes/board-views.ts";
 import { handleFocus } from "./routes/focus.ts";
 import { runFocusReminders } from "./focus-reminders.ts";
+import { createSyncFeedPruner } from "./sync-retention.ts";
 import { handleApplicationPreferences } from "./routes/application-preferences.ts";
 import { handleDataExport } from "./routes/data-export.ts";
 import { handleTemplates } from "./routes/templates.ts";
@@ -205,10 +206,17 @@ export const startSuiteServer = async (
       : new NtfyPublisher(notificationConfig, options.notificationFetch);
   database.failUncertainNotificationDeliveries(new Date().toISOString());
 
+  const pruneSyncFeed = createSyncFeedPruner(
+    database,
+    config.syncRetentionDays,
+  );
+
   const runNotifications = async (): Promise<void> => {
     const ownerId = database.getActiveOwnerId();
     if (ownerId === undefined) return;
     const now = sessionClock.now().toISOString();
+    // ADR 0045: feed retention, at most once per hour.
+    pruneSyncFeed(ownerId, now);
     // ADR 0023: materialize due recurring occurrences before reminders are
     // reconciled, so a new instance's reminder is scheduled in the same tick.
     try {
