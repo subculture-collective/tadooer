@@ -115,6 +115,7 @@ import {
 } from "./sync-engine.ts";
 import { LiveSyncController } from "./live-sync/controller.ts";
 import { useLiveSync } from "./live-sync/use-live-sync.ts";
+import { desktopFocusReport, useDesktopShell } from "./desktop-shell.ts";
 import {
   useAppLiveViews,
   type LiveAppPatch,
@@ -2351,6 +2352,37 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         current.kind === "authenticated" ? { ...current, ...local } : current,
       );
     },
+  });
+  // ADR 0047: inside the desktop shell the tray shows this state and can ask
+  // for quick capture or a sync. In a browser this does nothing.
+  useDesktopShell({
+    status: {
+      sync:
+        state.kind === "authenticated"
+          ? (state.syncStatus ?? "online")
+          : state.kind === "offline"
+            ? "offline"
+            : "signed-out",
+      live: liveStatus,
+      conflicts:
+        state.kind === "authenticated" || state.kind === "offline"
+          ? (state.conflictCount ?? 0)
+          : 0,
+    },
+    focus: desktopFocusReport(
+      state.kind === "authenticated" ? state.activeSession : null,
+      state.kind === "authenticated" ? state.tasks : [],
+    ),
+    onQuickCapture: () => {
+      if (state.kind !== "authenticated") return;
+      if (route !== "today" && route !== "inbox") navigate("today");
+      window.setTimeout(() => {
+        document
+          .querySelector<HTMLInputElement>('form input[name="title"]')
+          ?.focus();
+      }, 0);
+    },
+    onSyncNow: () => void syncNow(),
   });
   const patchAuthenticated = useCallback((patch: LiveAppPatch) => {
     setState((current) =>

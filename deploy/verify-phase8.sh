@@ -6,5 +6,14 @@ pnpm verify
 pnpm test:phase8
 pnpm package:desktop
 pnpm --filter @suite/desktop smoke:linux
-./deploy/verify-phase8-compose.sh
+# The window self-check (setup page, preload bridge, navigation guard, deep
+# links) needs a display. It runs on a private virtual one when xvfb-run is
+# installed and is reported as skipped otherwise.
+if command -v xvfb-run >/dev/null 2>&1; then
+  xvfb-run -a pnpm --filter @suite/desktop smoke:linux:shell
+else
+  echo "xvfb-run is not installed: the desktop window self-check was skipped" >&2
+fi
+pnpm --filter @suite/desktop artifact:info
+SUITE_DESKTOP_ARTIFACT="$(node apps/desktop/scripts/artifact-info.mjs --manifest-value)" ./deploy/verify-phase8-compose.sh
 echo "Phase 8 packaged Linux client, release channels, rollback primitives, observability, and production qualification verified"
