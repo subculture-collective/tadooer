@@ -1,6 +1,10 @@
 import { useState, type SyntheticEvent } from "react";
-import type { SessionResponse } from "@suite/contracts";
+import {
+  trustedDeviceSessionDays,
+  type SessionResponse,
+} from "@suite/contracts";
 import { login, resumeSession } from "../api.ts";
+import { desktopShellBridge } from "../desktop-shell.ts";
 import type { SessionFailure } from "../session-recovery.ts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -35,6 +39,7 @@ export const SessionRecovery = ({
                 typeof data.get("password") === "string"
                   ? (data.get("password") as string)
                   : "",
+              trustDevice: data.get("trustDevice") === "on",
             });
       onRecovered(session);
     } catch (error: unknown) {
@@ -76,6 +81,17 @@ export const SessionRecovery = ({
                 required
               />
             </Field>
+          )}
+          {failure === "expired" && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                name="trustDevice"
+                defaultChecked={desktopShellBridge() !== undefined}
+              />
+              Keep me signed in on this device for{" "}
+              {String(trustedDeviceSessionDays)} days
+            </label>
           )}
           <Button type="submit" disabled={busy}>
             {busy

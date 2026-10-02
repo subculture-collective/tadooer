@@ -11,7 +11,8 @@ import {
 } from "@suite/domain";
 import { SuiteDatabase } from "@suite/persistence";
 import type { ServerConfig } from "./config.ts";
-import { AuthService } from "./auth.ts";
+import { liveSyncPath } from "@suite/contracts";
+import { AuthService, sessionCookie } from "./auth.ts";
 import { sendError } from "./http-utils.ts";
 import { BaikalConnectorService } from "./connector.ts";
 import { GoogleConnectorService } from "./google-connector.ts";
@@ -108,7 +109,12 @@ export const startSuiteServer = async (
   options: SuiteServerOptions = {},
 ): Promise<RunningSuiteServer> => {
   const database = SuiteDatabase.open(config.databasePath);
-  const auth = new AuthService(database);
+  const auth = new AuthService(
+    database,
+    undefined,
+    undefined,
+    config.trustedProxyCidrs ?? [],
+  );
   const sessionClock = options.sessionClock ?? { now: () => new Date() };
   const schedulerClock = options.schedulerClock ?? systemSchedulerClock;
   // ADR 0043: every Google request (routes and worker) feeds one cooldown.
@@ -530,6 +536,18 @@ export const startSuiteServer = async (
             );
             return;
           }
+        }
+        // ADR 0048: a trusted device's token is replaced on use. The hint
+        // stream never rotates it, and `rotateDeviceToken` skips requests
+        // caused by a hint. A route that sets its own session cookie (sign
+        // in, sign out) overrides this header.
+        if (url.pathname.startsWith("/api/") && url.pathname !== liveSyncPath) {
+          const rotated = auth.rotateDeviceToken(request);
+          if (rotated !== undefined)
+            response.setHeader(
+              "Set-Cookie",
+              sessionCookie(rotated, config.secureCookies),
+            );
         }
         for (const handler of routes) {
           if (await handler(request, response, url, ctx)) return;

@@ -17,6 +17,7 @@ import {
   sameOrigin,
   securityHeaders,
 } from "../http-utils.ts";
+import { reauthenticationRequired } from "../reauthentication.ts";
 import type { RouteHandler } from "./shared.ts";
 
 export const handleCalendar: RouteHandler = async (
@@ -332,6 +333,7 @@ export const handleCalendar: RouteHandler = async (
         );
         return true;
       }
+      if (reauthenticationRequired(auth, session, response)) return true;
       const parsed = calendarFeedCreateRequestSchema.safeParse(
         await readJson(request),
       );

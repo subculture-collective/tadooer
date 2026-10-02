@@ -8,6 +8,7 @@ import {
 } from "@suite/contracts";
 import { DataRestoreError } from "@suite/persistence";
 import { readJson, sameOrigin, sendError, sendJson } from "../http-utils.ts";
+import { reauthenticationRequired } from "../reauthentication.ts";
 import type { RouteHandler } from "./shared.ts";
 
 /**
@@ -46,6 +47,7 @@ export const handleDataExport: RouteHandler = async (
   }
   const ownerId = session.owner.id;
   if (isExport) {
+    if (reauthenticationRequired(auth, session, response)) return true;
     const now = new Date().toISOString();
     const document = stores.dataExport.export(ownerId, now, {
       appVersion: config.build.version,
@@ -69,6 +71,12 @@ export const handleDataExport: RouteHandler = async (
     sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
     return true;
   }
+  // ADR 0048: the preview changes nothing and is not gated.
+  if (
+    url.pathname === applyPath &&
+    reauthenticationRequired(auth, session, response)
+  )
+    return true;
   let input: unknown;
   try {
     input = await readJson(request, limits.bytes);

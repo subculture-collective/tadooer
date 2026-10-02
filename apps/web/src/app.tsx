@@ -4,6 +4,7 @@ import { usePlannerLoader } from "./use-planner-loader.ts";
 import { googleProjectionFreshness } from "@suite/domain";
 import { archiveTask, createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
+import { PasswordConfirmation } from "./components/PasswordConfirmation.tsx";
 import {
   subscribeSessionFailure,
   type SessionFailure,
@@ -44,7 +45,7 @@ import type {
   TaskPatchRequest,
   TemplatePoolSlot,
 } from "@suite/contracts";
-import { ApiRequestError } from "@suite/contracts";
+import { ApiRequestError, trustedDeviceSessionDays } from "@suite/contracts";
 import {
   commandActiveSession,
   connectBaikal,
@@ -118,6 +119,7 @@ import { useLiveSync } from "./live-sync/use-live-sync.ts";
 import {
   captureFieldValue,
   desktopFocusReport,
+  desktopShellBridge,
   useDesktopShell,
 } from "./desktop-shell.ts";
 import {
@@ -279,20 +281,26 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     [state.kind],
   );
   const recovery =
-    state.kind === "authenticated" && sessionFailure !== null ? (
-      <SessionRecovery
-        failure={sessionFailure}
-        username={state.session.owner.username}
-        onRecovered={(session) => {
-          setState((current) =>
-            current.kind === "authenticated"
-              ? { ...current, session }
-              : current,
-          );
-          setSessionFailure(null);
-          setFormError(null);
-        }}
-      />
+    state.kind === "authenticated" ? (
+      <>
+        {/* ADR 0048: the recent-password prompt of a trusted device. */}
+        <PasswordConfirmation csrfToken={state.session.csrfToken} />
+        {sessionFailure !== null && (
+          <SessionRecovery
+            failure={sessionFailure}
+            username={state.session.owner.username}
+            onRecovered={(session) => {
+              setState((current) =>
+                current.kind === "authenticated"
+                  ? { ...current, session }
+                  : current,
+              );
+              setSessionFailure(null);
+              setFormError(null);
+            }}
+          />
+        )}
+      </>
     ) : null;
   const [formError, setFormError] = useState<string | null>(null);
   const [baikalProbe, setBaikalProbe] = useState<BaikalProbeResponse | null>(
@@ -748,6 +756,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       const session = await login({
         username: formValue(data, "username"),
         password: formValue(data, "password"),
+        // ADR 0048: an unticked box is an ordinary browser session.
+        trustDevice: data.get("trustDevice") === "on",
       });
       await loadAuthenticated(session);
     } catch (error: unknown) {
@@ -2574,6 +2584,19 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 type="password"
                 autoComplete="current-password"
               />
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  name="trustDevice"
+                  defaultChecked={desktopShellBridge() !== undefined}
+                />
+                Keep me signed in on this device for{" "}
+                {String(trustedDeviceSessionDays)} days
+              </label>
+              <p className="hint">
+                Only choose this on a device that you alone use. You can sign a
+                device out from Settings.
+              </p>
               {state.username !== undefined && (
                 <p className="message message-error">
                   Session expired. Please sign in again.
@@ -3073,6 +3096,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             projects={projects}
             csrfToken={state.session.csrfToken}
             onRestored={syncNow}
+            onSignOut={signOut}
           />
         )}
       </AppShell>

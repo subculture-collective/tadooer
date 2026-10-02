@@ -77,7 +77,11 @@ const routeRules: readonly RouteRule[] = [
   // Process and identity.
   none("(health|metrics|build|ready)", readOnly),
   none("setup(/status)?", identity),
-  none("auth/(login|session|logout)", identity),
+  none("auth/(login|session|logout|confirm-password)", identity),
+  none(
+    `auth/devices(/${uuid}|/sign-out-others)?`,
+    "trusted devices have no resource family; a revoked device's stream ends with bye (ADR 0048)",
+  ),
   none(
     `clients(/${uuid})?`,
     "device registry has no resource family; a revoked client's stream ends with bye",

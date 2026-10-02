@@ -14,6 +14,7 @@ import {
   sameOrigin,
   securityHeaders,
 } from "../http-utils.ts";
+import { reauthenticationRequired } from "../reauthentication.ts";
 import type { RouteHandler } from "./shared.ts";
 import { describeConnectorFailure } from "./shared.ts";
 
@@ -67,6 +68,7 @@ export const handleConnectors: RouteHandler = async (
       sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
+    if (reauthenticationRequired(auth, session, response)) return true;
     const parsed = baikalConnectRequestSchema.safeParse(
       await readJson(request),
     );
@@ -185,6 +187,7 @@ export const handleConnectors: RouteHandler = async (
       sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
+    if (reauthenticationRequired(auth, session, response)) return true;
     const input = googleAuthorizationRequestSchema.safeParse(
       request.headers["content-type"] === undefined
         ? {}
@@ -345,6 +348,7 @@ export const handleConnectors: RouteHandler = async (
       sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
+    if (reauthenticationRequired(auth, session, response)) return true;
     const status = google.withdrawWriteConsent(session.owner.id);
     if (status === undefined) {
       sendError(
@@ -384,6 +388,7 @@ export const handleConnectors: RouteHandler = async (
       sendError(response, 403, "CSRF_INVALID", "Valid CSRF token required");
       return true;
     }
+    if (reauthenticationRequired(auth, session, response)) return true;
     sendJson(response, 200, await google.disconnect(session.owner.id));
     return true;
   }

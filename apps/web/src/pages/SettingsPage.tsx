@@ -9,6 +9,7 @@ import type {
 import type { ApplicationPreferencesState } from "../application-preferences.tsx";
 import { ApplicationPreferencesSettings } from "../components/settings/ApplicationPreferencesSettings.tsx";
 import { DataExportRestore } from "../components/settings/DataExportRestore.tsx";
+import { SignedInDevices } from "../components/settings/SignedInDevices.tsx";
 import { GooglePlanning } from "../google-planning.tsx";
 import { NotificationSettings } from "../notification-settings.tsx";
 import { FocusSettings, type FocusSettingsProps } from "../focus-settings.tsx";
@@ -53,6 +54,8 @@ export interface SettingsPageProps {
   /** ADR 0034 data export and restore; absent while signed out. */
   readonly csrfToken?: string | undefined;
   readonly onRestored?: (() => Promise<void>) | undefined;
+  /** ADR 0048 trusted devices; absent while signed out. */
+  readonly onSignOut?: (() => Promise<void>) | undefined;
 }
 
 export const SettingsPage = ({
@@ -80,6 +83,7 @@ export const SettingsPage = ({
   projects = [],
   csrfToken,
   onRestored,
+  onSignOut,
 }: SettingsPageProps) => {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -142,6 +146,13 @@ export const SettingsPage = ({
           csrfToken={csrfToken}
           online={syncStatus === "online"}
           onRestored={onRestored}
+        />
+      )}
+      {csrfToken !== undefined && onSignOut !== undefined && (
+        <SignedInDevices
+          csrfToken={csrfToken}
+          online={syncStatus === "online"}
+          onSignOutThisDevice={onSignOut}
         />
       )}
       <Button

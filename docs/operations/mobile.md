@@ -12,15 +12,15 @@ the SDK is also the first time the Java sources are compiled.
 
 ## Versions
 
-| Part                          | Version                                             |
-| ----------------------------- | --------------------------------------------------- |
-| Capacitor (core, CLI, android) | 8.5.2                                               |
-| Minimum Android               | 7.0 (API 24)                                        |
-| Target and compile SDK        | API 36                                              |
-| Android Gradle plugin         | 8.13.0                                              |
-| Gradle (wrapper)              | 8.14.3                                              |
-| Java                          | 21                                                  |
-| Application id                | `tv.subcult.tadooer` (owner choice; see below)      |
+| Part                           | Version                                        |
+| ------------------------------ | ---------------------------------------------- |
+| Capacitor (core, CLI, android) | 8.5.2                                          |
+| Minimum Android                | 7.0 (API 24)                                   |
+| Target and compile SDK         | API 36                                         |
+| Android Gradle plugin          | 8.13.0                                         |
+| Gradle (wrapper)               | 8.14.3                                         |
+| Java                           | 21                                             |
+| Application id                 | `tv.subcult.tadooer` (owner choice; see below) |
 
 The SDK levels, the Gradle plugin and the wrapper are what the Capacitor
 8.5.2 template sets (`apps/mobile/android/variables.gradle`).
@@ -116,6 +116,15 @@ For a server with HTTPS from a private certificate authority, install the CA
 on the phone and build with
 `pnpm --filter @suite/mobile android:cleartext --trust-user-ca`. Android apps
 do not trust owner-installed authorities otherwise.
+
+## Sign-in
+
+The app uses the web app's session cookie in the WebView's cookie store; the
+shell never reads it. "Keep me signed in on this device for 30 days" is ticked
+by default inside the app, so it stays signed in across restarts while it is
+used at least every 30 days, up to 180 days (ADR 0048). Sign the phone out
+from another device under Settings, "Signed-in devices". This has not been
+tried on a phone yet; add it to the first-build checklist results.
 
 ## Signing
 

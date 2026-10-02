@@ -106,7 +106,7 @@ const linkWithCreate = (
 it("applies the bridge migration and scopes mappings to their owner", async () => {
   await withTemporaryDirectory((directory) => {
     const { database, store, calendars } = open(directory);
-    expect(database.state().appliedMigrationCount).toBe(43);
+    expect(database.state().appliedMigrationCount).toBe(44);
     expect(store.listMappings(owner)).toHaveLength(1);
     expect(store.listMappings(other)).toEqual([]);
     expect(store.getMapping(other, mappingId)).toBeUndefined();
@@ -351,7 +351,7 @@ it("restores mappings, links, tombstones and the outbox from a backup", async ()
     database.backup(backup);
     database.close();
     const restored = SuiteDatabase.open(backup);
-    expect(restored.state().appliedMigrationCount).toBe(43);
+    expect(restored.state().appliedMigrationCount).toBe(44);
     expect(restored.calendarBridge.getMapping(owner, mappingId)).toBeDefined();
     expect(restored.calendarBridge.getLink(linkId)).toMatchObject({
       googleEventId: "evt1",
