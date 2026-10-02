@@ -94,6 +94,7 @@ import {
   removeTaskTimeBlock,
   resumeSession,
   setupOwner,
+  noteBackgroundReads,
 } from "./api.ts";
 import {
   LocalStore,
@@ -103,7 +104,17 @@ import {
 } from "./local-store.ts";
 import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
 import type { OrganizationQueue } from "./components/organization/OrganizationPanel.tsx";
-import { SyncEngine, installOnlineSync } from "./sync-engine.ts";
+import {
+  SyncEngine,
+  installOnlineSync,
+  type SyncRoundTrigger,
+} from "./sync-engine.ts";
+import { LiveSyncController } from "./live-sync/controller.ts";
+import { useLiveSync } from "./live-sync/use-live-sync.ts";
+import {
+  useAppLiveViews,
+  type LiveAppPatch,
+} from "./live-sync/use-app-live-views.ts";
 import { Field } from "./field.tsx";
 import type { FocusPanelCommand } from "./focus-panel.tsx";
 import { useFocusController } from "./focus-controller.ts";
@@ -282,6 +293,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     googleCallbackMessage,
   );
   const [localStore] = useState(() => new LocalStore());
+  const [liveSync] = useState(() => new LiveSyncController());
   const [projects, setProjects] = useState<readonly Project[]>([]);
   const [tags, setTags] = useState<readonly Tag[]>([]);
   const [subtasks, setSubtasks] = useState<
@@ -432,16 +444,10 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     );
   }, [localStore]);
 
-  const synchronize = useCallback(
-    async (session: SessionResponse) => {
-      const transport = createSyncTransport(session.csrfToken);
-      const engine = new SyncEngine(localStore, transport);
-      const client = await engine.ensureClient();
-      if ((await localStore.loadCachedEntities()).length === 0) {
-        await localStore.replaceFromSnapshot(await transport.snapshot(client));
-      }
-      let round = await engine.sync();
-      while (round.hasMore) round = await engine.sync();
+  // What a tab shows after sync rounds were applied, by itself or (ADR 0045)
+  // by another tab of this browser profile.
+  const readLocalState = useCallback(
+    async (client: LocalClientIdentity) => {
       await refreshCachedOrganization();
       setHabitLibrary(await localStore.loadCachedHabits());
       setHabitPending(
@@ -458,6 +464,34 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       };
     },
     [cachedTaskState, localStore, refreshCachedOrganization],
+  );
+
+  const runSync = useCallback(
+    async (session: SessionResponse, trigger?: SyncRoundTrigger) => {
+      const transport = createSyncTransport(session.csrfToken);
+      const engine = new SyncEngine(localStore, transport);
+      const client = await engine.ensureClient();
+      if ((await localStore.loadCachedEntities()).length === 0) {
+        await localStore.replaceFromSnapshot(await transport.snapshot(client));
+      }
+      let round = await engine.sync(undefined, trigger);
+      while (round.hasMore) round = await engine.sync(undefined, trigger);
+      // The reads that follow a hint-triggered round are not owner activity.
+      if (trigger === "push") noteBackgroundReads();
+      return readLocalState(client);
+    },
+    [localStore, readLocalState],
+  );
+
+  // Rounds the owner or the app's own lifecycle started. Other tabs reload
+  // from IndexedDB afterwards.
+  const synchronize = useCallback(
+    async (session: SessionResponse) => {
+      const local = await runSync(session);
+      liveSync.announceRound();
+      return local;
+    },
+    [liveSync, runSync],
   );
 
   const loadAuthenticated = useCallback(
@@ -2243,6 +2277,56 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     URL.revokeObjectURL(url);
   };
 
+  // ADR 0045 live sync. The stream, tab leader election and fallback
+  // triggers live in ./live-sync; the shell supplies its sync and reload.
+  const liveSession =
+    state.kind === "authenticated" && sessionFailure === null
+      ? state.session
+      : null;
+  const liveStatus = useLiveSync(liveSync, liveSession?.csrfToken ?? null, {
+    identity: () => localStore.clientIdentity(),
+    sync: async (trigger) => {
+      if (liveSession === null) return;
+      const local = await runSync(liveSession, trigger);
+      setState((current) =>
+        current.kind === "authenticated"
+          ? {
+              ...current,
+              ...local,
+              syncStatus:
+                current.syncStatus === "syncing" ? "syncing" : "online",
+            }
+          : current,
+      );
+    },
+    reloadLocal: async () => {
+      const client = await localStore.clientIdentity();
+      if (client === undefined) return;
+      const local = await readLocalState(client);
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, ...local } : current,
+      );
+    },
+  });
+  const patchAuthenticated = useCallback((patch: LiveAppPatch) => {
+    setState((current) =>
+      current.kind === "authenticated" ? { ...current, ...patch } : current,
+    );
+  }, []);
+  useAppLiveViews({
+    enabled: liveSession !== null && networkOnline,
+    calendarConnected:
+      state.kind === "authenticated" &&
+      (state.baikal.connected || state.google?.connected === true),
+    plannerPageOpen: route === "planner",
+    plannerWindow,
+    patch: patchAuthenticated,
+    cachePlanningPreferences: (preferences) =>
+      localStore.savePlanningPreferences(preferences),
+    refreshTemplates: () => refreshTemplateLibrary(),
+    refreshChoicePools: () => refreshChoicePools(),
+  });
+
   /* ── Render ─────────────────────────────────────────────────── */
   const offlineState = state.kind === "offline" ? state : undefined;
   const shouldRenderOffline = (): boolean => offlineState !== undefined;
@@ -2632,6 +2716,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         route={route}
         onNavigate={navigate}
         syncStatus={state.syncStatus}
+        liveStatus={liveStatus}
         conflictCount={state.conflictCount}
         baikalConnected={state.baikal.connected}
         formError={formError}
@@ -2869,6 +2954,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             notificationPreferences={state.notificationPreferences}
             notificationStatus={state.notificationStatus}
             syncStatus={state.syncStatus}
+            liveStatus={liveStatus}
             clientId={state.client?.clientId ?? null}
             plannerFreshness={state.planner?.freshness.state}
             busy={busy}

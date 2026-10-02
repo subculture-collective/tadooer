@@ -107,6 +107,94 @@ Two Suite processes on the same database (for example during a restart
 overlap) exclude each other through leases in SQLite. A crashed process's lease
 expires after 10 minutes.
 
+## Sync feed retention
+
+Every change to a synced record adds one row to the owner's sync feed, and
+each device reads the feed from its own cursor. Since ADR 0045 the Suite
+process prunes the feed: at most once per hour, the 60-second server tick
+deletes changes older than the retention window.
+
+| Variable                    | Default | Effect                                                                                               |
+| --------------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `SUITE_SYNC_RETENTION_DAYS` | `30`    | Days of feed changes to keep. Minimum 7, maximum 3650. `0` switches pruning off and keeps every row. |
+
+The production Compose file passes the variable through from the Compose
+environment file (`deploy/production/env.example` shows the entry); recreate
+the container after changing it. A value from 1 to 6, or anything that is not a whole number, stops the
+server at start with a configuration error.
+
+What pruning removes and what it never removes:
+
+- Only rows of `sync_changes`. Tasks, projects and other records are not
+  touched, and neither are the stored outcomes of client operations, so a
+  device that resends an old queued change still gets its original result.
+- The newest 1000 changes always stay, whatever the window.
+- Pruning removes a contiguous run from the start of the feed and stops at
+  the first change inside the window.
+
+A device whose cursor is older than the pruned range gets
+`SYNC_CURSOR_EXPIRED` on its next sync round. It then replaces its offline
+cache from a snapshot and sends its queued changes in the following round;
+no user action is needed. In practice this affects a device that has not
+synced for longer than the window. The same recovery already happens after an
+owner data restore, which starts a new sync epoch and resets the pruned range.
+
+When rows were deleted the server logs `sync.feed.pruned` with the number of
+rows and nothing else; a failed attempt logs `sync.feed.prune_failed` and is
+retried an hour later. `/api/metrics` exports two gauges without identifiers:
+`suite_sync_feed_pruned_changes` (changes pruned in the current sync epoch)
+and `suite_sync_feed_oldest_change_age_seconds` (age of the oldest retained
+change; 0 for an empty feed). With the default window the age settles near 30
+days on an instance with more than 1000 retained changes. Pruned rows free
+pages inside the SQLite file for reuse; the file itself does not shrink.
+
+## Live sync hint stream
+
+Each signed-in client with the app open holds one long-lived request,
+`GET /api/sync/events` (ADR 0045). The response is `text/event-stream` and
+carries hints only: that the sync feed advanced, or which kinds of online
+records changed. It never carries titles, record content or record IDs. A
+client that receives no hints still synchronizes on load, on focus and on its
+fallback interval, so a proxy that breaks the stream costs latency, not data.
+
+What the stream needs from the proxy chain:
+
+- **No response buffering.** The server sets `Cache-Control: no-store` and
+  `X-Accel-Buffering: no`. Caddy's `reverse_proxy` flushes
+  `text/event-stream` responses as they arrive, and the Cloudflare tunnel
+  passes them through. If hints arrive in bursts after a proxy change, check
+  for a buffering or response-rewriting step first, including `encode`.
+- **Idle time above 25 seconds.** The server writes a `: hb` comment line
+  every 25 seconds. A proxy idle or read timeout below that closes the stream
+  between heartbeats; clients then reconnect with backoff and fall back to
+  interval sync.
+- **The request headers of a sync round.** The session cookie,
+  `x-suite-client-id`, `x-suite-client-credential` and
+  `x-suite-sync-version` must reach Suite unchanged.
+- **One connection per stream.** Over HTTP/2 the stream shares the browser's
+  connection. The Suite side of the proxy uses one upstream connection per
+  open stream, and the server closes it when the stream ends
+  (`Connection: close`).
+
+Limits: one stream per registered client (a second replaces the first), at
+most eight streams per owner (a ninth request gets `429
+LIVE_SYNC_STREAM_LIMIT`), and a stream whose socket accepts no data for 30
+seconds is dropped. The stream does not refresh the session idle timer and
+ends when the session expires, the owner signs out or the client is revoked.
+On shutdown every stream receives `bye: shutdown` before the listener stops,
+so a restart does not wait for open streams.
+
+`/api/metrics` exports, without identifiers:
+
+| Metric                                         | Meaning                                                                                                                                 |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `suite_live_sync_streams_open`                 | Streams open in this process.                                                                                                           |
+| `suite_live_sync_hints_total{event}`           | Events written, by name: `hello`, `changes`, `resources`, `bye`.                                                                        |
+| `suite_live_sync_streams_dropped_total`        | Streams dropped because the socket could not be written for 30 seconds. A steady rise points at a proxy or client that stopped reading. |
+| `suite_live_sync_unclassified_mutations_total` | Successful mutations whose route has no resource family. Each one sent the `all` hint. Expected to stay 0; a nonzero value is a defect. |
+
+`/api/ready` does not depend on the stream.
+
 ## Owner data export versus operator backups
 
 Two copies exist, with different jobs (ADR 0034):

@@ -29,6 +29,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { useLiveRefetch } from "../live-sync/views.ts";
 
 // Stable defaults: both are effect dependencies in the container.
 const defaultNow = (): Date => new Date();
@@ -461,6 +462,7 @@ export const CalendarSubscriptions = ({
     };
   }, [api, now, reloads]);
   const reload = () => setReloads((count) => count + 1);
+  useLiveRefetch("calendarSubscriptions", reload);
   const run = async (work: () => Promise<string | null>, failure: string) => {
     setBusy(true);
     setError(null);

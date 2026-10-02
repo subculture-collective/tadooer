@@ -15,6 +15,7 @@ import { Button } from "../ui/button.tsx";
 import { Input } from "../ui/input.tsx";
 import { NativeSelect } from "../ui/native-select.tsx";
 import { Textarea } from "../ui/textarea.tsx";
+import { useLiveRefetch } from "../../live-sync/views.ts";
 
 const unavailableText: Readonly<
   Record<NonNullable<TaskAttachment["unavailableReason"]>, string>
@@ -226,6 +227,13 @@ export const TaskLinksPanel = ({
       setBusy(false);
     }
   };
+
+  // ADR 0045: once opened, the links follow changes from other devices.
+  useLiveRefetch(
+    "taskLinks",
+    () => run(() => getTaskLinks(taskId)),
+    online && links !== null,
+  );
 
   return (
     <details

@@ -20,9 +20,16 @@ import type {
 import {
   clientRegistrationRequestSchema,
   clientAuthenticationHeadersSchema,
+  liveSyncPath,
   syncRoundRequestSchema,
 } from "@suite/contracts";
-import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
+import {
+  sendJson,
+  sendError,
+  readJson,
+  sameOrigin,
+  securityHeaders,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 import {
   cursorFor,
@@ -166,9 +173,15 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
 
   if (
     (method === "POST" && url.pathname === "/api/sync/round") ||
-    (method === "GET" && url.pathname === "/api/sync/snapshot")
+    (method === "GET" && url.pathname === "/api/sync/snapshot") ||
+    (method === "GET" && url.pathname === liveSyncPath)
   ) {
-    const session = auth.authenticate(request, method === "POST");
+    // ADR 0045: the hint stream and a round started by a hint do not count
+    // as owner activity, so neither refreshes the session idle timer.
+    const session = auth.authenticate(
+      request,
+      method === "POST" && request.headers["x-suite-sync-trigger"] !== "push",
+    );
     if (session === undefined) {
       sendError(response, 401, "AUTH_REQUIRED", "Authentication required");
       return true;
@@ -223,16 +236,82 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
       );
       return true;
     }
+    if (method === "GET" && url.pathname === liveSyncPath) {
+      const { hub } = ctx.liveSync;
+      if (!hub.accepts(session.owner.id, client.id)) {
+        if (hub.closed)
+          sendError(
+            response,
+            503,
+            "LIVE_SYNC_UNAVAILABLE",
+            "The server is shutting down",
+          );
+        else
+          sendError(
+            response,
+            429,
+            "LIVE_SYNC_STREAM_LIMIT",
+            "Too many live sync streams are open for this owner",
+          );
+        return true;
+      }
+      response.writeHead(200, {
+        ...securityHeaders,
+        "Cache-Control": "no-store",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-Accel-Buffering": "no",
+        // The connection carries one stream; closing it with the stream
+        // keeps shutdown from waiting on an idle keep-alive socket.
+        Connection: "close",
+      });
+      request.socket.setNoDelay(true);
+      const handle = hub.open({
+        ownerId: session.owner.id,
+        clientId: client.id,
+        head: database.getSyncState(session.owner.id),
+        sink: {
+          write: (chunk) => response.write(chunk),
+          end: (chunk) => {
+            response.end(chunk);
+          },
+          destroy: () => {
+            response.destroy();
+          },
+        },
+        check: () =>
+          !auth.sessionActive(session)
+            ? "session-ended"
+            : database
+                  .listSyncClients(session.owner.id)
+                  .some(
+                    ({ id, revokedAt }) =>
+                      id === client.id && revokedAt === null,
+                  )
+              ? undefined
+              : "client-revoked",
+      });
+      if (handle === undefined) {
+        response.destroy();
+        return true;
+      }
+      response.on("drain", handle.drained);
+      response.on("close", handle.closed);
+      return true;
+    }
     if (method === "GET") {
       const snapshot = database.fullSyncSnapshot(session.owner.id);
+      // Each entry is built only for the requested page: the per-entity
+      // reads (field versions, blueprints, pool items) are the larger cost
+      // and a client pages through the list 200 at a time.
       const allSnapshots = [
         ...database.habits
           .list(session.owner.id)
-          .map((value) => ({ entityKind: "habit" as const, value })),
-        ...database.habits
-          .occurrences(session.owner.id)
-          .map((value) => ({ entityKind: "habit_occurrence" as const, value })),
-        ...snapshot.tasks.map((task) => ({
+          .map((value) => () => ({ entityKind: "habit" as const, value })),
+        ...database.habits.occurrences(session.owner.id).map((value) => () => ({
+          entityKind: "habit_occurrence" as const,
+          value,
+        })),
+        ...snapshot.tasks.map((task) => () => ({
           entityKind: "task" as const,
           value: {
             task: taskResponse(task),
@@ -256,19 +335,19 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             changeSequence: task.revision,
           },
         })),
-        ...snapshot.projects.map((project) => ({
+        ...snapshot.projects.map((project) => () => ({
           entityKind: "project" as const,
           value: projectResponse(project),
         })),
-        ...snapshot.tags.map((tag) => ({
+        ...snapshot.tags.map((tag) => () => ({
           entityKind: "tag" as const,
           value: tagResponse(tag),
         })),
-        ...snapshot.subtasks.map((subtask) => ({
+        ...snapshot.subtasks.map((subtask) => () => ({
           entityKind: "subtask" as const,
           value: subtaskResponse(subtask),
         })),
-        ...snapshot.templates.map((template) => ({
+        ...snapshot.templates.map((template) => () => ({
           entityKind: "template" as const,
           value: {
             template: templateResponse(template),
@@ -278,28 +357,30 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             poolSlots: [...database.listTemplatePoolSlots(template.id)],
           },
         })),
-        ...snapshot.templateSets.map((set) => ({
+        ...snapshot.templateSets.map((set) => () => ({
           entityKind: "template_set" as const,
           value: {
             set: templateSetResponse(set),
             members: [...database.listTemplateSetMembers(set.id)],
           },
         })),
-        ...database.listChoicePools(session.owner.id, true).map((pool) => ({
-          entityKind: "choice_pool" as const,
-          value: {
-            pool: choicePoolResponse(pool),
-            items: database
-              .listChoicePoolItems(pool.id, true)
-              .map(choicePoolItemResponse),
-            history: database
-              .listChoicePoolHistory(pool.id)
-              .map(choicePoolHistoryResponse),
-          },
-        })),
+        ...database
+          .listChoicePools(session.owner.id, true)
+          .map((pool) => () => ({
+            entityKind: "choice_pool" as const,
+            value: {
+              pool: choicePoolResponse(pool),
+              items: database
+                .listChoicePoolItems(pool.id, true)
+                .map(choicePoolItemResponse),
+              history: database
+                .listChoicePoolHistory(pool.id)
+                .map(choicePoolHistoryResponse),
+            },
+          })),
         ...database
           .listPlanningPlaceholders(session.owner.id)
-          .map((placeholder) => ({
+          .map((placeholder) => () => ({
             entityKind: "planning_placeholder" as const,
             value: {
               placeholder: planningPlaceholderResponse(placeholder),
@@ -324,7 +405,9 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         );
         return true;
       }
-      const snapshots = allSnapshots.slice(offset, offset + 200);
+      const snapshots = allSnapshots
+        .slice(offset, offset + 200)
+        .map((build) => build());
       const body: SyncSnapshotResponse = {
         snapshots,
         nextCursor: cursorFor(snapshot.cursor),

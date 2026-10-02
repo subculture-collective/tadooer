@@ -25,6 +25,7 @@ import { localCountdown } from "./focus-timer.ts";
 import { useIdleDetection } from "./idle-detector.ts";
 import type { IdleReturnDialogProps } from "./idle-return-dialog.tsx";
 import type { LocalClientIdentity } from "./local-store.ts";
+import { useLiveRefetch, useLiveRevision } from "./live-sync/views.ts";
 
 /**
  * Browser orchestration for focus presets, idle handling and break reminders
@@ -132,6 +133,7 @@ export const useFocusController = ({
     }
   }, [api, client, ready]);
 
+  const livePreferences = useLiveRevision("focusPreferences", authenticated);
   useEffect(() => {
     if (!authenticated) {
       setPreferences(undefined);
@@ -148,13 +150,14 @@ export const useFocusController = ({
     return () => {
       cancelled = true;
     };
-  }, [api, authenticated]);
+  }, [api, authenticated, livePreferences]);
 
   const sessionKey = activeSession?.id ?? "none";
   const sessionRevision = activeSession?.revision ?? 0;
   useEffect(() => {
     void refresh();
   }, [refresh, sessionKey, sessionRevision]);
+  useLiveRefetch("focusTimer", refresh, ready);
 
   const running = activeSession?.state === "running";
   useEffect(() => {

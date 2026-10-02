@@ -39,6 +39,7 @@ import { Card, CardContent, CardHeader } from "../ui/card.tsx";
 import { Input } from "../ui/input.tsx";
 import { NativeSelect } from "../ui/native-select.tsx";
 import { SectionHeading } from "../ui/section-heading.tsx";
+import { useLiveRefetch, useLiveRevision } from "../../live-sync/views.ts";
 
 /**
  * Saved task views, sections and sidebar folders on the Tasks page (issue
@@ -123,6 +124,7 @@ export const useSavedTaskView = (
     if (!online || csrfToken === undefined) return;
     void load();
   }, [online, csrfToken, load]);
+  useLiveRefetch("taskViews", load, online && csrfToken !== undefined);
   const view =
     views.find(
       (candidate) =>
@@ -131,6 +133,7 @@ export const useSavedTaskView = (
     ) ?? defaultView(context);
   const usesTimeSpent =
     view.sortBy === "timeSpent" || view.filter?.kind === "timeSpent";
+  const liveTimeSpent = useLiveRevision("timeSpent", usesTimeSpent && online);
   useEffect(() => {
     if (!usesTimeSpent || !online) return;
     const to = new Date().toISOString().slice(0, 10);
@@ -149,7 +152,7 @@ export const useSavedTaskView = (
         ),
       )
       .catch(() => setTimeSpent({}));
-  }, [usesTimeSpent, online]);
+  }, [usesTimeSpent, online, liveTimeSpent]);
   const save = async (patch: Partial<Omit<TaskView, "revision">>) => {
     if (csrfToken === undefined) return;
     setMessage(null);
@@ -442,6 +445,7 @@ export const SectionsPanel = ({
     if (!online) return;
     void load();
   }, [online, load, tasks]);
+  useLiveRefetch("sections", load, online);
   const run = async (
     action: () => Promise<readonly Section[]>,
     fallback: string,
@@ -781,6 +785,7 @@ export const useMenuFolders = (
     if (!online || csrfToken === undefined) return;
     void load();
   }, [online, csrfToken, load]);
+  useLiveRefetch("menuFolders", load, online && csrfToken !== undefined);
   return { folders, setFolders, reload: load };
 };
 

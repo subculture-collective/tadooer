@@ -20,6 +20,7 @@ import { Checkbox } from "../ui/checkbox.tsx";
 import { Input } from "../ui/input.tsx";
 import { NativeSelect } from "../ui/native-select.tsx";
 import { Textarea } from "../ui/textarea.tsx";
+import { useLiveRefetch } from "../../live-sync/views.ts";
 
 // Recurring series in the browser (issue #42, ADR 0023). Series writes are
 // online-only; instances arrive through sync as ordinary tasks.
@@ -548,6 +549,14 @@ export const RecurringSeriesManager = ({
       setBusy(false);
     }
   };
+  // ADR 0045: once opened, the list follows changes from other devices.
+  useLiveRefetch(
+    "recurringSeries",
+    async () => {
+      setSeries((await getRecurringSeries()).series);
+    },
+    online && series !== null,
+  );
   return (
     <details
       className="recurring-series-manager"

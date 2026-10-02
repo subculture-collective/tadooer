@@ -5,6 +5,7 @@ import type {
 } from "@suite/contracts";
 import { sendJson, securityHeaders } from "../http-utils.ts";
 import { calendarBridgeMetricLines } from "../calendar-bridge/worker.ts";
+import { syncFeedMetricLines } from "../sync-retention.ts";
 import type { RouteHandler } from "./shared.ts";
 
 const startedAt = Date.now();
@@ -39,6 +40,10 @@ export const handleHealth: RouteHandler = async (
       "# HELP suite_database_migrations Applied SQLite migrations.",
       "# TYPE suite_database_migrations gauge",
       `suite_database_migrations ${String(state.appliedMigrationCount)}`,
+      "# HELP suite_database_migrations_expected SQLite migrations this build expects.",
+      "# TYPE suite_database_migrations_expected gauge",
+      `suite_database_migrations_expected ${String(state.expectedMigrationCount)}`,
+      ...syncFeedMetricLines(database, Date.now()),
       "# HELP suite_http_requests_total Completed HTTP responses by status.",
       "# TYPE suite_http_requests_total counter",
       ...[...requestCounts.entries()]
@@ -53,6 +58,7 @@ export const handleHealth: RouteHandler = async (
         worker: ctx.calendarBridgeWorker,
         throttle: ctx.googleThrottle,
       }),
+      ...ctx.liveSync.metricLines(),
       "",
     ];
     response.writeHead(200, {

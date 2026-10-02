@@ -17,6 +17,7 @@ import {
   updateApplicationPreferences,
 } from "./api.ts";
 import { applyTheme, readStoredTheme, watchSystemTheme } from "./theme.ts";
+import { useLiveRefetch } from "./live-sync/views.ts";
 
 /**
  * Application preferences in the browser (ADR 0030). The record is loaded
@@ -86,6 +87,7 @@ export const useApplicationPreferencesController = (
   useEffect(() => {
     void reload();
   }, [reload]);
+  useLiveRefetch("applicationPreferences", reload, csrfToken !== undefined);
 
   const save = useCallback(
     async (preferences: ApplicationPreferences): Promise<boolean> => {

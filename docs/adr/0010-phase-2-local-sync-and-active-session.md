@@ -49,6 +49,11 @@ cache, then reevaluates its immutable outbox. Phase 2 retains its entire local
 change stream, so retention expiry is a tested contract but not an automated
 pruning policy yet.
 
+> Note, 2026-10-02: automated pruning now exists. [ADR 0045](0045-live-sync-hints.md)
+> ("Feed maintenance") prunes changes older than a retention window (30 days
+> by default, `SUITE_SYNC_RETENTION_DAYS`) and records a retained floor per
+> owner. A cursor below the floor gets the reset requirement described above.
+
 Queueable Phase 2 operations are deliberately narrow:
 
 - create a Suite task with a client-generated UUID;
