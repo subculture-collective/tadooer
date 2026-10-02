@@ -265,9 +265,14 @@ import {
   type CalendarBridgeSide,
 } from "@suite/contracts";
 import { z } from "zod";
+import { liveSyncPath } from "@suite/contracts";
 import { reportSessionFailure } from "./session-recovery.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
-import { SyncCursorResetRequired, type SyncTransport } from "./sync-engine.ts";
+import {
+  SyncCursorResetRequired,
+  type SyncRoundTrigger,
+  type SyncTransport,
+} from "./sync-engine.ts";
 
 const request = async <T>(
   path: string,
@@ -635,6 +640,12 @@ export const syncRound = async (
   client: LocalClientIdentity,
   csrfToken: string,
   input: SyncRoundRequest,
+  /**
+   * `push` marks a round the app started without the owner acting (a live
+   * sync hint or the fallback interval), so the server does not refresh the
+   * session idle timer for it (ADR 0045).
+   */
+  trigger?: SyncRoundTrigger,
 ): Promise<SyncRoundResponse> => {
   try {
     return await request("/api/sync/round", syncRoundResponseSchema, {
@@ -643,6 +654,7 @@ export const syncRound = async (
         ...clientProofHeaders(client),
         "X-CSRF-Token": csrfToken,
         "X-Suite-Sync-Version": "2",
+        ...(trigger === undefined ? {} : { "X-Suite-Sync-Trigger": trigger }),
       },
       body: JSON.stringify(input),
     });
@@ -706,8 +718,31 @@ export const getSyncSnapshot = async (
 export const createSyncTransport = (csrfToken: string): SyncTransport => ({
   registerClient: () => registerSyncClient(csrfToken),
   snapshot: getSyncSnapshot,
-  syncRound: (client, input) => syncRound(client, csrfToken, input),
+  syncRound: (client, input, trigger) =>
+    syncRound(client, csrfToken, input, trigger),
 });
+
+/**
+ * Opens the live sync hint stream (ADR 0045). The request carries the same
+ * proof as a sync round: the session cookie and the registered client
+ * headers. The caller reads the `text/event-stream` body and owns the retry
+ * policy, so a failed response is returned rather than thrown and does not
+ * raise the session recovery prompt.
+ */
+export const openLiveSyncStream = (
+  client: LocalClientIdentity,
+  signal: AbortSignal,
+): Promise<Response> =>
+  fetch(liveSyncPath, {
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: {
+      ...clientProofHeaders(client),
+      "X-Suite-Sync-Version": "2",
+      Accept: "text/event-stream",
+    },
+    signal,
+  });
 
 const activeSessionResponseSchema = z.object({
   session: activeSessionSchema.nullable(),

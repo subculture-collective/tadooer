@@ -245,12 +245,13 @@
         "registerSyncClient",
         "syncRound",
         "getSyncSnapshot",
-        "createSyncTransport"
+        "createSyncTransport",
+        "openLiveSyncStream"
       ],
       "catalog": [],
       "status": "internal",
       "issue": 19,
-      "authority": "Browser client proof and immutable outbox remain internal; assistants use domain operations instead of pretending to be browser clients. The outbox queues task fields, planning, assignment, project/tag and checklist writes (ADR 0033).",
+      "authority": "Browser client proof and immutable outbox remain internal; assistants use domain operations instead of pretending to be browser clients. The outbox queues task fields, planning, assignment, project/tag and checklist writes (ADR 0033). The live sync hint stream uses the same client proof and carries no record content (ADR 0045).",
       "source": "apps/web/src/api.ts"
     },
     {

@@ -16,6 +16,11 @@ import { Button } from "../components/ui/button.tsx";
 import { Card, CardContent, CardHeader } from "../components/ui/card.tsx";
 import { PageHeader } from "../components/ui/page-header.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
+import {
+  liveSyncStatusDescription,
+  liveSyncStatusLabel,
+  type LiveSyncStatus,
+} from "../live-sync/status.ts";
 
 export interface SettingsPageProps {
   readonly google: GoogleConnectorStatusResponse | undefined;
@@ -24,6 +29,8 @@ export interface SettingsPageProps {
   readonly notificationPreferences: NotificationPreferences | undefined;
   readonly notificationStatus: NotificationStatusResponse | undefined;
   readonly syncStatus: "online" | "offline" | "syncing" | undefined;
+  /** ADR 0045 live sync state of this device. */
+  readonly liveStatus?: LiveSyncStatus | undefined;
   readonly clientId: string | null;
   readonly plannerFreshness: string | undefined;
   readonly busy: boolean;
@@ -55,6 +62,7 @@ export const SettingsPage = ({
   notificationPreferences,
   notificationStatus,
   syncStatus,
+  liveStatus,
   clientId,
   plannerFreshness,
   busy,
@@ -158,6 +166,15 @@ export const SettingsPage = ({
               <dt>Task sync</dt>
               <dd>{syncStatus ?? "offline"}</dd>
             </div>
+            {liveStatus !== undefined && (
+              <div>
+                <dt>Live updates</dt>
+                <dd>
+                  {liveSyncStatusLabel(liveStatus)}.{" "}
+                  {liveSyncStatusDescription(liveStatus)}
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Client</dt>
               <dd>{clientId ?? "Not registered"}</dd>

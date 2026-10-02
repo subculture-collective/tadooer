@@ -84,6 +84,34 @@ browser `online` event. Project, tag, subtask, calendar, connector, and focus
 commands remain online-only. A focus session has one controller; another client
 observes it read-only and must explicitly take over before controlling it.
 
+### Live sync
+
+While the web app is open and signed in, it keeps one connection to
+`GET /api/sync/events` (ADR 0045). The server sends hints on it: the sync feed
+moved, or records outside the feed changed (notes, boards, time entries,
+preferences and the like). A hint carries no content. The app answers a feed
+hint with an ordinary sync round and a records hint by reloading the views
+that are open, so a change made on one device shows on another within a
+second or two.
+
+- One tab per browser profile holds the connection. Other tabs of that
+  profile follow it and reload from the local cache. Closing the leading tab
+  hands the connection to another.
+- The sidebar and Settings show **Live updates** as `live`, `reconnecting`,
+  `offline` or `paused`. `paused` means no connection until the next sign-in,
+  or a browser without Web Locks, `BroadcastChannel` or streaming `fetch`.
+- Sync does not depend on the connection. The app also syncs on load, on
+  **Sync now**, after its own writes, on the browser `online` event, when the
+  page becomes visible or focused, and on an interval while the page is
+  visible: every minute while the connection is down, every five minutes
+  while it is live.
+- Rounds started by a hint or by the interval are marked
+  (`x-suite-sync-trigger: push`) so the server does not count them as owner
+  activity for the session idle timer.
+- A closed app receives nothing. Changes made elsewhere arrive the next time
+  the app is opened. Records outside the feed are refreshed only while their
+  view is open and are not available offline.
+
 For the public HTTPS deployment, set `SUITE_SECURE_COOKIES=true` so the opaque
 session cookie is sent only over TLS. Preserve the original public `Host` header
 at the reverse proxy; unsafe API requests compare it with the browser's Origin

@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { useLiveRevision } from "./live-sync/views.ts";
 
 const maximumCalendarFileBytes = 4 * 1024 * 1024;
 
@@ -57,9 +58,10 @@ export const CalendarMigration = ({
   const [importActivity, setImportActivity] = useState<
     "reading" | "previewing" | "applying" | null
   >(null);
+  const liveFeeds = useLiveRevision("calendarFeeds");
   useEffect(() => {
     void listCalendarFeeds().then(({ capabilities }) => setFeeds(capabilities));
-  }, []);
+  }, [liveFeeds]);
   const previewImport = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);

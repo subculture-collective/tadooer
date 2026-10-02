@@ -3,6 +3,7 @@ import { ApiRequestError, type DayOrder, type Task } from "@suite/contracts";
 import { applyDayOrder, dayOrderMembers, moveInDayOrder } from "@suite/domain";
 import { getDayOrders, planTasksForDay, reorderDayOrder } from "./api.ts";
 import { Button } from "./components/ui/button.tsx";
+import { useLiveRefetch } from "./live-sync/views.ts";
 
 /**
  * Saved Today and planner-day order in the browser (ADR 0027). Day orders
@@ -100,6 +101,7 @@ export const useDayOrders = (input: {
   useEffect(() => {
     void refresh();
   }, [refresh, membersKey]);
+  useLiveRefetch("dayOrders", refresh, enabled);
 
   const move = async (date: string, taskId: string, direction: -1 | 1) => {
     if (!enabled) return;

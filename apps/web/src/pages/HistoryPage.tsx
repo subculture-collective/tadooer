@@ -20,6 +20,7 @@ import {
   type HistoryApi,
   type HistoryState,
 } from "./history-controller.ts";
+import { useLiveRefetch } from "../live-sync/views.ts";
 
 const defaultApi: HistoryApi = { getTaskHistory, unarchiveTask };
 
@@ -252,6 +253,13 @@ export const HistoryPage = ({
     void run(() => searchHistory(api, ""));
     // Load once per connection; later searches are explicit.
   }, [online]);
+  // ADR 0045: repeat the search that is showing when another device
+  // archives or restores a task.
+  useLiveRefetch(
+    "history",
+    () => run(() => searchHistory(api, state.query)),
+    online && initialState === undefined,
+  );
   const search = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
     void run(() => searchHistory(api, draft.trim()));

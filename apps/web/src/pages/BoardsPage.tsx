@@ -28,6 +28,7 @@ import { Input } from "../components/ui/input.tsx";
 import { NativeSelect } from "../components/ui/native-select.tsx";
 import { PageHeader } from "../components/ui/page-header.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
+import { useLiveRefetch } from "../live-sync/views.ts";
 
 /**
  * Boards with filtered panels (issue #63, ADR 0028). Online-only: the page
@@ -431,6 +432,14 @@ export const BoardsPage = ({
     }
     void loadView(selectedId);
   }, [selectedId, online, loadView, tasks]);
+  useLiveRefetch(
+    "boards",
+    async () => {
+      await loadBoards();
+      if (selectedId !== null) await loadView(selectedId);
+    },
+    online,
+  );
 
   const run = async (action: () => Promise<void>, fallback: string) => {
     setBusy(true);
