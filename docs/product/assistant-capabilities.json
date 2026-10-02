@@ -246,7 +246,9 @@
         "syncRound",
         "getSyncSnapshot",
         "createSyncTransport",
-        "openLiveSyncStream"
+        "openLiveSyncStream",
+        "noteBackgroundReads",
+        "endBackgroundReads"
       ],
       "catalog": [],
       "status": "internal",

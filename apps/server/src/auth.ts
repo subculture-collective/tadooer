@@ -6,7 +6,12 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import type { IncomingMessage } from "node:http";
-import type { Owner, SessionResponse } from "@suite/contracts";
+import {
+  liveSyncPushTrigger,
+  liveSyncTriggerHeader,
+  type Owner,
+  type SessionResponse,
+} from "@suite/contracts";
 import type { SuiteDatabase } from "@suite/persistence";
 
 const scryptParameters = {
@@ -192,7 +197,12 @@ export class AuthService {
     const owner = this.database.findOwnerById(session.ownerId);
     if (owner === undefined) return undefined;
 
-    if (refresh) {
+    // ADR 0045: a request made because of a live sync hint is not owner
+    // activity, whichever route it reads.
+    if (
+      refresh &&
+      request.headers[liveSyncTriggerHeader] !== liveSyncPushTrigger
+    ) {
       const refreshed = addMilliseconds(now, idleLifetimeMs);
       const idleExpiresAt =
         Date.parse(refreshed) < Date.parse(session.absoluteExpiresAt)

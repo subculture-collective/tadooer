@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { openLiveSyncStream } from "../api.ts";
+import { endBackgroundReads, openLiveSyncStream } from "../api.ts";
 import type { LiveSyncController, LiveSyncHandlers } from "./controller.ts";
 import type { LiveSyncStatus } from "./status.ts";
 import { liveViewRegistry } from "./views.ts";
@@ -35,7 +35,16 @@ export const useLiveSync = (
       },
       onStatus: setStatus,
     });
+    // Input from the owner ends a background-read window at once, so the
+    // request it causes counts as activity.
+    const onInput = (): void => {
+      endBackgroundReads();
+    };
+    window.addEventListener("pointerdown", onInput, true);
+    window.addEventListener("keydown", onInput, true);
     return () => {
+      window.removeEventListener("pointerdown", onInput, true);
+      window.removeEventListener("keydown", onInput, true);
       controller.stop();
       setStatus("paused");
     };

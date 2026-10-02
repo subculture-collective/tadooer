@@ -9,6 +9,15 @@ import { z } from "zod";
  */
 export const liveSyncPath = "/api/sync/events";
 
+/**
+ * A request sent because of a hint or a background timer, not by the owner,
+ * carries this header with the `push` value. Such a request authenticates
+ * without refreshing the session idle timer, so live sync cannot keep an
+ * unattended device signed in.
+ */
+export const liveSyncTriggerHeader = "x-suite-sync-trigger";
+export const liveSyncPushTrigger = "push";
+
 /** Seconds between `: hb` comment lines; below common proxy idle timeouts. */
 export const liveSyncHeartbeatSeconds = 25;
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { LiveSyncResourceFamily } from "@suite/contracts";
+import { noteBackgroundReads } from "../api.ts";
 
 /**
  * Online views the web app can refetch when a live sync `resources` hint
@@ -87,7 +88,8 @@ export const liveSyncFamilyViews: Readonly<
   evaluations: ["counters"],
   plugin_data: ["pluginData"],
   day_orders: ["dayOrders"],
-  boards: ["boards"],
+  // The server reports sections and saved views under `boards`.
+  boards: ["boards", "taskViews", "sections", "menuFolders"],
   // ADR 0019 records that are not feed entities: views, sections, folders.
   organization: ["taskViews", "sections", "menuFolders"],
   focus: ["focusPreferences", "focusTimer"],
@@ -142,6 +144,9 @@ export class LiveViewRegistry {
     const views = new Set(
       families.flatMap((family) => liveSyncFamilyViews[family]),
     );
+    // The loaders run now or on the next render; either way within the
+    // window, and their reads must not count as owner activity.
+    noteBackgroundReads();
     const refetched: LiveView[] = [];
     for (const view of views) {
       const entries = this.#views.get(view);

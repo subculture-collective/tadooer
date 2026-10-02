@@ -157,6 +157,8 @@ interface ActiveRun {
   followerStatus: LiveSyncStatus;
   reported: LiveSyncStatus | undefined;
   head: string | undefined;
+  /** `hello` events seen by this tab's stream; the first follows page load. */
+  hellos: number;
   catchUp: () => void;
   reload: () => void;
   readonly dispose: (() => void)[];
@@ -200,6 +202,7 @@ export class LiveSyncController {
       followerStatus: "reconnecting",
       reported: undefined,
       head: undefined,
+      hellos: 0,
       catchUp: () => undefined,
       reload: () => undefined,
       dispose: [],
@@ -340,6 +343,17 @@ export class LiveSyncController {
     if (event.event === "hello" || event.event === "changes") {
       run.head = event.data.head;
       run.catchUp();
+      // `hello` carries the feed head but nothing about records outside the
+      // feed, so hints missed while the stream was down are recovered by
+      // refetching every open view. The first `hello` follows a page load.
+      if (event.event === "hello" && ++run.hellos > 1) {
+        run.channel?.post({
+          type: "resources",
+          families: ["all"],
+          sourceClientId: null,
+        });
+        this.#refetch(run, ["all"], null);
+      }
     } else if (event.event === "resources") {
       const { families, sourceClientId } = event.data;
       run.channel?.post({ type: "resources", families, sourceClientId });

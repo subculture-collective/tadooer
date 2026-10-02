@@ -94,6 +94,7 @@ import {
   removeTaskTimeBlock,
   resumeSession,
   setupOwner,
+  noteBackgroundReads,
 } from "./api.ts";
 import {
   LocalStore,
@@ -475,6 +476,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       }
       let round = await engine.sync(undefined, trigger);
       while (round.hasMore) round = await engine.sync(undefined, trigger);
+      // The reads that follow a hint-triggered round are not owner activity.
+      if (trigger === "push") noteBackgroundReads();
       return readLocalState(client);
     },
     [localStore, readLocalState],

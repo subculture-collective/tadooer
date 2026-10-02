@@ -77,14 +77,17 @@ An in-process hub keeps the open streams per owner.
   capabilities inventory is drift-tested.
 - **Coalescing.** Hints for one owner within 100 ms are merged.
 - **Bounds.** One stream per registered client; a second replaces the first
-  with `bye: replaced`. At most eight streams per owner. A stream that cannot
-  be written to for 30 seconds is dropped.
+  with `bye: replaced`. At most eight streams per owner; a ninth client is
+  refused with `429 LIVE_SYNC_STREAM_LIMIT` before the stream starts. A stream
+  that cannot be written to for 30 seconds is dropped.
 - **Sessions.** Opening a stream authenticates without refreshing the idle
   timer, and the stream ends with `bye: session-ended` when the session
-  expires or is revoked. A round that a client starts because of a hint sends
-  `x-suite-sync-trigger: push` and does not refresh the idle timer either.
-  Live sync therefore does not keep an unattended device signed in; the
-  30-minute idle and 12-hour absolute limits of ADR 0007 are unchanged.
+  expires or is revoked (noticed within about two seconds). A request that a
+  client makes because of a hint or a background timer carries
+  `x-suite-sync-trigger: push` and does not refresh the idle timer on any
+  route. Reads already never refresh it. Live sync therefore does not keep an
+  unattended device signed in; the 30-minute idle and 12-hour absolute limits
+  of ADR 0007 are unchanged.
 - **Shutdown.** Streams get `bye: shutdown` and are closed before the HTTP
   server stops, inside the existing shutdown grace.
 - **Metrics.** Open streams, hints sent by event and streams dropped, without
@@ -99,14 +102,19 @@ An in-process hub keeps the open streams per owner.
   gap where two tabs of one client could send the same outbox entries.
 - On `changes` the leader runs rounds until `hasMore` is false. On
   `resources` each tab refetches the online views it has open for those
-  families, unless it is the source client.
+  families, unless it is the source client. The source is known only for
+  requests that carry the client proof (sync rounds and focus commands), so
+  two tabs of one profile rely on the focus timer poll for each other's focus
+  commands.
 - The stream reconnects with jittered exponential backoff from one second to
   one minute. `hello` after a reconnect carries the head, so a client that
-  missed hints catches up at once.
+  missed feed hints catches up at once; it also refetches every open view,
+  because `hello` says nothing about records outside the feed.
 - Independent of the stream, a client syncs when the page becomes visible or
   focused and on a fallback interval: one minute while the stream is down,
-  five minutes while it is up. A browser without Web Locks or streaming
-  `fetch` falls back to these triggers alone.
+  five minutes while it is up. Interval rounds carry the push trigger; a
+  round on visibility or focus is the owner's own activity. A browser without
+  Web Locks or streaming `fetch` falls back to these triggers alone.
 - The sync status shows whether the device is live, reconnecting or offline.
 
 ### Feed maintenance

@@ -111,7 +111,11 @@ import {
   type NotificationStatusResponse,
   type NotificationTestResponse,
 } from "@suite/contracts";
-import { ApiRequestError } from "@suite/contracts";
+import {
+  ApiRequestError,
+  liveSyncPushTrigger,
+  liveSyncTriggerHeader,
+} from "@suite/contracts";
 import {
   noteCreateRequestSchema,
   noteListResponseSchema,
@@ -274,6 +278,26 @@ import {
   type SyncTransport,
 } from "./sync-engine.ts";
 
+let backgroundReadsUntil = 0;
+
+/**
+ * Marks reads for the next few seconds as caused by a live sync hint rather
+ * than by the owner (ADR 0045). They carry the push trigger header, so the
+ * server does not count them as activity and an unattended device still
+ * reaches its idle limit. Writes are never marked.
+ */
+export const noteBackgroundReads = (
+  now: number = Date.now(),
+  windowMs = 3000,
+): void => {
+  backgroundReadsUntil = Math.max(backgroundReadsUntil, now + windowMs);
+};
+
+/** Owner activity ends the window: what follows is the owner's own request. */
+export const endBackgroundReads = (): void => {
+  backgroundReadsUntil = 0;
+};
+
 const request = async <T>(
   path: string,
   schema: z.ZodType<T>,
@@ -281,6 +305,12 @@ const request = async <T>(
 ): Promise<T> => {
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
+  if (
+    (init?.method ?? "GET") === "GET" &&
+    Date.now() < backgroundReadsUntil &&
+    !headers.has(liveSyncTriggerHeader)
+  )
+    headers.set(liveSyncTriggerHeader, liveSyncPushTrigger);
   if (init?.body !== undefined) headers.set("Content-Type", "application/json");
   const response = await fetch(path, {
     ...init,

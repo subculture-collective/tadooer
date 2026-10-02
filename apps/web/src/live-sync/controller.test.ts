@@ -247,6 +247,32 @@ describe("live sync reactions", () => {
     expect(leader.rounds).toEqual([]);
   });
 
+  it("refetches every loaded view after a reconnect, not after the first hello", async () => {
+    const browser = profile();
+    const leader = browser.tab("a");
+    const follower = browser.tab("b");
+    const leaderNotes = vi.fn();
+    const followerBoards = vi.fn();
+    leader.registry.register("notes", leaderNotes);
+    follower.registry.register("boards", followerBoards);
+    leader.start();
+    follower.start();
+    await flush();
+
+    // The first hello follows a page load: the views were just fetched.
+    browser.stream().send(hello("epoch.4"));
+    await flush();
+    expect(leaderNotes).not.toHaveBeenCalled();
+    expect(followerBoards).not.toHaveBeenCalled();
+
+    // A second hello means the stream was down in between, and hints for
+    // records outside the feed may have been missed.
+    browser.stream().send(hello("epoch.4"));
+    await flush();
+    expect(leaderNotes).toHaveBeenCalledTimes(1);
+    expect(followerBoards).toHaveBeenCalledTimes(1);
+  });
+
   it("reloads the other tabs when a tab announces rounds of its own", async () => {
     const browser = profile();
     const leader = browser.tab("a");

@@ -725,7 +725,34 @@ describe("live sync hint stream (ADR 0045)", () => {
         expect((await round({ "X-Suite-Sync-Trigger": "load" })).status).toBe(
           200,
         );
-        expect(Date.parse(idleExpiry())).toBeGreaterThan(Date.parse(refreshed));
+        const afterRound = idleExpiry();
+        expect(Date.parse(afterRound)).toBeGreaterThan(Date.parse(refreshed));
+
+        // The header means "not owner activity" on every authenticated route.
+        // Reads already leave the idle timer alone; a route that refreshes it
+        // (here a rejected note create) does not when the header is present.
+        await pause();
+        expect((await call("/api/notes", "GET")).status).toBe(200);
+        expect(idleExpiry()).toBe(afterRound);
+        await pause();
+        expect(
+          (
+            await call(
+              "/api/notes",
+              "POST",
+              {},
+              {
+                "X-Suite-Sync-Trigger": "push",
+              },
+            )
+          ).status,
+        ).toBe(400);
+        expect(idleExpiry()).toBe(afterRound);
+        await pause();
+        expect((await call("/api/notes", "POST", {})).status).toBe(400);
+        expect(Date.parse(idleExpiry())).toBeGreaterThan(
+          Date.parse(afterRound),
+        );
         await laptopStream.cancel();
       } finally {
         await server.close();
