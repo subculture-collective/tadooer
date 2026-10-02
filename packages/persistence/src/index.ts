@@ -1726,7 +1726,40 @@ const migrations: readonly Migration[] = [
   calendarBridgeMigration,
   // ADR 0043: bridge worker schedule and cross-process leases.
   calendarBridgeWorkerMigration,
+  {
+    // ADR 0045: the retained floor of the sync feed. Changes at or below it
+    // were pruned; a cursor below it must be replaced from a snapshot. An
+    // epoch reset restarts sequences at 1 and must set the floor back to 0.
+    id: "0048_sync_retained_floor",
+    sql: `
+      ALTER TABLE sync_owner_state ADD COLUMN retained_floor INTEGER NOT NULL
+        DEFAULT 0 CHECK (retained_floor >= 0);
+    `,
+  },
 ];
+
+/**
+ * Pruning never removes the newest changes, whatever the retention window
+ * (ADR 0045).
+ */
+export const syncFeedMinimumRetainedChanges = 1000;
+
+/** The bounded feed page read; exported so a test can check its query plan. */
+export const syncChangePageSql =
+  "SELECT * FROM sync_changes WHERE owner_id = ? AND epoch = ? AND sequence > ? ORDER BY sequence LIMIT ?";
+
+const syncChangeFromRow = (
+  row: Readonly<Record<string, string | number>>,
+): SyncChangeRecord => ({
+  ownerId: String(row.owner_id),
+  epoch: String(row.epoch),
+  sequence: Number(row.sequence),
+  entityType: String(row.entity_type),
+  entityId: String(row.entity_id),
+  kind: String(row.kind),
+  revision: Number(row.revision),
+  createdAt: String(row.created_at),
+});
 
 const checksum = (sql: string): string =>
   createHash("sha256").update(sql).digest("hex");
@@ -5064,6 +5097,7 @@ export class SuiteDatabase {
     return change;
   }
 
+  /** The whole tail after a sequence. Request paths use pageSyncChanges. */
   listSyncChanges(
     ownerId: string,
     epoch: string,
@@ -5078,30 +5112,35 @@ export class SuiteDatabase {
         string,
         string | number
       >[]
-    ).map((row) => ({
-      ownerId: String(row.owner_id),
-      epoch: String(row.epoch),
-      sequence: Number(row.sequence),
-      entityType: String(row.entity_type),
-      entityId: String(row.entity_id),
-      kind: String(row.kind),
-      revision: Number(row.revision),
-      createdAt: String(row.created_at),
-    }));
+    ).map(syncChangeFromRow);
   }
 
   getSyncState(ownerId: string): {
     readonly epoch: string;
     readonly cursor: number;
   } {
+    const { epoch, cursor } = this.#syncOwnerState(ownerId);
+    return { epoch, cursor };
+  }
+
+  #syncOwnerState(ownerId: string): {
+    readonly epoch: string;
+    readonly cursor: number;
+    readonly floor: number;
+  } {
     const row = this.#database
       .prepare(
-        "SELECT epoch, next_sequence FROM sync_owner_state WHERE owner_id=?",
+        "SELECT epoch, next_sequence, retained_floor FROM sync_owner_state WHERE owner_id=?",
       )
       .get(ownerId) as unknown as
-      { epoch: string; next_sequence: number } | undefined;
+      | { epoch: string; next_sequence: number; retained_floor: number }
+      | undefined;
     if (row !== undefined)
-      return { epoch: row.epoch, cursor: row.next_sequence - 1 };
+      return {
+        epoch: row.epoch,
+        cursor: row.next_sequence - 1,
+        floor: row.retained_floor,
+      };
     const now = new Date().toISOString();
     const epoch = randomUUID();
     this.#database
@@ -5109,9 +5148,15 @@ export class SuiteDatabase {
         "INSERT INTO sync_owner_state (owner_id,epoch,next_sequence,updated_at) VALUES (?,?,1,?)",
       )
       .run(ownerId, epoch, now);
-    return { epoch, cursor: 0 };
+    return { epoch, cursor: 0, floor: 0 };
   }
 
+  /**
+   * One page of the feed after a cursor, read with a SQL limit (ADR 0045).
+   * A cursor from another epoch, past the head or below the retained floor
+   * cannot be served and requires a snapshot. A cursor exactly at the floor
+   * is valid: every change after it is still retained.
+   */
   pageSyncChanges(
     ownerId: string,
     epoch: string,
@@ -5122,21 +5167,122 @@ export class SuiteDatabase {
     readonly changes: readonly SyncChangeRecord[];
     readonly cursor: number;
   } {
-    const state = this.getSyncState(ownerId);
+    const state = this.#syncOwnerState(ownerId);
     if (
       state.epoch !== epoch ||
-      afterSequence < 0 ||
+      afterSequence < state.floor ||
       afterSequence > state.cursor
     )
       return { resetRequired: true, changes: [], cursor: state.cursor };
-    const changes = this.listSyncChanges(ownerId, epoch, afterSequence).slice(
-      0,
-      Math.max(1, Math.min(limit, 500)),
-    );
+    const changes = (
+      this.#database
+        .prepare(syncChangePageSql)
+        .all(
+          ownerId,
+          epoch,
+          afterSequence,
+          Math.max(1, Math.min(Math.trunc(limit), 500)),
+        ) as unknown as readonly Record<string, string | number>[]
+    ).map(syncChangeFromRow);
     return {
       resetRequired: false,
       changes,
       cursor: changes.at(-1)?.sequence ?? afterSequence,
+    };
+  }
+
+  /**
+   * Deletes feed changes created before `olderThan` and raises the retained
+   * floor to the highest deleted sequence (ADR 0045). Only a contiguous
+   * prefix of the current epoch is removed: pruning stops at the first change
+   * inside the window, and the newest `keepNewest` changes always stay, so a
+   * misconfigured window cannot empty the feed. Operation outcomes are not
+   * touched; a replayed outbox entry of any age still finds its outcome.
+   */
+  pruneSyncChanges(
+    ownerId: string,
+    olderThan: string,
+    now: string,
+    keepNewest = syncFeedMinimumRetainedChanges,
+  ): { readonly deleted: number; readonly floor: number } {
+    const cutoff = new Date(olderThan).toISOString();
+    if (!Number.isInteger(keepNewest) || keepNewest < 0)
+      throw new Error("keepNewest must be a non-negative integer");
+    const write = this.#beginWrite();
+    try {
+      const row = this.#database
+        .prepare(
+          "SELECT epoch, next_sequence, retained_floor FROM sync_owner_state WHERE owner_id=?",
+        )
+        .get(ownerId) as unknown as
+        | { epoch: string; next_sequence: number; retained_floor: number }
+        | undefined;
+      const floor = row?.retained_floor ?? 0;
+      // The highest sequence the keep-newest guard allows to be removed.
+      const ceiling = (row?.next_sequence ?? 1) - 1 - keepNewest;
+      if (row === undefined || ceiling <= floor) {
+        write.commit();
+        return { deleted: 0, floor };
+      }
+      // Walks the primary key from the floor and stops at the first change
+      // inside the window, so the scan covers only what is about to go.
+      const firstRetained = this.#database
+        .prepare(
+          "SELECT sequence FROM sync_changes WHERE owner_id=? AND epoch=? AND sequence>? AND sequence<=? AND created_at>=? ORDER BY sequence LIMIT 1",
+        )
+        .get(ownerId, row.epoch, floor, ceiling, cutoff) as unknown as
+        { sequence: number } | undefined;
+      const target =
+        firstRetained === undefined ? ceiling : firstRetained.sequence - 1;
+      if (target <= floor) {
+        write.commit();
+        return { deleted: 0, floor };
+      }
+      const deleted = Number(
+        this.#database
+          .prepare(
+            "DELETE FROM sync_changes WHERE owner_id=? AND epoch=? AND sequence<=?",
+          )
+          .run(ownerId, row.epoch, target).changes,
+      );
+      this.#database
+        .prepare(
+          "UPDATE sync_owner_state SET retained_floor=?, updated_at=? WHERE owner_id=?",
+        )
+        .run(target, now, ownerId);
+      write.commit();
+      return { deleted, floor: target };
+    } catch (error) {
+      write.rollback();
+      throw error;
+    }
+  }
+
+  /**
+   * Content-free feed retention figures for metrics: the retained floor
+   * (the number of changes pruned in the current epoch) and the creation
+   * time of the oldest change still retained. Never creates sync state.
+   */
+  getSyncRetention(ownerId: string): {
+    readonly floor: number;
+    readonly oldestRetainedAt: string | null;
+  } {
+    const state = this.#database
+      .prepare(
+        "SELECT epoch, retained_floor FROM sync_owner_state WHERE owner_id=?",
+      )
+      .get(ownerId) as unknown as
+      { epoch: string; retained_floor: number } | undefined;
+    if (state === undefined) return { floor: 0, oldestRetainedAt: null };
+    const oldest = this.#database
+      .prepare(
+        "SELECT created_at FROM sync_changes WHERE owner_id=? AND epoch=? ORDER BY sequence LIMIT 1",
+      )
+      .get(ownerId, state.epoch) as unknown as
+      { created_at: string } | undefined;
+    return {
+      floor: state.retained_floor,
+      oldestRetainedAt: oldest?.created_at ?? null,
     };
   }
 

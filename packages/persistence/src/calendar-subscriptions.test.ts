@@ -455,7 +455,7 @@ it("survives restart and backup without exposing the feed address", async () => 
     database.close();
 
     const reopened = open(directory);
-    expect(reopened.state().appliedMigrationCount).toBe(41);
+    expect(reopened.state().appliedMigrationCount).toBe(42);
     expect(reopened.calendarSubscriptions.list(owner)[0]).toMatchObject({
       name: "Team calendar",
       eventCount: 2,

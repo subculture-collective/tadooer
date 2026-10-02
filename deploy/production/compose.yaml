@@ -20,6 +20,8 @@ services:
       SUITE_TRUSTED_PROXY_CIDRS: 10.0.0.200/32
       # ADR 0043: background bridge worker; runs only for enabled mappings.
       SUITE_CALENDAR_BRIDGE_WORKER: ${SUITE_CALENDAR_BRIDGE_WORKER:-true}
+      # ADR 0045: days of sync feed changes to retain; 0 keeps every change.
+      SUITE_SYNC_RETENTION_DAYS: ${SUITE_SYNC_RETENTION_DAYS:-30}
     volumes:
       - /srv/apps/productivity/data/tadooer:/data
     tmpfs:

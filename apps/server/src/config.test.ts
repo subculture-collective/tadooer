@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "./config.ts";
+import { loadConfig, parseSyncRetentionDays } from "./config.ts";
 
 describe("production server configuration", () => {
   it("accepts one exact HTTPS origin and explicit proxy hosts", () => {
@@ -77,4 +77,34 @@ describe("production server configuration", () => {
   ])("rejects an invalid worker setting: %s=%s", (name, value) => {
     expect(() => loadConfig({ [name]: value })).toThrow(name);
   });
+
+  it("retains 30 days of sync feed changes by default (ADR 0045)", () => {
+    expect(loadConfig({}).syncRetentionDays).toBe(30);
+    expect(
+      loadConfig({ SUITE_SYNC_RETENTION_DAYS: "" }).syncRetentionDays,
+    ).toBe(30);
+    expect(
+      loadConfig({ SUITE_SYNC_RETENTION_DAYS: "7" }).syncRetentionDays,
+    ).toBe(7);
+    expect(
+      loadConfig({ SUITE_SYNC_RETENTION_DAYS: "90" }).syncRetentionDays,
+    ).toBe(90);
+    expect(
+      loadConfig({ SUITE_SYNC_RETENTION_DAYS: "3650" }).syncRetentionDays,
+    ).toBe(3650);
+    // 0 switches pruning off.
+    expect(
+      loadConfig({ SUITE_SYNC_RETENTION_DAYS: "0" }).syncRetentionDays,
+    ).toBe(0);
+    expect(parseSyncRetentionDays(undefined)).toBe(30);
+  });
+
+  it.each(["1", "6", "-1", "7.5", "30d", "1e2", " 30", "3651", "forever"])(
+    "rejects an invalid sync retention window: %s",
+    (value) => {
+      expect(() => loadConfig({ SUITE_SYNC_RETENTION_DAYS: value })).toThrow(
+        "SUITE_SYNC_RETENTION_DAYS",
+      );
+    },
+  );
 });

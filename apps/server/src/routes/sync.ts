@@ -225,14 +225,18 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
     }
     if (method === "GET") {
       const snapshot = database.fullSyncSnapshot(session.owner.id);
+      // Each entry is built only for the requested page: the per-entity
+      // reads (field versions, blueprints, pool items) are the larger cost
+      // and a client pages through the list 200 at a time.
       const allSnapshots = [
         ...database.habits
           .list(session.owner.id)
-          .map((value) => ({ entityKind: "habit" as const, value })),
-        ...database.habits
-          .occurrences(session.owner.id)
-          .map((value) => ({ entityKind: "habit_occurrence" as const, value })),
-        ...snapshot.tasks.map((task) => ({
+          .map((value) => () => ({ entityKind: "habit" as const, value })),
+        ...database.habits.occurrences(session.owner.id).map((value) => () => ({
+          entityKind: "habit_occurrence" as const,
+          value,
+        })),
+        ...snapshot.tasks.map((task) => () => ({
           entityKind: "task" as const,
           value: {
             task: taskResponse(task),
@@ -256,19 +260,19 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             changeSequence: task.revision,
           },
         })),
-        ...snapshot.projects.map((project) => ({
+        ...snapshot.projects.map((project) => () => ({
           entityKind: "project" as const,
           value: projectResponse(project),
         })),
-        ...snapshot.tags.map((tag) => ({
+        ...snapshot.tags.map((tag) => () => ({
           entityKind: "tag" as const,
           value: tagResponse(tag),
         })),
-        ...snapshot.subtasks.map((subtask) => ({
+        ...snapshot.subtasks.map((subtask) => () => ({
           entityKind: "subtask" as const,
           value: subtaskResponse(subtask),
         })),
-        ...snapshot.templates.map((template) => ({
+        ...snapshot.templates.map((template) => () => ({
           entityKind: "template" as const,
           value: {
             template: templateResponse(template),
@@ -278,28 +282,30 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             poolSlots: [...database.listTemplatePoolSlots(template.id)],
           },
         })),
-        ...snapshot.templateSets.map((set) => ({
+        ...snapshot.templateSets.map((set) => () => ({
           entityKind: "template_set" as const,
           value: {
             set: templateSetResponse(set),
             members: [...database.listTemplateSetMembers(set.id)],
           },
         })),
-        ...database.listChoicePools(session.owner.id, true).map((pool) => ({
-          entityKind: "choice_pool" as const,
-          value: {
-            pool: choicePoolResponse(pool),
-            items: database
-              .listChoicePoolItems(pool.id, true)
-              .map(choicePoolItemResponse),
-            history: database
-              .listChoicePoolHistory(pool.id)
-              .map(choicePoolHistoryResponse),
-          },
-        })),
+        ...database
+          .listChoicePools(session.owner.id, true)
+          .map((pool) => () => ({
+            entityKind: "choice_pool" as const,
+            value: {
+              pool: choicePoolResponse(pool),
+              items: database
+                .listChoicePoolItems(pool.id, true)
+                .map(choicePoolItemResponse),
+              history: database
+                .listChoicePoolHistory(pool.id)
+                .map(choicePoolHistoryResponse),
+            },
+          })),
         ...database
           .listPlanningPlaceholders(session.owner.id)
-          .map((placeholder) => ({
+          .map((placeholder) => () => ({
             entityKind: "planning_placeholder" as const,
             value: {
               placeholder: planningPlaceholderResponse(placeholder),
@@ -324,7 +330,9 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
         );
         return true;
       }
-      const snapshots = allSnapshots.slice(offset, offset + 200);
+      const snapshots = allSnapshots
+        .slice(offset, offset + 200)
+        .map((build) => build());
       const body: SyncSnapshotResponse = {
         snapshots,
         nextCursor: cursorFor(snapshot.cursor),
