@@ -115,7 +115,11 @@ import {
 } from "./sync-engine.ts";
 import { LiveSyncController } from "./live-sync/controller.ts";
 import { useLiveSync } from "./live-sync/use-live-sync.ts";
-import { desktopFocusReport, useDesktopShell } from "./desktop-shell.ts";
+import {
+  captureFieldValue,
+  desktopFocusReport,
+  useDesktopShell,
+} from "./desktop-shell.ts";
 import {
   useAppLiveViews,
   type LiveAppPatch,
@@ -2353,8 +2357,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
     },
   });
-  // ADR 0047: inside the desktop shell the tray shows this state and can ask
-  // for quick capture or a sync. In a browser this does nothing.
+  // ADR 0047 and ADR 0049: inside the desktop shell the tray shows this state
+  // and can ask for quick capture or a sync; the Android shell passes on text
+  // shared from another app. In a browser this does nothing.
   useDesktopShell({
     status: {
       sync:
@@ -2373,14 +2378,30 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       state.kind === "authenticated" ? state.activeSession : null,
       state.kind === "authenticated" ? state.tasks : [],
     ),
-    onQuickCapture: () => {
+    captureReady: state.kind === "authenticated",
+    onQuickCapture: (sharedText) => {
       if (state.kind !== "authenticated") return;
       if (route !== "today" && route !== "inbox") navigate("today");
-      window.setTimeout(() => {
-        document
-          .querySelector<HTMLInputElement>('form input[name="title"]')
-          ?.focus();
-      }, 0);
+      // The capture form may not be mounted yet, right after sign-in or a
+      // route change. Shared text waits for it for up to a second; a plain
+      // request to focus the field is tried once, as before.
+      let attempts = sharedText === undefined ? 1 : 20;
+      const place = (): void => {
+        const title = document.querySelector<HTMLInputElement>(
+          'form input[name="title"]',
+        );
+        attempts -= 1;
+        if (title === null) {
+          if (attempts > 0) window.setTimeout(place, 50);
+          return;
+        }
+        // ADR 0049: text shared to the Android app is placed in the field
+        // for the owner to review. Nothing submits it.
+        if (sharedText !== undefined)
+          title.value = captureFieldValue(title.value, sharedText);
+        title.focus();
+      };
+      window.setTimeout(place, 0);
     },
     onSyncNow: () => void syncNow(),
   });

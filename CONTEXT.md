@@ -99,6 +99,8 @@
 | Notifications     | ntfy delivery, reminder ledger, occurrence evaluation, publisher configuration                        | apps/server/notifications.ts, packages/domain/notifications.ts      |
 | Import/Export     | ICS import parsing with preserved intermediate representation, iCalendar publication feeds            | packages/import-export                                              |
 | Desktop Packaging | Electron shell around deployed Suite origin; no private database, credential, or alternate API        | apps/desktop                                                        |
+| Mobile Packaging  | Capacitor Android shell around deployed Suite origin; setup page only; no plugin bridge for the Suite | apps/mobile                                                         |
+| Shell Policy      | Origin, navigation, deep-link, bridge and share validators shared by the desktop and mobile shells    | packages/shell-policy                                               |
 | Test Support      | Shared contract fixtures, synthetic test data, manual clock injection, Compose-qualified test harness | packages/test-support                                               |
 
 ---

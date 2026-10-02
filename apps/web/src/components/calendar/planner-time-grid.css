@@ -197,6 +197,14 @@
     margin-top: 0.1rem;
     color: var(--purple);
   }
+  /* Touch: a short block keeps a 44px tap target. It can overlap the start
+     of the next block; both stay reachable. */
+  @media (pointer: coarse) {
+    .planner-time-grid__entry,
+    .planner-time-grid__all-day-event {
+      min-height: 2.75rem;
+    }
+  }
   @media (max-width: 48rem) {
     .planner-time-grid__legend > span {
       width: 100%;
