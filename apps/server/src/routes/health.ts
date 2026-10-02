@@ -53,6 +53,7 @@ export const handleHealth: RouteHandler = async (
         worker: ctx.calendarBridgeWorker,
         throttle: ctx.googleThrottle,
       }),
+      ...ctx.liveSync.metricLines(),
       "",
     ];
     response.writeHead(200, {

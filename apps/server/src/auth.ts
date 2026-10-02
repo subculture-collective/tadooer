@@ -212,6 +212,21 @@ export class AuthService {
     };
   }
 
+  /**
+   * Whether an authenticated session is still neither revoked nor expired.
+   * Never refreshes the idle timer; the live sync stream asks this to end
+   * itself with the session (ADR 0045).
+   */
+  sessionActive(session: AuthenticatedSession): boolean {
+    const stored = this.database.findSession(digest(session.token));
+    const now = Date.parse(this.now());
+    return (
+      stored?.revokedAt === null &&
+      Date.parse(stored.idleExpiresAt) > now &&
+      Date.parse(stored.absoluteExpiresAt) > now
+    );
+  }
+
   resume(request: IncomingMessage): IssuedSession | undefined {
     const session = this.authenticate(request, true);
     if (session === undefined) return undefined;
