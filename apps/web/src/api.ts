@@ -117,6 +117,14 @@ import {
   liveSyncTriggerHeader,
 } from "@suite/contracts";
 import {
+  devicesSignedOutResponseSchema,
+  passwordConfirmationResponseSchema,
+  reauthenticationRequiredCode,
+  signedInDevicesResponseSchema,
+  type PasswordConfirmationResponse,
+  type SignedInDevicesResponse,
+} from "@suite/contracts";
+import {
   organizationOrderRequestSchema,
   projectBacklogRequestSchema,
   projectPatchRequestSchema,
@@ -264,6 +272,7 @@ import {
 import { z } from "zod";
 import { liveSyncPath } from "@suite/contracts";
 import { reportSessionFailure } from "./session-recovery.ts";
+import { requestReauthentication } from "./reauthentication.ts";
 import type { LocalClientIdentity } from "./local-store.ts";
 import {
   SyncCursorResetRequired,
@@ -291,6 +300,28 @@ export const endBackgroundReads = (): void => {
   backgroundReadsUntil = 0;
 };
 
+/**
+ * `fetch` for owner routes. When a trusted device is asked for a recent
+ * password (ADR 0048), the owner is prompted and the request is sent once
+ * more; a declined prompt returns the refusal.
+ */
+const ownerFetch = async (
+  path: string,
+  init?: RequestInit,
+): Promise<Response> => {
+  const response = await fetch(path, init);
+  if (response.status !== 403) return response;
+  const refusal = apiErrorSchema.safeParse(
+    await response
+      .clone()
+      .json()
+      .catch(() => undefined),
+  );
+  if (!refusal.success || refusal.data.code !== reauthenticationRequiredCode)
+    return response;
+  return (await requestReauthentication()) ? fetch(path, init) : response;
+};
+
 const request = async <T>(
   path: string,
   schema: z.ZodType<T>,
@@ -305,7 +336,7 @@ const request = async <T>(
   )
     headers.set(liveSyncTriggerHeader, liveSyncPushTrigger);
   if (init?.body !== undefined) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, {
+  const response = await ownerFetch(path, {
     ...init,
     headers,
   });
@@ -331,7 +362,7 @@ const requestEmpty = async (
 ): Promise<void> => {
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
-  const response = await fetch(path, { ...init, headers });
+  const response = await ownerFetch(path, { ...init, headers });
   if (response.ok) return;
   const body: unknown = await response.json().catch(() => undefined);
   const error = apiErrorSchema.safeParse(body);
@@ -387,6 +418,63 @@ export const logout = async (csrfToken: string): Promise<void> => {
     headers: { "X-CSRF-Token": csrfToken },
   });
 };
+
+/**
+ * Trusted devices (ADR 0048). `confirmPassword` satisfies the recent-password
+ * gate for the next 15 minutes; the device calls list, rename and sign out
+ * the owner's trusted devices.
+ */
+export const confirmPassword = (
+  password: string,
+  csrfToken: string,
+): Promise<PasswordConfirmationResponse> =>
+  request("/api/auth/confirm-password", passwordConfirmationResponseSchema, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ password }),
+  });
+
+export const listSignedInDevices = (): Promise<SignedInDevicesResponse> =>
+  request("/api/auth/devices", signedInDevicesResponseSchema);
+
+export const renameSignedInDevice = async (
+  deviceId: string,
+  label: string,
+  csrfToken: string,
+): Promise<void> => {
+  await request(
+    `/api/auth/devices/${deviceId}`,
+    z.object({ renamed: z.literal(true) }),
+    {
+      method: "PATCH",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ label }),
+    },
+  );
+};
+
+export const signOutDevice = async (
+  deviceId: string,
+  csrfToken: string,
+): Promise<void> => {
+  await request(
+    `/api/auth/devices/${deviceId}`,
+    devicesSignedOutResponseSchema,
+    {
+      method: "DELETE",
+      headers: { "X-CSRF-Token": csrfToken },
+    },
+  );
+};
+
+export const signOutOtherDevices = async (csrfToken: string): Promise<number> =>
+  (
+    await request(
+      "/api/auth/devices/sign-out-others",
+      devicesSignedOutResponseSchema,
+      { method: "POST", headers: { "X-CSRF-Token": csrfToken } },
+    )
+  ).signedOut;
 
 export const getBaikalStatus = (): Promise<BaikalStatusResponse> =>
   request("/api/connectors/baikal", baikalStatusResponseSchema);
@@ -2287,7 +2375,7 @@ export const downloadDataExport = async (): Promise<{
   readonly filename: string;
   readonly text: string;
 }> => {
-  const response = await fetch("/api/data/export", {
+  const response = await ownerFetch("/api/data/export", {
     headers: { Accept: "application/json" },
   });
   if (!response.ok) {

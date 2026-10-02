@@ -195,6 +195,56 @@ so a restart does not wait for open streams.
 
 `/api/ready` does not depend on the stream.
 
+## Trusted devices and sign-in sessions
+
+ADR 0048. A sign-in with "Keep me signed in on this device for 30 days" is a
+trusted-device session; any other sign-in is the 30-minute, 12-hour browser
+session of ADR 0007. The lifetimes and intervals are constants in
+`apps/server/src/session-policy.ts`; there is no environment variable for
+them.
+
+- **Cookie.** `suite_session`, `HttpOnly`, `SameSite=Strict`, `Secure` when
+  `SUITE_SECURE_COOKIES=true`. For a trusted device `Max-Age` runs to the
+  180-day cap and the value changes about once a day. The proxy must pass
+  `Set-Cookie` on API responses unchanged and must not cache them (every API
+  response is `Cache-Control: no-store`).
+- **Revocation.** Settings, "Signed-in devices": per device or all others.
+  When no session is available, sign in with the password and use "Sign out
+  all other devices". As a last resort an operator can revoke every session
+  with this statement against the database file (`SUITE_DATABASE_PATH`,
+  `/data/suite.sqlite` in the image). It has not been run against
+  production; take a backup first.
+
+  ```sql
+  UPDATE web_sessions
+     SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         revoked_reason = 'revoked-by-owner'
+   WHERE revoked_at IS NULL;
+  ```
+
+  Every device then needs the password again. Open streams close within about
+  two seconds.
+
+- **Log lines.** `auth.login.succeeded_trusted_device`,
+  `auth.password_confirmation.succeeded`, `.failed` and `.rate_limited`,
+  `auth.device.signed_out`, `auth.devices.signed_out_others`, and
+  `auth.device.token_reuse_detected`. None carries a token, an address or a
+  device identifier.
+- **`auth.device.token_reuse_detected`.** A sign-in token that had been
+  replaced was presented more than 60 seconds later. The device was signed
+  out and Settings warns the owner for 30 days. One cause is a restored
+  browser profile or a database restored from a backup taken before the
+  token rotated: after restoring an operator backup, expect trusted devices
+  that rotated since the backup to be signed out on their next request.
+- **Clock.** Expiry, rotation and the overlap use the server clock. A clock
+  that jumps forward by more than the idle window signs devices out.
+- **Rate limit.** Password confirmation shares the sign-in limiter: five
+  failures in 15 minutes per address and username, in memory, per process.
+  Behind a proxy set `SUITE_TRUSTED_PROXY_CIDRS` as for sign-in, or every
+  client shares the proxy's address.
+- **Backups.** Operator backups contain the session and device tables (token
+  digests only). The owner data export contains neither.
+
 ## Owner data export versus operator backups
 
 Two copies exist, with different jobs (ADR 0034):

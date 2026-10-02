@@ -2,6 +2,7 @@ export { superProductivityImportLimits } from "./import-limits.ts";
 export * from "./organization.ts";
 export * from "./calendar-bridge.ts";
 export * from "./live-sync.ts";
+export * from "./device-sessions.ts";
 export * from "./task-planning.ts";
 export * from "./task-links.ts";
 export * from "./task-archive.ts";
@@ -234,6 +235,8 @@ export const ownerSetupRequestSchema = z.object({
 export const loginRequestSchema = z.object({
   username: z.string().min(1).max(64),
   password: z.string().min(1).max(1024),
+  /** ADR 0048: keep this device signed in; absent or false is a browser session. */
+  trustDevice: z.boolean().optional(),
 });
 
 export const ownerSchema = z.object({

@@ -18,6 +18,22 @@
       "source": "apps/web/src/api.ts"
     },
     {
+      "id": "trusted-devices",
+      "action": "Keep a device signed in, confirm the password for sensitive actions, list, rename and sign out devices",
+      "webApi": [
+        "confirmPassword",
+        "listSignedInDevices",
+        "renameSignedInDevice",
+        "signOutDevice",
+        "signOutOtherDevices"
+      ],
+      "catalog": [],
+      "status": "owner-only",
+      "issue": 115,
+      "authority": "Device trust and password confirmation are proofs of the owner's identity and need the browser session, same origin and the CSRF token; a bearer credential must not create, extend or revoke a sign-in (ADR 0048).",
+      "source": "apps/web/src/api.ts"
+    },
+    {
       "id": "connector-grants",
       "action": "Provision Baikal credentials, authorize Google, grant or withdraw Google write consent, disconnect grants",
       "webApi": [

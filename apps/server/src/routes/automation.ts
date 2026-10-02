@@ -48,6 +48,7 @@ import {
   validateChoicePoolSelection,
 } from "@suite/domain";
 import { sendJson, sendError, readJson, sameOrigin } from "../http-utils.ts";
+import { reauthenticationRequired } from "../reauthentication.ts";
 import type { RouteHandler } from "./shared.ts";
 import type {
   AutomationPreviewRecord,
@@ -320,6 +321,7 @@ export const handleAutomation: RouteHandler = async (
       return true;
     }
     if (method === "POST") {
+      if (reauthenticationRequired(auth, session, response)) return true;
       const parsed = createAutomationTokenRequestSchema.safeParse(
         await readJson(request),
       );
@@ -404,6 +406,7 @@ export const handleAutomation: RouteHandler = async (
       );
       return true;
     }
+    if (reauthenticationRequired(auth, session, response)) return true;
     const tokenId = automationTokenRevoke[1] ?? "";
     if (
       !database.revokeAutomationToken(

@@ -268,8 +268,8 @@ describe("SuiteDatabase", () => {
       const upgraded = SuiteDatabase.open(path);
       expect(upgraded.state()).toMatchObject({
         install: { instanceId: "d1054acd-c04d-4bd8-a814-254b007154ba" },
-        appliedMigrationCount: 43,
-        expectedMigrationCount: 43,
+        appliedMigrationCount: 44,
+        expectedMigrationCount: 44,
       });
       expect(upgraded.setupRequired()).toBe(true);
       upgraded.close();
@@ -288,8 +288,8 @@ describe("SuiteDatabase", () => {
       reopened.close();
 
       expect(reopenedState).toEqual(firstState);
-      expect(reopenedState.appliedMigrationCount).toBe(43);
-      expect(reopenedState.expectedMigrationCount).toBe(43);
+      expect(reopenedState.appliedMigrationCount).toBe(44);
+      expect(reopenedState.expectedMigrationCount).toBe(44);
     });
   });
 
