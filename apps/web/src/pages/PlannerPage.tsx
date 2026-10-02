@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
 import type {
   BaikalStatusResponse,
   PlannerResponse,
+  SavedDayOrder,
   Task,
 } from "@suite/contracts";
 import {
@@ -22,10 +23,9 @@ import {
 } from "../components/calendar/PlannerTimeGrid.tsx";
 import {
   DayOrderList,
-  dayMembersKey,
   orderedDayTasks,
   useDayOrders,
-  type DayOrderApi,
+  type DayOrderActions,
 } from "../day-order.tsx";
 import {
   PlannerDetailsSheet,
@@ -69,10 +69,12 @@ interface PlannerPageProps {
     task: Task,
     window: CalendarRange,
   ) => Promise<boolean>;
-  /** ADR 0027: saved planner-day order; online writes need the CSRF token. */
-  readonly csrfToken?: string | undefined;
-  readonly online?: boolean | undefined;
-  readonly dayOrderApi?: DayOrderApi | undefined;
+  /**
+   * ADR 0050: saved day orders from the offline cache and the queued
+   * reorder. Both work without a connection.
+   */
+  readonly dayOrders?: readonly SavedDayOrder[] | undefined;
+  readonly dayOrderActions?: DayOrderActions | undefined;
 }
 
 const calendarViewLabel: Readonly<Record<CalendarView, string>> = {
@@ -104,9 +106,8 @@ export const PlannerPage = ({
   calendars,
   onSubmitTimeBlock,
   onRemoveTimeBlock,
-  csrfToken,
-  online = false,
-  dayOrderApi,
+  dayOrders: savedDayOrders,
+  dayOrderActions,
 }: PlannerPageProps) => {
   const [view, setView] = useState<CalendarView>("week");
   const [anchor, setAnchor] = useState(() => new Date());
@@ -127,12 +128,9 @@ export const PlannerPage = ({
     [range, view, timeZone],
   );
   const dayOrders = useDayOrders({
-    from: dayKeys[0] ?? "",
-    to: dayKeys.at(-1) ?? "",
-    csrfToken,
-    online: online && dayKeys.length > 0,
-    api: dayOrderApi,
-    membersKey: dayMembersKey(tasks, dayKeys),
+    tasks,
+    saved: savedDayOrders,
+    actions: dayOrderActions,
   });
   const orderedDays = dayKeys
     .map((date) => ({
@@ -311,7 +309,9 @@ export const PlannerPage = ({
           </CardHeader>
           <CardContent className="grid gap-3">
             {!dayOrders.enabled ? (
-              <p className="hint">Reconnect to change the order of a day.</p>
+              <p className="hint">
+                The order of a day can be changed once this device has synced.
+              </p>
             ) : null}
             {dayOrders.message !== null ? (
               <p className="message" role="status">

@@ -11,8 +11,12 @@ import { taskResponse, type RouteHandler } from "./shared.ts";
 import { plannedDayBlockedMessage } from "../task-planning.ts";
 
 /**
- * Saved Today and planner-day order (issue #98, ADR 0027). Online-only: day
- * orders are not in the sync change feed or the offline cache.
+ * Saved Today and planner-day order over HTTP (issue #98, ADR 0027). Saved
+ * day orders are sync feed records (ADR 0050): the store appends a feed
+ * change with every write here, so other devices receive it in their next
+ * round. The web app reads day orders from its offline cache and reorders
+ * through the sync outbox; these routes remain for conditional online writes
+ * with the exact-membership check and for planning tasks in one transaction.
  *
  * - GET  /api/day-orders?from=&to=   dates with members or a saved order
  * - GET  /api/day-orders/{date}      one date (revision 0 when never saved)

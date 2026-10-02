@@ -157,25 +157,33 @@ has no note functions.
 ## How to move the next record kind
 
 Derived from what this slice touched. Do them in this order; each step has a
-test at its layer.
+test at its layer. The sentences that cite ADR 0050 were added when day
+orders and time entries moved.
 
 1. **Choose the offline rule first.** Record revision with a visible
    conflict is the default. If no rule is clear, the kind is read-only
-   offline: do steps 2 to 4 and 6 to 9 without operations.
+   offline: do steps 2 to 4 and 6 to 9 without operations. A rule the client
+   cannot evaluate from its cache is checked when the server applies the
+   operation and returned as a conflict reason (ADR 0050).
 2. **Contracts** (`packages/contracts/src/index.ts`): add the kind to
    `syncEntitySnapshotSchema` and to the `entityKind` enum of
    `syncChangeSchema`. For offline writes also add it to
    `syncEntityKindSchema`, add `<kind>.create|patch|delete` to
    `syncOperationSchema` with explicit fields and `baseRevision`, extend
    `syncOperationEntity` and the kind list of
-   `syncDiagnosticOperationSchema`.
+   `syncDiagnosticOperationSchema`. A kind without a UUID needs its key
+   accepted by `syncEntityKeySchema` (ADR 0050). When the HTTP response of
+   the kind is a projection, the feed carries the stored record and the
+   client derives the rest from what it caches.
 3. **Store**: give the store a change appender (see `NoteChangeAppender`)
    and append inside every writing method, in its savepoint. Do not append
    from callers. Grep for direct `INSERT`, `UPDATE` and `DELETE` on the table
    to find writers that bypass the store (importer, server tick, cascades).
 4. **Snapshot**: add the records to `fullSyncSnapshot` and to the snapshot
    list and the change-to-snapshot mapping in
-   `apps/server/src/routes/sync.ts`.
+   `apps/server/src/routes/sync.ts`. A kind that can be numerous needs a
+   documented bound on the snapshot and on the cache, enforced on read and
+   tested at the boundary (ADR 0050).
 5. **Operations**: add `apply<Kind>Sync` on `SuiteDatabase` through the
    shared `#applySyncOperation` envelope (add the kind to its union and its
    `load`), and dispatch to it in `routes/sync.ts`.
@@ -188,7 +196,9 @@ test at its layer.
    `apps/server/src/live-sync/resource-families.ts` to `feed` and the
    automation operations to `feedOnly`; map the family to `[]` in
    `apps/web/src/live-sync/views.ts` and remove the view if nothing else
-   loads it. Leave the family name in the contract enum.
+   loads it. Leave the family name in the contract enum. A view that still
+   reads a server projection of the kind must reload when the cached kind
+   changes, because its family is no longer emitted (ADR 0050).
 8. **Browser**: add the kind to `CachedEntityKind`; add a `loadCached<Kind>`
    loader; write the pure `apply<Kind>Operation` reducer and use it for the
    queue methods, the snapshot replay (`#replayStructuralOperation`) and the
@@ -211,6 +221,14 @@ test at its layer.
   bundle, so this lasts until the next page load. Before many more kinds
   move, the client should skip entity kinds it does not know; that is not
   part of this slice.
+
+  > Note, 2026-10-02: done in
+  > [ADR 0050](0050-day-orders-and-time-entries-in-the-sync-feed.md). A
+  > client skips and counts changes and snapshot records of a kind it does
+  > not know, keeps its cursor advancing, and takes a snapshot once it runs
+  > a bundle that knows them. Bundles older than that release still fail
+  > their rounds until the page reloads.
+
 - An applied deletion now reports `applied` with the recorded revision. The
   sync route previously reported an applied `subtask.delete` as rejected
   because no record was left to read; the same fix covers checklist items.

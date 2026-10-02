@@ -105,6 +105,17 @@ such a ritual would use.
   move and plan controls are disabled. The browser reads the orders again when
   a shown date's local members change. A 412 reloads the orders and asks the
   owner to try the move again. Queued offline planning remains #92.
+
+  > Note, 2026-10-02: superseded by
+  > [ADR 0050](0050-day-orders-and-time-entries-in-the-sync-feed.md). Saved
+  > day orders are sync feed records in the offline cache. Today, plan
+  > tomorrow and the Planner read them from the cache and reorder through
+  > the outbox with `day_order.reorder`, with or without a connection. A
+  > reorder of a stale revision is a visible conflict; a queued reorder that
+  > names a task which left the day, or misses one that joined it, is
+  > reconciled when the server applies it. The HTTP routes below keep the
+  > full-list rule and the 412 for conditional online writes.
+
 - Controls are Up and Down buttons with task-specific labels, on Today's
   planned rows, in the plan-tomorrow list and in a "Day order" card under the
   Planner grid for each day with two or more date-only tasks. A task the

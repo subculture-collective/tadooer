@@ -6,6 +6,7 @@ import type {
   Note,
   PlanningPreferences,
   PlannerResponse,
+  SavedDayOrder,
   Task,
 } from "@suite/contracts";
 import {
@@ -22,11 +23,7 @@ import { EmptyState } from "../components/ui/empty-state.tsx";
 import { PageHeader } from "../components/ui/page-header.tsx";
 import { SectionHeading } from "../components/ui/section-heading.tsx";
 import { addCalendarDays, planningDate } from "@suite/domain";
-import {
-  dayMembersKey,
-  useDayOrders,
-  type DayOrderApi,
-} from "../day-order.tsx";
+import { useDayOrders, type DayOrderActions } from "../day-order.tsx";
 import { PlanTomorrowPanel } from "../plan-tomorrow.tsx";
 import { NoteMarkdown } from "../components/notes/NoteMarkdown.tsx";
 import { useApplicationPreferences } from "../application-preferences.tsx";
@@ -57,12 +54,16 @@ export interface TodayPageProps {
   ) => Promise<void>;
   readonly onRemoveTimeBlock: (task: Task) => Promise<void>;
   readonly onViewTasks: () => void;
-  /** ADR 0027: enables saved day order and plan-tomorrow writes. */
+  /** Enables online quick capture. */
   readonly csrfToken?: string | undefined;
-  readonly online?: boolean | undefined;
-  /** Called after tasks were planned so the task list can refresh. */
+  /** Called after tasks were captured so the task list can refresh. */
   readonly onTasksPlanned?: (() => void) | undefined;
-  readonly dayOrderApi?: DayOrderApi | undefined;
+  /**
+   * ADR 0050: saved day orders from the offline cache, and the writes that
+   * queue a reorder or a plan-for-tomorrow. Both work without a connection.
+   */
+  readonly dayOrders?: readonly SavedDayOrder[] | undefined;
+  readonly dayOrderActions?: DayOrderActions | undefined;
   /** ADR 0029: server timer state and the preset control. */
   readonly focus?: FocusPanelTimerProps | undefined;
   /**
@@ -111,9 +112,9 @@ export const TodayPage = (props: TodayPageProps) => {
     onRemoveTimeBlock,
     onViewTasks,
     csrfToken,
-    online = false,
     onTasksPlanned,
-    dayOrderApi,
+    dayOrders: savedDayOrders,
+    dayOrderActions,
     pinnedNotes = [],
     focus,
   } = props;
@@ -143,12 +144,9 @@ export const TodayPage = (props: TodayPageProps) => {
   );
   const tomorrow = addCalendarDays(today, 1);
   const dayOrders = useDayOrders({
-    from: today,
-    to: tomorrow,
-    csrfToken,
-    online: online && preferences !== undefined,
-    api: dayOrderApi,
-    membersKey: dayMembersKey(tasks, [today, tomorrow]),
+    tasks,
+    saved: savedDayOrders,
+    actions: preferences === undefined ? undefined : dayOrderActions,
   });
   return (
     <div className="today-page mx-auto flex w-full max-w-5xl flex-col gap-6">
@@ -267,11 +265,7 @@ export const TodayPage = (props: TodayPageProps) => {
           order={dayOrders.orders.get(tomorrow)}
           available={dayOrders.enabled}
           busy={busy || dayOrders.pending}
-          onPlan={async (selected) => {
-            const saved = await dayOrders.plan(tomorrow, selected);
-            if (saved) onTasksPlanned?.();
-            return saved;
-          }}
+          onPlan={(selected) => dayOrders.plan(tomorrow, selected)}
           onMove={(taskId, direction) =>
             void dayOrders.move(tomorrow, taskId, direction)
           }

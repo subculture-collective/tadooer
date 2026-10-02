@@ -114,6 +114,23 @@ import qualification (#47) are recorded separately from this implementation.
 > stays an online write. The other records above are unchanged; wave 7B
 > (#114) moves them one kind at a time.
 
+> Note, 2026-10-02: day orders left this list.
+> [ADR 0050](0050-day-orders-and-time-entries-in-the-sync-feed.md) makes
+> saved day orders sync feed records in the offline cache, with
+> `day_order.reorder` under one record revision per date. A stale reorder is
+> a resource conflict; membership is derived from the tasks and reconciled
+> on apply. The full-list HTTP reorder with its exact-membership check and
+> the all-or-nothing plan route stay online writes. Conflict outcomes for
+> records now carry `reasons`, and a client skips feed kinds it does not
+> know.
+
+> Note, 2026-10-02: time entries left this list too (ADR 0050). Stored
+> manual and imported entries are feed records in a rolling 90-day cache
+> window, with `time_entry.create`, `time_entry.patch` and
+> `time_entry.delete` under one record revision; the day rules of ADR 0024
+> are checked when the server applies them. Focus time, worklog reports and
+> older history stay online.
+
 ## Consequences
 
 - Migration 0037 forces one snapshot reset per client; queued operations

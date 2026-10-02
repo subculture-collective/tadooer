@@ -1,5 +1,10 @@
 import { useEffect, useState, type SyntheticEvent } from "react";
-import type { TimeEntry, TimeReport } from "@suite/contracts";
+import {
+  syncTimeEntryWindowDays,
+  type Task,
+  type TimeEntry,
+  type TimeReport,
+} from "@suite/contracts";
 import {
   formatClockDuration,
   worklogCsv,
@@ -30,15 +35,18 @@ import {
   loadWorklog,
   minutesToMilliseconds,
   periodRange,
+  queueTimeEntryWrite,
   removeTimeEntry,
   shiftPeriod,
   worklogFileName,
   worklogRows,
+  type TimeEntryQueue,
   type WorklogApi,
   type WorklogPeriod,
   type WorklogState,
 } from "./worklog-controller.ts";
 import { useLiveRefetch } from "../live-sync/views.ts";
+import { cachedTimeReport } from "../local-time-entries.ts";
 
 const defaultApi: WorklogApi = {
   getTimeReport,
@@ -359,8 +367,11 @@ export interface WorklogPageProps {
   readonly csrfToken: string;
   readonly online: boolean;
   readonly timeZone?: string;
-  /** Active tasks that can receive manual time. */
-  readonly tasks?: readonly { readonly id: string; readonly title: string }[];
+  /**
+   * Active tasks that can receive manual time. The offline report also
+   * reads their parent, project, status and estimate.
+   */
+  readonly tasks?: readonly (Pick<Task, "id" | "title"> & Partial<Task>)[];
   readonly projects?: readonly {
     readonly id: string;
     readonly title: string;
@@ -368,6 +379,15 @@ export interface WorklogPageProps {
   readonly api?: WorklogApi;
   readonly initialState?: WorklogState;
   readonly newId?: () => string;
+  /**
+   * ADR 0050: stored time entries from the offline cache and the queued
+   * writes. Without a connection the Worklog shows a report computed from
+   * them and saves changes through the queue.
+   */
+  readonly cachedEntries?: readonly TimeEntry[];
+  readonly queue?: TimeEntryQueue | undefined;
+  /** Called after an online write so the cache can pull the change. */
+  readonly onEntriesChanged?: (() => void) | undefined;
 }
 
 const download = (name: string, text: string) => {
@@ -390,6 +410,9 @@ export const WorklogPage = ({
   api = defaultApi,
   initialState,
   newId = () => crypto.randomUUID(),
+  cachedEntries = [],
+  queue,
+  onEntriesChanged,
 }: WorklogPageProps) => {
   const today = zonedCalendarDate(new Date(), timeZone);
   const [state, setState] = useState<WorklogState>(
@@ -411,8 +434,13 @@ export const WorklogPage = ({
       setBusy(false);
     }
   };
-  const load = (period: WorklogPeriod, anchor: string) =>
-    void run(() => loadWorklog(api, period, anchor));
+  const load = (period: WorklogPeriod, anchor: string) => {
+    // Offline the report is computed from the cache; only the period moves.
+    if (!online) setState({ ...state, period, anchor, error: null });
+    else void run(() => loadWorklog(api, period, anchor));
+  };
+  /** Changes are possible online, or offline once the device has synced. */
+  const writable = online || queue !== undefined;
   useEffect(() => {
     if (!online || initialState !== undefined) return;
     load(state.period, state.anchor);
@@ -436,20 +464,22 @@ export const WorklogPage = ({
       });
       return;
     }
+    const entry = {
+      id: newId(),
+      taskId: draft.taskId,
+      workDate: draft.workDate,
+      durationMs,
+      note: draft.note.trim(),
+    };
     void run(async () => {
-      const result = await addTimeEntry(
-        api,
-        state,
-        {
-          id: newId(),
-          taskId: draft.taskId,
-          workDate: draft.workDate,
-          durationMs,
-          note: draft.note.trim(),
-        },
-        csrfToken,
-      );
-      if (result.saved) setDraft({ ...draft, minutes: "", note: "" });
+      const result =
+        online || queue === undefined
+          ? await addTimeEntry(api, state, entry, csrfToken)
+          : await queueTimeEntryWrite(state, () => queue.create(entry));
+      if (result.saved) {
+        setDraft({ ...draft, minutes: "", note: "" });
+        if (online) onEntriesChanged?.();
+      }
       return result.state;
     });
   };
@@ -473,20 +503,52 @@ export const WorklogPage = ({
       return;
     }
     void run(async () => {
-      const result = await editTimeEntry(api, state, entry, patch, csrfToken);
-      if (result.saved) setEditing(null);
+      const result =
+        online || queue === undefined
+          ? await editTimeEntry(api, state, entry, patch, csrfToken)
+          : await queueTimeEntryWrite(state, () => queue.patch(entry, patch));
+      if (result.saved) {
+        setEditing(null);
+        if (online) onEntriesChanged?.();
+      }
       return result.state;
     });
   };
   const remove = (entry: TimeEntry) =>
-    void run(
-      async () => (await removeTimeEntry(api, state, entry, csrfToken)).state,
-    );
+    void run(async () => {
+      const result =
+        online || queue === undefined
+          ? await removeTimeEntry(api, state, entry, csrfToken)
+          : await queueTimeEntryWrite(state, () => queue.remove(entry));
+      if (result.saved && online) onEntriesChanged?.();
+      return result.state;
+    });
+  // ADR 0050: without a connection the report comes from the cache alone:
+  // manual and imported entries of the cached window, no focus time.
+  const report = online
+    ? state.report
+    : cachedTimeReport({
+        entries: cachedEntries,
+        tasks: tasks.map((task) => ({
+          id: task.id,
+          title: task.title,
+          parentId: task.parentId,
+          projectId: task.projectId,
+          status: task.status ?? "open",
+          deletedAt: task.deletedAt,
+          archivedAt: task.archivedAt,
+          estimateMinutes: task.estimateMinutes,
+        })),
+        projects,
+        ...range,
+        timeZone,
+        generatedAt: new Date().toISOString(),
+      });
   const exportCsv = () => {
-    if (state.report === null) return;
+    if (report === null) return;
     download(
-      worklogFileName(state.report),
-      worklogCsv(worklogRows(state.report, projects)),
+      worklogFileName(report),
+      worklogCsv(worklogRows(report, projects)),
     );
   };
   return (
@@ -502,7 +564,12 @@ export const WorklogPage = ({
       {!online && (
         <Alert variant="warning" role="status">
           <AlertDescription>
-            The worklog needs a connection. Time entries are not kept offline.
+            Offline: this shows the manual and imported entries kept on this
+            device for the last {syncTimeEntryWindowDays} days. Focus time,
+            all-time totals and older history need a connection.{" "}
+            {queue === undefined
+              ? "Changes need a connection until this device has synced."
+              : "Changes are saved here and sync when you reconnect."}
           </AlertDescription>
         </Alert>
       )}
@@ -523,7 +590,7 @@ export const WorklogPage = ({
               Period
               <NativeSelect
                 value={state.period}
-                disabled={busy || !online}
+                disabled={busy}
                 onChange={(event) =>
                   load(
                     event.target.value === "month" ? "month" : "week",
@@ -538,7 +605,7 @@ export const WorklogPage = ({
             <Button
               type="button"
               variant="outline"
-              disabled={busy || !online}
+              disabled={busy}
               onClick={() =>
                 load(state.period, shiftPeriod(state.anchor, state.period, -1))
               }
@@ -551,7 +618,7 @@ export const WorklogPage = ({
             <Button
               type="button"
               variant="outline"
-              disabled={busy || !online}
+              disabled={busy}
               onClick={() =>
                 load(state.period, shiftPeriod(state.anchor, state.period, 1))
               }
@@ -561,7 +628,7 @@ export const WorklogPage = ({
             <Button
               type="button"
               variant="outline"
-              disabled={state.report === null || state.report.days.length === 0}
+              disabled={report === null || report.days.length === 0}
               onClick={exportCsv}
             >
               Export CSV
@@ -574,7 +641,7 @@ export const WorklogPage = ({
               Task
               <NativeSelect
                 value={draft.taskId}
-                disabled={!online}
+                disabled={!writable}
                 onChange={(event) =>
                   setDraft({ ...draft, taskId: event.target.value })
                 }
@@ -592,7 +659,7 @@ export const WorklogPage = ({
               <Input
                 type="date"
                 value={draft.workDate}
-                disabled={!online}
+                disabled={!writable}
                 onChange={(event) =>
                   setDraft({ ...draft, workDate: event.target.value })
                 }
@@ -604,7 +671,7 @@ export const WorklogPage = ({
                 type="number"
                 step="1"
                 value={draft.minutes}
-                disabled={!online}
+                disabled={!writable}
                 onChange={(event) =>
                   setDraft({ ...draft, minutes: event.target.value })
                 }
@@ -615,13 +682,13 @@ export const WorklogPage = ({
               <Input
                 maxLength={500}
                 value={draft.note}
-                disabled={!online}
+                disabled={!writable}
                 onChange={(event) =>
                   setDraft({ ...draft, note: event.target.value })
                 }
               />
             </label>
-            <Button type="submit" disabled={busy || !online}>
+            <Button type="submit" disabled={busy || !writable}>
               Add time
             </Button>
           </form>
@@ -632,10 +699,10 @@ export const WorklogPage = ({
           </p>
         </CardContent>
       </Card>
-      {state.report !== null && (
+      {report !== null && (
         <WorklogView
-          report={state.report}
-          online={online}
+          report={report}
+          online={writable}
           busy={busy}
           editing={editing}
           projects={projects}
