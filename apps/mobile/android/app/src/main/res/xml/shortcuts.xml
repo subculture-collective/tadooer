@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the launcher icon. targetPackage must equal the application
+     id in app/build.gradle. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="change_server"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_change_server"
+        android:shortcutLongLabel="@string/shortcut_change_server">
+        <intent
+            android:action="tv.subcult.tadooer.action.CHANGE_SERVER"
+            android:targetPackage="tv.subcult.tadooer"
+            android:targetClass="tv.subcult.tadooer.MainActivity" />
+    </shortcut>
+</shortcuts>

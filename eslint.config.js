@@ -3,7 +3,16 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/coverage/**", "**/node_modules/**"] },
+  {
+    ignores: [
+      "**/dist/**",
+      "**/coverage/**",
+      "**/node_modules/**",
+      // Built bundles and the Capacitor-generated Android project.
+      "apps/mobile/www/**",
+      "apps/mobile/android/**",
+    ],
+  },
   eslint.configs.recommended,
   {
     files: ["**/*.ts", "**/*.tsx"],

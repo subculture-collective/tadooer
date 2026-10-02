@@ -4,6 +4,7 @@ import { usePlannerLoader } from "./use-planner-loader.ts";
 import { googleProjectionFreshness } from "@suite/domain";
 import { archiveTask, createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
+import { PasswordConfirmation } from "./components/PasswordConfirmation.tsx";
 import {
   subscribeSessionFailure,
   type SessionFailure,
@@ -44,7 +45,7 @@ import type {
   TaskPatchRequest,
   TemplatePoolSlot,
 } from "@suite/contracts";
-import { ApiRequestError } from "@suite/contracts";
+import { ApiRequestError, trustedDeviceSessionDays } from "@suite/contracts";
 import {
   commandActiveSession,
   connectBaikal,
@@ -115,7 +116,12 @@ import {
 } from "./sync-engine.ts";
 import { LiveSyncController } from "./live-sync/controller.ts";
 import { useLiveSync } from "./live-sync/use-live-sync.ts";
-import { desktopFocusReport, useDesktopShell } from "./desktop-shell.ts";
+import {
+  captureFieldValue,
+  desktopFocusReport,
+  desktopShellBridge,
+  useDesktopShell,
+} from "./desktop-shell.ts";
 import {
   useAppLiveViews,
   type LiveAppPatch,
@@ -275,20 +281,26 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     [state.kind],
   );
   const recovery =
-    state.kind === "authenticated" && sessionFailure !== null ? (
-      <SessionRecovery
-        failure={sessionFailure}
-        username={state.session.owner.username}
-        onRecovered={(session) => {
-          setState((current) =>
-            current.kind === "authenticated"
-              ? { ...current, session }
-              : current,
-          );
-          setSessionFailure(null);
-          setFormError(null);
-        }}
-      />
+    state.kind === "authenticated" ? (
+      <>
+        {/* ADR 0048: the recent-password prompt of a trusted device. */}
+        <PasswordConfirmation csrfToken={state.session.csrfToken} />
+        {sessionFailure !== null && (
+          <SessionRecovery
+            failure={sessionFailure}
+            username={state.session.owner.username}
+            onRecovered={(session) => {
+              setState((current) =>
+                current.kind === "authenticated"
+                  ? { ...current, session }
+                  : current,
+              );
+              setSessionFailure(null);
+              setFormError(null);
+            }}
+          />
+        )}
+      </>
     ) : null;
   const [formError, setFormError] = useState<string | null>(null);
   const [baikalProbe, setBaikalProbe] = useState<BaikalProbeResponse | null>(
@@ -744,6 +756,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       const session = await login({
         username: formValue(data, "username"),
         password: formValue(data, "password"),
+        // ADR 0048: an unticked box is an ordinary browser session.
+        trustDevice: data.get("trustDevice") === "on",
       });
       await loadAuthenticated(session);
     } catch (error: unknown) {
@@ -2353,8 +2367,9 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
     },
   });
-  // ADR 0047: inside the desktop shell the tray shows this state and can ask
-  // for quick capture or a sync. In a browser this does nothing.
+  // ADR 0047 and ADR 0049: inside the desktop shell the tray shows this state
+  // and can ask for quick capture or a sync; the Android shell passes on text
+  // shared from another app. In a browser this does nothing.
   useDesktopShell({
     status: {
       sync:
@@ -2373,14 +2388,30 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       state.kind === "authenticated" ? state.activeSession : null,
       state.kind === "authenticated" ? state.tasks : [],
     ),
-    onQuickCapture: () => {
+    captureReady: state.kind === "authenticated",
+    onQuickCapture: (sharedText) => {
       if (state.kind !== "authenticated") return;
       if (route !== "today" && route !== "inbox") navigate("today");
-      window.setTimeout(() => {
-        document
-          .querySelector<HTMLInputElement>('form input[name="title"]')
-          ?.focus();
-      }, 0);
+      // The capture form may not be mounted yet, right after sign-in or a
+      // route change. Shared text waits for it for up to a second; a plain
+      // request to focus the field is tried once, as before.
+      let attempts = sharedText === undefined ? 1 : 20;
+      const place = (): void => {
+        const title = document.querySelector<HTMLInputElement>(
+          'form input[name="title"]',
+        );
+        attempts -= 1;
+        if (title === null) {
+          if (attempts > 0) window.setTimeout(place, 50);
+          return;
+        }
+        // ADR 0049: text shared to the Android app is placed in the field
+        // for the owner to review. Nothing submits it.
+        if (sharedText !== undefined)
+          title.value = captureFieldValue(title.value, sharedText);
+        title.focus();
+      };
+      window.setTimeout(place, 0);
     },
     onSyncNow: () => void syncNow(),
   });
@@ -2553,6 +2584,19 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 type="password"
                 autoComplete="current-password"
               />
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  name="trustDevice"
+                  defaultChecked={desktopShellBridge() !== undefined}
+                />
+                Keep me signed in on this device for{" "}
+                {String(trustedDeviceSessionDays)} days
+              </label>
+              <p className="hint">
+                Only choose this on a device that you alone use. You can sign a
+                device out from Settings.
+              </p>
               {state.username !== undefined && (
                 <p className="message message-error">
                   Session expired. Please sign in again.
@@ -3052,6 +3096,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             projects={projects}
             csrfToken={state.session.csrfToken}
             onRestored={syncNow}
+            onSignOut={signOut}
           />
         )}
       </AppShell>

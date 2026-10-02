@@ -21,6 +21,23 @@ import {
 } from "./credential-store.js";
 import { SqlitePlanningPreferencesStore } from "./planning-preferences-store.js";
 import { SqliteNoteStore } from "./note-store.ts";
+import {
+  SqliteDeviceSessionStore,
+  type SessionAddressFamily,
+  type SessionDeviceInput,
+  type SessionRecord,
+  type SessionRevocationReason,
+  type StoredSession,
+} from "./device-session-store.ts";
+export {
+  SqliteDeviceSessionStore,
+  type RetiredSessionToken,
+  type SessionAddressFamily,
+  type SessionDeviceInput,
+  type SessionRecord,
+  type SessionRevocationReason,
+  type StoredSession,
+} from "./device-session-store.ts";
 import type { NoteCreateInput, NotePatch, NoteRecord } from "./note-store.ts";
 import { captureMigration, SqliteCaptureStore } from "./capture-store.ts";
 import {
@@ -343,15 +360,6 @@ export interface OwnerRecord {
   readonly displayName: string;
   readonly passwordHash: string;
   readonly createdAt: string;
-}
-
-export interface SessionRecord {
-  readonly tokenHash: string;
-  readonly ownerId: string;
-  readonly csrfHash: string;
-  readonly idleExpiresAt: string;
-  readonly absoluteExpiresAt: string;
-  readonly revokedAt: string | null;
 }
 
 export interface BaikalConnectorRecord {
@@ -1755,6 +1763,40 @@ const migrations: readonly Migration[] = [
             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
     `,
   },
+  {
+    // ADR 0048: trusted-device sessions. A session with a device_id is the
+    // device record. Its token rotates: next_token_hash is a successor that
+    // was sent and not yet presented, and web_session_retired_tokens holds
+    // every replaced hash so a replay can be told from a late request.
+    // 0050 is reserved by the sync wave that runs in parallel.
+    id: "0051_trusted_device_sessions",
+    sql: `
+      ALTER TABLE web_sessions ADD COLUMN device_id TEXT;
+      ALTER TABLE web_sessions ADD COLUMN device_label TEXT
+        CHECK (device_label IS NULL OR length(device_label) BETWEEN 1 AND 100);
+      ALTER TABLE web_sessions ADD COLUMN last_address_family TEXT
+        CHECK (last_address_family IS NULL OR last_address_family IN ('ipv4', 'ipv6'));
+      ALTER TABLE web_sessions ADD COLUMN token_rotated_at TEXT;
+      ALTER TABLE web_sessions ADD COLUMN next_token_hash TEXT;
+      ALTER TABLE web_sessions ADD COLUMN next_issued_at TEXT;
+      ALTER TABLE web_sessions ADD COLUMN password_confirmed_at TEXT;
+      ALTER TABLE web_sessions ADD COLUMN revoked_reason TEXT
+        CHECK (revoked_reason IS NULL OR revoked_reason IN
+          ('signed-out', 'revoked-by-owner', 'token-reuse'));
+
+      CREATE UNIQUE INDEX web_sessions_by_device ON web_sessions(device_id);
+      CREATE UNIQUE INDEX web_sessions_by_next_token ON web_sessions(next_token_hash);
+
+      CREATE TABLE web_session_retired_tokens (
+        token_hash TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL REFERENCES web_sessions(device_id) ON DELETE CASCADE,
+        retired_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE INDEX web_session_retired_tokens_by_device
+        ON web_session_retired_tokens(device_id);
+    `,
+  },
 ];
 
 /**
@@ -1809,6 +1851,8 @@ export class SuiteDatabase {
   readonly calendarSubscriptions: SqliteCalendarSubscriptionStore;
   /** ADR 0034: owner data export and restore. */
   readonly dataExport: SqliteDataExportStore;
+  /** ADR 0048: owner sessions, trusted devices and token rotation. */
+  readonly deviceSessions: SqliteDeviceSessionStore;
   /** ADR 0041: Google-Baikal bridge state; provider I/O is in the server. */
   readonly calendarBridge: SqliteCalendarBridgeStore;
   /** ADR 0043: bridge worker schedule, leases and health aggregates. */
@@ -1817,6 +1861,7 @@ export class SuiteDatabase {
   private constructor(database: DatabaseSync) {
     this.#database = database;
     this.dataExport = new SqliteDataExportStore(database);
+    this.deviceSessions = new SqliteDeviceSessionStore(database);
     this.calendarSubscriptions = new SqliteCalendarSubscriptionStore(database);
     this.calendarBridge = new SqliteCalendarBridgeStore(database);
     this.calendarBridgeWorker = new SqliteCalendarBridgeWorkerStore(database);
@@ -2138,92 +2183,48 @@ export class SuiteDatabase {
         };
   }
 
-  createSession(session: SessionRecord & { readonly issuedAt: string }): void {
-    this.#database
-      .prepare(
-        `INSERT INTO web_sessions
-          (token_hash, owner_id, csrf_hash, issued_at, last_seen_at,
-           idle_expires_at, absolute_expires_at, revoked_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-      )
-      .run(
-        session.tokenHash,
-        session.ownerId,
-        session.csrfHash,
-        session.issuedAt,
-        session.issuedAt,
-        session.idleExpiresAt,
-        session.absoluteExpiresAt,
-      );
+  createSession(
+    session: SessionRecord & {
+      readonly issuedAt: string;
+      /** ADR 0048: present for a trusted-device session. */
+      readonly device?: SessionDeviceInput;
+    },
+  ): void {
+    this.deviceSessions.create(session);
   }
 
-  findSession(tokenHash: string): SessionRecord | undefined {
-    const row = this.#database
-      .prepare(
-        `SELECT token_hash, owner_id, csrf_hash, idle_expires_at,
-                absolute_expires_at, revoked_at
-         FROM web_sessions WHERE token_hash = ?`,
-      )
-      .get(tokenHash) as unknown as
-      | {
-          readonly token_hash: string;
-          readonly owner_id: string;
-          readonly csrf_hash: string;
-          readonly idle_expires_at: string;
-          readonly absolute_expires_at: string;
-          readonly revoked_at: string | null;
-        }
-      | undefined;
-    return row === undefined
-      ? undefined
-      : {
-          tokenHash: row.token_hash,
-          ownerId: row.owner_id,
-          csrfHash: row.csrf_hash,
-          idleExpiresAt: row.idle_expires_at,
-          absoluteExpiresAt: row.absolute_expires_at,
-          revokedAt: row.revoked_at,
-        };
+  findSession(tokenHash: string): StoredSession | undefined {
+    return this.deviceSessions.findByToken(tokenHash);
   }
 
   refreshSession(
     tokenHash: string,
     lastSeenAt: string,
     idleExpiresAt: string,
+    addressFamily?: SessionAddressFamily | null,
   ): void {
-    this.#database
-      .prepare(
-        `UPDATE web_sessions SET last_seen_at = ?, idle_expires_at = ?
-         WHERE token_hash = ? AND revoked_at IS NULL`,
-      )
-      .run(lastSeenAt, idleExpiresAt, tokenHash);
-  }
-
-  rotateSessionCsrf(tokenHash: string, csrfHash: string): void {
-    this.#database
-      .prepare(
-        "UPDATE web_sessions SET csrf_hash = ? WHERE token_hash = ? AND revoked_at IS NULL",
-      )
-      .run(csrfHash, tokenHash);
-  }
-
-  revokeSession(tokenHash: string, revokedAt: string): boolean {
-    return (
-      this.#database
-        .prepare(
-          `UPDATE web_sessions SET revoked_at = ?
-           WHERE token_hash = ? AND revoked_at IS NULL`,
-        )
-        .run(revokedAt, tokenHash).changes === 1
+    this.deviceSessions.refresh(
+      tokenHash,
+      lastSeenAt,
+      idleExpiresAt,
+      addressFamily,
     );
   }
 
-  deleteExpiredSessions(now: string): void {
-    this.#database
-      .prepare(
-        "DELETE FROM web_sessions WHERE absolute_expires_at <= ? OR revoked_at IS NOT NULL",
-      )
-      .run(now);
+  rotateSessionCsrf(tokenHash: string, csrfHash: string): void {
+    this.deviceSessions.rotateCsrf(tokenHash, csrfHash);
+  }
+
+  revokeSession(
+    tokenHash: string,
+    revokedAt: string,
+    reason?: SessionRevocationReason,
+  ): boolean {
+    return this.deviceSessions.revoke(tokenHash, revokedAt, reason);
+  }
+
+  deleteExpiredSessions(now: string, reuseRecordsBefore?: string): void {
+    this.deviceSessions.deleteExpired(now, reuseRecordsBefore);
   }
 
   putBaikalConnector(

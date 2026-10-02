@@ -1,10 +1,13 @@
 import type { ActiveSession } from "@suite/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
+  announceCaptureReady,
+  captureFieldValue,
   desktopFocusReport,
   desktopShellBridge,
   desktopShellEvents,
   listenToDesktopShell,
+  quickCaptureText,
 } from "./desktop-shell.ts";
 
 const bridge = () => ({
@@ -77,6 +80,104 @@ describe("desktop shell link", () => {
     target.dispatchEvent(new Event("tadooer:sync-now"));
     expect(handlers.onQuickCapture).toHaveBeenCalledTimes(1);
     expect(handlers.onSyncNow).toHaveBeenCalledTimes(2);
+  });
+
+  it("finds the Android shell's bridge under its own name", () => {
+    const mobile = {
+      ...bridge(),
+      platform: "android",
+      ready: vi.fn(() => true),
+    };
+    expect(desktopShellBridge({ tadooerMobile: mobile })).toBe(mobile);
+    // The desktop bridge wins when both exist, which no shell produces.
+    const desktop = bridge();
+    expect(
+      desktopShellBridge({ tadooerDesktop: desktop, tadooerMobile: mobile }),
+    ).toBe(desktop);
+    expect(
+      desktopShellBridge({ tadooerMobile: { ...bridge(), ready: "yes" } }),
+    ).toBeUndefined();
+    expect(
+      desktopShellBridge({ tadooerShell: bridge(), tadooer: bridge() }),
+    ).toBeUndefined();
+  });
+
+  it("tells only a shell that asks for it that capture is ready", () => {
+    const mobile = { ...bridge(), ready: vi.fn(() => true) };
+    expect(announceCaptureReady({ tadooerMobile: mobile })).toBe(true);
+    expect(mobile.ready).toHaveBeenCalledTimes(1);
+    expect(mobile.ready).toHaveBeenCalledWith();
+    // The desktop bridge has no such call; a browser has no bridge.
+    expect(announceCaptureReady({ tadooerDesktop: bridge() })).toBe(false);
+    expect(announceCaptureReady({})).toBe(false);
+    expect(
+      announceCaptureReady({
+        tadooerMobile: { ...bridge(), ready: () => false },
+      }),
+    ).toBe(false);
+  });
+
+  it("passes shared text from the Android shell to quick capture", () => {
+    const target = new EventTarget();
+    const handlers = { onQuickCapture: vi.fn(), onSyncNow: vi.fn() };
+    const ready = vi.fn(() => true);
+    const stop = listenToDesktopShell(
+      { tadooerMobile: { ...bridge(), ready } },
+      target,
+      handlers,
+    );
+    // Listening does not announce: the app does that once it is signed in.
+    expect(ready).not.toHaveBeenCalled();
+    target.dispatchEvent(
+      new CustomEvent("tadooer:quick-capture", {
+        detail: { text: "An article https://example.org/a" },
+      }),
+    );
+    target.dispatchEvent(new Event("tadooer:quick-capture"));
+    target.dispatchEvent(
+      new CustomEvent("tadooer:quick-capture", { detail: { text: 7 } }),
+    );
+    expect(handlers.onQuickCapture.mock.calls).toEqual([
+      ["An article https://example.org/a"],
+      [undefined],
+      [undefined],
+    ]);
+    stop();
+  });
+
+  it("accepts one bounded line as shared text and nothing else", () => {
+    const event = (detail: unknown) => ({ detail });
+    expect(quickCaptureText(event({ text: "  buy milk " }))).toBe("buy milk");
+    expect(quickCaptureText(event({ text: "x".repeat(240) }))).toBe(
+      "x".repeat(240),
+    );
+    for (const refused of [
+      undefined,
+      null,
+      "text",
+      {},
+      event(undefined),
+      event(null),
+      event("text"),
+      event({}),
+      event({ text: "" }),
+      event({ text: "   " }),
+      event({ text: "two\nlines" }),
+      event({ text: "tab\there" }),
+      event({ text: "bell\u0007" }),
+      event({ text: "del\u007f" }),
+      event({ text: "x".repeat(241) }),
+      event({ text: ["a"] }),
+    ])
+      expect(quickCaptureText(refused)).toBeUndefined();
+  });
+
+  it("keeps what the owner typed when shared text arrives", () => {
+    expect(captureFieldValue("", "shared")).toBe("shared");
+    expect(captureFieldValue("   ", "shared")).toBe("shared");
+    expect(captureFieldValue("call the bank ", "shared")).toBe(
+      "call the bank shared",
+    );
   });
 
   it("reports the active focus session with a bounded single-line label", () => {

@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Tadooer</string>
+    <string name="title_activity_main">Tadooer</string>
+    <string name="package_name">tv.subcult.tadooer</string>
+    <string name="custom_url_scheme">tadooer</string>
+    <string name="shortcut_change_server">Change server</string>
+</resources>

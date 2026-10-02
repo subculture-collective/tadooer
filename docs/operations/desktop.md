@@ -9,6 +9,14 @@ It is packaged for Linux (x64) and macOS (Apple silicon and Intel). The macOS
 package is unsigned and has not been started on a Mac yet; see "macOS smoke
 run".
 
+## Sign-in
+
+The app uses the web app's session cookie inside its persistent partition
+`persist:suite-owner`; the shell never reads it. "Keep me signed in on this
+device for 30 days" is ticked by default in the app, so it stays signed in
+across restarts while it is used at least every 30 days (ADR 0048). Sign the
+app out from another device under Settings, "Signed-in devices".
+
 ## Build and check
 
 ```sh

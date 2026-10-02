@@ -71,6 +71,12 @@ Density is tight. Controls are 30px tall. Task rows have 9px vertical padding. R
 
 Everything after the token blocks in the stylesheet lives in `@layer base` (reset, typography, native form controls) or `@layer components` (every class-based rule). Tailwind's utilities layer is declared after both, so a utility class on any element always wins over the global element and class rules. Keep new rules inside one of those two layers; an unlayered rule would silently override every utility in the app.
 
+One exception: the touch block at the end of `styles.css` (issue #117) is in `@layer utilities`, inside `@media (pointer: coarse)`. It gives controls a 44px minimum size and form text 16px on phones and tablets. The primitives set their size with utilities (`h-7`, `text-sm`), so the same rule in the components layer would lose to them. A mouse or trackpad never matches the query, so desktop density is unchanged.
+
+## Phone layout
+
+The viewport is `viewport-fit=cover` with `interactive-widget=resizes-content`. The shell, the top bar, the auth card, dialogs and sheets pad with `env(safe-area-inset-*, 0px)`; the value is 0 in a browser tab. Full-height layout uses `100dvh`, never `100vh`, so it shrinks when the on-screen keyboard opens. At 48rem and below, long titles wrap (`overflow-wrap: anywhere`) and the page padding drops to 0.75rem. `apps/web/src/phone-layout.test.ts` holds the viewport, `100dvh` and inset rules in place.
+
 ## shadcn primitives
 
 The primitives in `components/ui` consume the same tokens. There are no `dark:` variants; the app is dark by default through `:root`. Badge gains `success`, `warning`, `info`, `now`, and `calendar` variants that follow the accent table above.

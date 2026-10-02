@@ -204,6 +204,20 @@
     flex-direction: column;
   }
 
+  /* Edge-to-edge shells (viewport-fit=cover) draw the page under the status
+     bar. This strip keeps scrolled content, including a scrolled sheet, from
+     showing through it, so it sits above the overlays (z-50). The inset is 0
+     in a browser tab, so the strip has no height there. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto;
+    height: env(safe-area-inset-top, 0px);
+    background: var(--crust);
+    z-index: 60;
+    pointer-events: none;
+  }
+
   ::selection {
     background: color-mix(in srgb, var(--purple) 35%, transparent);
   }
@@ -482,6 +496,8 @@
     align-items: center;
     gap: 0.35rem;
     user-select: none;
+    max-width: 100%;
+    overflow-wrap: anywhere;
   }
   summary::-webkit-details-marker {
     display: none;
@@ -495,6 +511,7 @@
     transform: rotate(-45deg);
     transition: transform 0.12s ease;
     margin-right: 0.15rem;
+    flex-shrink: 0;
   }
   details[open] > summary::before {
     transform: rotate(45deg);
@@ -740,7 +757,7 @@
 
   .workspace {
     display: grid;
-    grid-template-columns: 13.5rem 1fr;
+    grid-template-columns: calc(13.5rem + env(safe-area-inset-left, 0px)) 1fr;
     grid-template-rows: auto 1fr;
     min-height: 100dvh;
   }
@@ -752,7 +769,9 @@
     border-right: 1px solid var(--line);
     display: flex;
     flex-direction: column;
-    padding: 0.875rem 0.625rem;
+    padding: calc(0.875rem + env(safe-area-inset-top, 0px)) 0.625rem
+      calc(0.875rem + env(safe-area-inset-bottom, 0px))
+      calc(0.625rem + env(safe-area-inset-left, 0px));
     gap: 0.5rem;
     overflow-y: auto;
     position: sticky;
@@ -872,8 +891,10 @@
     justify-content: space-between;
     gap: 0.625rem;
     min-width: 0;
-    min-height: 2.75rem;
-    padding: 0.4rem var(--spacing-page);
+    min-height: calc(2.75rem + env(safe-area-inset-top, 0px));
+    padding: calc(0.4rem + env(safe-area-inset-top, 0px))
+      max(var(--spacing-page), env(safe-area-inset-right, 0px)) 0.4rem
+      var(--spacing-page);
     border-bottom: 1px solid var(--line);
     background: color-mix(in srgb, var(--base) 88%, transparent);
     backdrop-filter: blur(8px);
@@ -902,7 +923,10 @@
   .main {
     grid-row: 2;
     grid-column: 2;
-    padding: var(--spacing-page);
+    padding: var(--spacing-page)
+      max(var(--spacing-page), env(safe-area-inset-right, 0px))
+      calc(var(--spacing-page) + env(safe-area-inset-bottom, 0px))
+      var(--spacing-page);
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -1828,7 +1852,10 @@
     align-items: center;
     justify-content: center;
     min-height: 100dvh;
-    padding: var(--spacing-page);
+    padding: max(var(--spacing-page), env(safe-area-inset-top, 0px))
+      max(var(--spacing-page), env(safe-area-inset-right, 0px))
+      max(var(--spacing-page), env(safe-area-inset-bottom, 0px))
+      max(var(--spacing-page), env(safe-area-inset-left, 0px));
     background:
       radial-gradient(
         60rem 30rem at 50% -10%,
@@ -1900,7 +1927,7 @@
 
   @media (max-width: 64rem) {
     .workspace {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto auto 1fr;
     }
     .sidebar {
@@ -1911,7 +1938,9 @@
       overflow-x: auto;
       position: static;
       height: auto;
-      padding: 0.375rem var(--spacing-page);
+      padding: calc(0.375rem + env(safe-area-inset-top, 0px))
+        max(var(--spacing-page), env(safe-area-inset-right, 0px)) 0.375rem
+        max(var(--spacing-page), env(safe-area-inset-left, 0px));
       gap: 0.25rem;
       border-right: none;
       border-bottom: 1px solid var(--line);
@@ -1933,10 +1962,14 @@
       grid-row: 2;
       grid-column: 1;
       position: static;
+      min-height: 2.75rem;
+      padding: 0.4rem max(var(--spacing-page), env(safe-area-inset-right, 0px))
+        0.4rem max(var(--spacing-page), env(safe-area-inset-left, 0px));
     }
     .main {
       grid-row: 3;
       grid-column: 1;
+      padding-left: max(var(--spacing-page), env(safe-area-inset-left, 0px));
     }
   }
 
@@ -1965,6 +1998,54 @@
       flex-direction: column;
       align-items: stretch;
     }
+
+    /* Phone widths: a long title or address wraps instead of widening the
+       page. Dialogs and sheets are portalled outside .main. */
+    .main,
+    [data-slot="dialog-content"],
+    [data-slot="sheet-content"] {
+      overflow-wrap: anywhere;
+    }
+    .time-block {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .today-task-actions > details {
+      min-width: 0;
+    }
+    /* Nested cards leave little room at 360px; give the page edge back. */
+    .workspace {
+      --spacing-page: 0.75rem;
+    }
+  }
+
+  /* ── 19b. Overlays ─────────────────────────────────────────────── */
+
+  /* Dialogs stay inside the visible viewport and scroll within it. With
+     interactive-widget=resizes-content, 100dvh shrinks when the on-screen
+     keyboard opens. The insets are 0 in a browser tab. */
+  [data-slot="dialog-content"] {
+    max-height: calc(
+      100dvh - 2rem - env(safe-area-inset-top, 0px) -
+        env(safe-area-inset-bottom, 0px)
+    );
+    overflow-y: auto;
+  }
+  [data-slot="command-list"] {
+    max-height: min(
+      300px,
+      calc(
+        100dvh - 6rem - env(safe-area-inset-top, 0px) -
+          env(safe-area-inset-bottom, 0px)
+      )
+    );
+  }
+  [data-slot="sheet-content"] {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  [data-slot="sheet-close"] {
+    margin-top: env(safe-area-inset-top, 0px);
+    margin-right: env(safe-area-inset-right, 0px);
   }
 
   /* ── 20. Utility ───────────────────────────────────────────────── */
@@ -2198,4 +2279,87 @@ html[data-theme="light"] {
 .application-preferences legend {
   font-weight: 600;
   margin-bottom: 0.5rem;
+}
+
+/* ── Touch input (issue #117) ──────────────────────────────────── */
+/* Coarse pointers get 44px tap targets and 16px form text, which stops
+   Android and iOS from zooming the page when an input takes focus. These
+   rules sit in the utilities layer on purpose: the primitives set their size
+   with utilities (h-7, size-4, text-sm), and a components-layer rule would
+   lose to them. Fine pointers never match, so desktop density is unchanged. */
+
+@layer utilities {
+  @media (pointer: coarse) {
+    button:not([role="checkbox"], [role="switch"]),
+    .button,
+    .button-link,
+    summary,
+    select,
+    textarea,
+    input:not(
+      [type="checkbox"],
+      [type="radio"],
+      [type="hidden"],
+      [type="range"]
+    ),
+    [role="tab"],
+    [cmdk-item],
+    .sidebar-nav a,
+    .offline-nav a {
+      min-height: 2.75rem;
+    }
+    button:not([role="checkbox"], [role="switch"]),
+    .button,
+    .button-link,
+    [role="tab"] {
+      min-width: 2.75rem;
+    }
+    /* :is() lifts select and textarea above the text-sm utility. */
+    :is(
+      select,
+      textarea,
+      input:not(
+        [type="checkbox"],
+        [type="radio"],
+        [type="hidden"],
+        [type="range"]
+      )
+    ) {
+      font-size: 1rem;
+      scroll-margin-block: 1rem;
+    }
+
+    /* A checkbox keeps its size; its label is the tap target. */
+    [role="checkbox"] {
+      min-height: 0;
+    }
+    label:has(> [role="checkbox"]),
+    label:has(> [role="switch"]),
+    label:has(> input[type="checkbox"]),
+    label:has(> input[type="radio"]) {
+      min-height: 2.75rem;
+    }
+
+    [data-slot="tabs-list"] {
+      height: auto;
+    }
+    /* Keep text and titles clear of the enlarged close button. */
+    [data-slot="command-input-wrapper"],
+    [data-slot="sheet-header"] {
+      padding-right: 3rem;
+    }
+    input[type="datetime-local"] {
+      padding-inline: 0.5rem;
+    }
+
+    /* The close icon stays where it was; the hit area grows around it. */
+    [data-slot="dialog-close"],
+    [data-slot="sheet-close"] {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      top: 0.25rem;
+      right: 0.25rem;
+    }
+  }
 }

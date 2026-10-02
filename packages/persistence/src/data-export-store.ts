@@ -114,6 +114,7 @@ export const dataExportExcludedTables: readonly string[] = [
   "install_metadata",
   "owner_accounts",
   "web_sessions",
+  "web_session_retired_tokens",
   "client_identities",
   "automation_tokens",
   "automation_previews",

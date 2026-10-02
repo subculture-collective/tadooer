@@ -236,6 +236,17 @@ still open, signing prerequisites and what remains for Windows are in
 [`docs/operations/desktop.md`](docs/operations/desktop.md); the boundary is
 [ADR 0047](docs/adr/0047-desktop-shell-capabilities.md).
 
+`apps/mobile` holds the Android app: a Capacitor 8 WebView around the same
+origin, with the desktop's setup page and address rules, `tadooer://` links, a
+share target that fills quick capture, and Back handling. The Suite page gets
+no Capacitor plugin; the shell stores the server address and nothing else.
+`pnpm android:debug` builds a debug APK on a machine with the Android SDK and
+JDK 21, and stops with the reason on a machine without them. No APK has been
+built or run on a device yet. Reminders still reach the phone through the ntfy
+app. Build, signing and distribution are in
+[`docs/operations/mobile.md`](docs/operations/mobile.md); the decision and
+what remains unverified are in [ADR 0049](docs/adr/0049-mobile-shell.md).
+
 The Phase 0 contract and authority decisions are recorded in
 [`docs/adr/0008-phase-0-identities-api-and-authority.md`](docs/adr/0008-phase-0-identities-api-and-authority.md).
 The bounded Phase 1 projection, write, and recovery rules are recorded in
