@@ -1,0 +1,27 @@
+{
+  "name": "@suite/mobile",
+  "productName": "Tadooer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run src scripts",
+    "build:www": "node scripts/build-www.mjs",
+    "icons": "node scripts/generate-icons.mjs",
+    "android:doctor": "node scripts/android.mjs doctor",
+    "android:sync": "node scripts/android.mjs sync",
+    "android:debug": "node scripts/android.mjs debug",
+    "android:release": "node scripts/android.mjs release",
+    "android:test": "node scripts/android.mjs test",
+    "android:cleartext": "node scripts/cleartext.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "@suite/shell-policy": "workspace:*"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2",
+    "esbuild": "0.28.1"
+  }
+}

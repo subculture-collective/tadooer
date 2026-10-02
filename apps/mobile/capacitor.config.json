@@ -1,0 +1,27 @@
+{
+  "appId": "tv.subcult.tadooer",
+  "appName": "Tadooer",
+  "webDir": "www",
+  "backgroundColor": "#11111b",
+  "server": {
+    "androidScheme": "https",
+    "errorPath": "index.html"
+  },
+  "android": {
+    "path": "android",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorCookies": {
+      "enabled": false
+    },
+    "CapacitorHttp": {
+      "enabled": false
+    },
+    "SystemBars": {
+      "insetsHandling": "native",
+      "style": "DARK",
+      "initialViewportFitValueHint": "cover"
+    }
+  }
+}
