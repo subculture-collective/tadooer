@@ -36,6 +36,7 @@ import type {
   PlanningPreferences,
   PlannerResponse,
   Note,
+  SavedDayOrder,
   Project,
   SessionResponse,
   Subtask,
@@ -104,6 +105,7 @@ import {
   type ResolveTaskConflictInput,
 } from "./local-store.ts";
 import { SyncConflictReview } from "./components/SyncConflictReview.tsx";
+import type { DayOrderActions } from "./day-order.tsx";
 import type {
   NoteQueue,
   OrganizationQueue,
@@ -303,6 +305,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const [tags, setTags] = useState<readonly Tag[]>([]);
   // ADR 0046: notes are read from the offline cache.
   const [notes, setNotes] = useState<readonly Note[]>([]);
+  // ADR 0050: saved day orders are read from the offline cache.
+  const [dayOrders, setDayOrders] = useState<readonly SavedDayOrder[]>([]);
   const pinnedNotes = notes.filter(({ pinnedToToday }) => pinnedToToday);
   const [subtasks, setSubtasks] = useState<
     Readonly<Record<string, readonly Subtask[]>>
@@ -438,16 +442,23 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   // the local cache so offline-created records are usable before they have
   // synced.
   const refreshCachedOrganization = useCallback(async () => {
-    const [cachedProjects, cachedTags, cachedSubtasks, cachedNotes] =
-      await Promise.all([
-        localStore.loadCachedProjects(),
-        localStore.loadCachedTags(),
-        localStore.loadCachedSubtasks(),
-        localStore.loadCachedNotes(),
-      ]);
+    const [
+      cachedProjects,
+      cachedTags,
+      cachedSubtasks,
+      cachedNotes,
+      cachedDayOrders,
+    ] = await Promise.all([
+      localStore.loadCachedProjects(),
+      localStore.loadCachedTags(),
+      localStore.loadCachedSubtasks(),
+      localStore.loadCachedNotes(),
+      localStore.loadCachedDayOrders(),
+    ]);
     setProjects(cachedProjects);
     setTags(cachedTags);
     setNotes(cachedNotes);
+    setDayOrders(cachedDayOrders);
     setSubtasks(
       cachedSubtasks.reduce<Record<string, Subtask[]>>((grouped, subtask) => {
         (grouped[subtask.taskId] ??= []).push(subtask);
@@ -1496,6 +1507,22 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       if (mine < 0 || theirs < 0) return;
       await localStore.queueNotePatch(note.id, { position: mine });
       await localStore.queueNotePatch(neighbour.id, { position: theirs });
+      await syncAfterLocalMutation();
+    },
+  };
+
+  // ADR 0050: a day-order reorder queues offline with the saved revision of
+  // its date. Planning tasks for a date queues one planned-day patch per
+  // task and then the order that places them after the date's members.
+  const dayOrderActions: DayOrderActions = {
+    reorder: async (date, taskIds) => {
+      await localStore.queueDayOrderReorder(date, taskIds);
+      await syncAfterLocalMutation();
+    },
+    plan: async (date, planned, order) => {
+      for (const task of planned)
+        await localStore.queueTaskPatch(task.id, { plannedDay: date });
+      await localStore.queueDayOrderReorder(date, order);
       await syncAfterLocalMutation();
     },
   };
@@ -2845,8 +2872,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             onRemoveTimeBlock={removeTimeBlock}
             onViewTasks={() => navigate("tasks")}
             csrfToken={state.session.csrfToken}
-            online={networkOnline}
             onTasksPlanned={() => void syncNow()}
+            dayOrders={dayOrders}
+            dayOrderActions={
+              state.client === undefined ? undefined : dayOrderActions
+            }
             pinnedNotes={pinnedNotes}
           />
         )}
@@ -2881,8 +2911,10 @@ export const App = ({ initialState, initialPath }: AppProps) => {
             calendars={state.baikal.calendars}
             onSubmitTimeBlock={submitPlannerTimeBlock}
             onRemoveTimeBlock={removePlannerTimeBlock}
-            csrfToken={state.session.csrfToken}
-            online={networkOnline}
+            dayOrders={dayOrders}
+            dayOrderActions={
+              state.client === undefined ? undefined : dayOrderActions
+            }
           />
         )}
         {route === "tasks" && (

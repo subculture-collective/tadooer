@@ -28,8 +28,10 @@ import {
   clientRegistrationResponseSchema,
   projectSchema,
   subtaskSchema,
-  syncRoundResponseSchema,
-  syncSnapshotResponseSchema,
+  clientSyncRoundResponseSchema,
+  clientSyncSnapshotResponseSchema,
+  type ClientSyncRoundResponse,
+  type ClientSyncSnapshotResponse,
   tagSchema,
   taskTemplateLibraryResponseSchema,
   taskTemplateSchema,
@@ -99,9 +101,7 @@ import {
   type Project,
   type Subtask,
   type SyncRoundRequest,
-  type SyncRoundResponse,
   type SyncEntitySnapshot,
-  type SyncSnapshotResponse,
   type Tag,
   type GoogleConnectorStatusResponse,
   type GoogleSyncResponse,
@@ -170,14 +170,6 @@ import {
   type EvaluationWriteRequest,
 } from "@suite/contracts";
 import {
-  dayOrderListResponseSchema,
-  dayOrderPlanRequestSchema,
-  dayOrderPlanResponseSchema,
-  dayOrderReorderRequestSchema,
-  dayOrderResponseSchema,
-  type DayOrder,
-  type DayOrderPlanRequest,
-  type Task as DayOrderPlannedTask,
   boardCreateRequestSchema,
   boardListResponseSchema,
   boardMoveRequestSchema,
@@ -669,9 +661,11 @@ export const syncRound = async (
    * session idle timer for it (ADR 0045).
    */
   trigger?: SyncRoundTrigger,
-): Promise<SyncRoundResponse> => {
+): Promise<ClientSyncRoundResponse> => {
   try {
-    return await request("/api/sync/round", syncRoundResponseSchema, {
+    // ADR 0050: a change of a kind this build does not know is skipped and
+    // counted, so a newer server cannot stall an open tab.
+    return await request("/api/sync/round", clientSyncRoundResponseSchema, {
       method: "POST",
       headers: {
         ...clientProofHeaders(client),
@@ -696,10 +690,10 @@ export const syncRound = async (
 const getSyncSnapshotPage = (
   client: LocalClientIdentity,
   offset: number,
-): Promise<SyncSnapshotResponse> =>
+): Promise<ClientSyncSnapshotResponse> =>
   request(
     `/api/sync/snapshot?offset=${String(offset)}`,
-    syncSnapshotResponseSchema,
+    clientSyncSnapshotResponseSchema,
     {
       headers: { ...clientProofHeaders(client), "X-Suite-Sync-Version": "2" },
     },
@@ -707,12 +701,13 @@ const getSyncSnapshotPage = (
 
 export const getSyncSnapshot = async (
   client: LocalClientIdentity,
-): Promise<SyncSnapshotResponse> => {
+): Promise<ClientSyncSnapshotResponse> => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const snapshots: SyncEntitySnapshot[] = [];
     let offset = 0;
+    let skippedUnknownKinds = 0;
     let expectedCursor: string | undefined;
-    let page: SyncSnapshotResponse;
+    let page: ClientSyncSnapshotResponse;
     let changed = false;
     do {
       page = await getSyncSnapshotPage(client, offset);
@@ -722,8 +717,12 @@ export const getSyncSnapshot = async (
         break;
       }
       snapshots.push(...page.snapshots);
-      offset += page.snapshots.length;
-      if (page.hasMore && page.snapshots.length === 0)
+      // ADR 0050: the offset counts what the server sent, including the
+      // records of unknown kinds that were skipped while reading the page.
+      const received = page.snapshots.length + page.skippedUnknownKinds;
+      skippedUnknownKinds += page.skippedUnknownKinds;
+      offset += received;
+      if (page.hasMore && received === 0)
         throw new Error("Sync snapshot page was empty before completion");
     } while (page.hasMore);
     if (changed) continue;
@@ -733,6 +732,7 @@ export const getSyncSnapshot = async (
       hasMore: false,
       protocolVersion: 2 as const,
       serverTimestamp: page.serverTimestamp,
+      skippedUnknownKinds,
     };
   }
   throw new Error("Sync snapshot kept changing during pagination");
@@ -1692,52 +1692,6 @@ export const deletePluginMetadata = (
     method: "DELETE",
     headers: conditionalHeaders(revision, csrfToken),
   });
-// Saved Today and planner-day order (ADR 0027). Online-only.
-export const getDayOrders = (
-  from: string,
-  to: string,
-): Promise<readonly DayOrder[]> =>
-  request(
-    `/api/day-orders?${new URLSearchParams({ from, to }).toString()}`,
-    dayOrderListResponseSchema,
-  ).then(({ dayOrders }) => dayOrders);
-
-export const reorderDayOrder = (
-  date: string,
-  expectedRevision: number,
-  taskIds: readonly string[],
-  csrfToken: string,
-): Promise<DayOrder> =>
-  request(
-    `/api/day-orders/${encodeURIComponent(date)}`,
-    dayOrderResponseSchema,
-    {
-      method: "PUT",
-      headers: { "X-CSRF-Token": csrfToken },
-      body: JSON.stringify(
-        dayOrderReorderRequestSchema.parse({ expectedRevision, taskIds }),
-      ),
-    },
-  ).then(({ dayOrder }) => dayOrder);
-
-export const planTasksForDay = (
-  date: string,
-  plan: DayOrderPlanRequest,
-  csrfToken: string,
-): Promise<{
-  readonly dayOrder: DayOrder;
-  readonly tasks: readonly DayOrderPlannedTask[];
-}> =>
-  request(
-    `/api/day-orders/${encodeURIComponent(date)}/tasks`,
-    dayOrderPlanResponseSchema,
-    {
-      method: "POST",
-      headers: { "X-CSRF-Token": csrfToken },
-      body: JSON.stringify(dayOrderPlanRequestSchema.parse(plan)),
-    },
-  );
-
 // Boards, sections, saved task views and sidebar folders (issue #63, ADR
 // 0028). Online-only HTTP records with revisions; nothing here is cached.
 

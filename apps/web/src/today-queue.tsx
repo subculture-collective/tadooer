@@ -35,9 +35,9 @@ export interface TodayQueueProps {
   ) => Promise<void>;
   readonly onRemoveTimeBlock: (task: Task) => Promise<void>;
   readonly onViewTasks: () => void;
-  /** ADR 0027: saved order of today's date-only tasks (server IDs). */
+  /** ADR 0027, 0050: saved ranks of today's date-only tasks, from the cache. */
   readonly plannedTodayOrder?: readonly string[] | undefined;
-  /** ADR 0027: moves within today's saved order; absent offline. */
+  /** Moves within today's order; absent until the device has synced once. */
   readonly onMovePlanned?:
     ((taskId: string, direction: -1 | 1) => void) | undefined;
 }
@@ -131,9 +131,9 @@ export const TodayQueue = ({
       return next;
     });
   };
-  // Only tasks the server already lists in today's order can move (ADR 0027).
-  const saved = new Set(plannedTodayOrder ?? []);
-  const movable = plannedToday.filter((task) => saved.has(task.id));
+  // ADR 0050: every planned task can move; a reorder queues offline and the
+  // server reconciles membership when it applies it.
+  const movable = plannedToday;
   const moveControls = (task: Task, state: TaskListItemState) => {
     if (state !== "planned-day" || onMovePlanned === undefined)
       return undefined;

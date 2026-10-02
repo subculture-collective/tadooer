@@ -1,5 +1,6 @@
 import type { CoreTaskField } from "@suite/contracts";
 import type {
+  DayOrderConflictVersions,
   NoteConflictVersions,
   ResolveTaskConflictInput,
   TaskConflictReview,
@@ -54,6 +55,73 @@ const entityLabel: Record<string, string> = {
   project: "Project",
   tag: "Tag",
   subtask: "Checklist item",
+  day_order: "Day order",
+};
+
+/**
+ * ADR 0050: two devices reordered the same date. The saved order is shown
+ * on Today and the Planner; the local order stays in the outbox until the
+ * owner keeps the saved one or saves the local one over it.
+ */
+const DayOrderConflictCard = ({
+  review,
+  versions,
+  busy,
+  onResolve,
+}: {
+  readonly review: TaskConflictReview;
+  readonly versions: DayOrderConflictVersions;
+  readonly busy: boolean;
+  readonly onResolve: SyncConflictReviewProps["onResolve"];
+}) => {
+  const base = {
+    operationId: review.conflict.operationId,
+    reviewedTaskRevision:
+      versions.canonical?.revision ?? review.conflict.taskRevision,
+    reviewedFieldVersions: {},
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Day order conflict</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <Alert variant="warning">
+          <AlertTitle>Your order for {versions.date} was not saved</AlertTitle>
+          <AlertDescription>
+            The order of this day changed on another device before your change
+            synced. The current order is shown on Today and the Planner. Your
+            order is kept until you choose.
+          </AlertDescription>
+        </Alert>
+        {review.retryLocalUnavailableReason === "pending-local-sync" && (
+          <p role="status">
+            A newer local reorder of this day is still syncing. Wait for it
+            before using your order.
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void onResolve({ ...base, choice: "keep-current" })}
+          >
+            Keep current order
+          </Button>
+          {review.retryLocalSupported && (
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => void onResolve({ ...base, choice: "retry-local" })}
+            >
+              Use my order
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
 };
 
 /**
@@ -179,6 +247,16 @@ export const SyncConflictReview = ({
                 key={review.conflict.operationId}
                 review={review}
                 versions={review.note}
+                busy={busy}
+                onResolve={onResolve}
+              />
+            );
+          if (review.dayOrder !== undefined)
+            return (
+              <DayOrderConflictCard
+                key={review.conflict.operationId}
+                review={review}
+                versions={review.dayOrder}
                 busy={busy}
                 onResolve={onResolve}
               />

@@ -9,6 +9,8 @@ import {
   syncOperationEntity,
   syncOperationSchema,
   noteSchema,
+  savedDayOrderSchema,
+  syncEntityKindsSignature,
   projectSchema,
   subtaskSchema,
   tagSchema,
@@ -16,6 +18,7 @@ import {
   type CoreTaskField,
   type Note,
   type Project,
+  type SavedDayOrder,
   type Subtask,
   type SyncChange,
   type SyncDiagnosticManifest,
@@ -39,6 +42,11 @@ import {
   noteIdForOperation,
   type NoteOperation,
 } from "./local-notes.ts";
+import {
+  applyDayOrderOperation,
+  isDayOrderOperation,
+  type DayOrderOperation,
+} from "./local-day-orders.ts";
 
 const databaseName = "suite-local-v1";
 const databaseVersion = 2;
@@ -58,6 +66,7 @@ export type CachedEntityKind =
   | "tag"
   | "subtask"
   | "note"
+  | "day_order"
   | "template"
   | "template_set"
   | "choice_pool"
@@ -88,6 +97,8 @@ export interface LocalConflict {
   readonly code: "SYNC_FIELD_CONFLICT" | "SYNC_RESOURCE_CONFLICT";
   /** ADR 0033: absent in conflicts recorded before structural writes. */
   readonly entityKind?: SyncEntityKind;
+  /** ADR 0050: why a record operation was refused, when the server said. */
+  readonly reasons?: readonly string[];
 }
 
 /** Task fields the outbox can patch (ADR 0010, 0017, 0033). */
@@ -156,6 +167,18 @@ export interface NoteConflictVersions {
   readonly keepBothSupported: boolean;
 }
 
+/**
+ * ADR 0050: both orders of a conflicted day-order reorder. The server's
+ * saved order is in the cache and the local attempt is in the outbox.
+ */
+export interface DayOrderConflictVersions {
+  readonly date: string;
+  /** The saved order as cached after the conflict; null when none is saved. */
+  readonly canonical: SavedDayOrder | null;
+  /** The order the local reorder wanted; null when it left the outbox. */
+  readonly attempted: readonly string[] | null;
+}
+
 type TaskPatchOperation = Extract<
   SyncOperation,
   { readonly kind: "task.patch" }
@@ -174,6 +197,8 @@ export interface TaskConflictReview {
     "pending-local-sync" | "unsupported" | null;
   /** Present for a note conflict (ADR 0046). */
   readonly note?: NoteConflictVersions;
+  /** Present for a day-order conflict (ADR 0050). */
+  readonly dayOrder?: DayOrderConflictVersions;
 }
 
 export interface ResolveTaskConflictInput {
@@ -190,6 +215,19 @@ interface LocalMetadata extends LocalClientIdentity {
   readonly nextClientSequence: number;
   readonly syncProtocolVersion: 2;
   readonly resetRequired: boolean;
+  /**
+   * ADR 0050: changes and snapshot records skipped since the last snapshot
+   * because their entity kind was unknown, and the kinds signature of the
+   * build that skipped them. A build with another signature replaces the
+   * cache from a snapshot, so the skipped records are not lost.
+   */
+  readonly skippedUnknownKinds?: number;
+  readonly skippedByKinds?: string;
+}
+
+/** What a sync round or snapshot skipped while it was read (ADR 0050). */
+interface SkippedKinds {
+  readonly skippedUnknownKinds?: number | undefined;
 }
 
 type RegisterClient = () => Promise<ClientRegistrationResponse>;
@@ -329,6 +367,30 @@ const hasNewerActiveNoteMutation = (
       (state === "queued" || state === "sending") &&
       isNoteOperation(operation) &&
       noteIdForOperation(operation) === noteId,
+  );
+
+const dayOrderEntity = (
+  order: SavedDayOrder,
+  changeSequence = 0,
+): CachedEntity => ({
+  entityKind: "day_order",
+  id: order.date,
+  value: order,
+  revision: order.revision,
+  changeSequence,
+});
+
+const hasNewerActiveDayOrderMutation = (
+  entries: readonly LocalOutboxEntry[],
+  date: string,
+  clientSequence: number,
+): boolean =>
+  entries.some(
+    ({ operation, state }) =>
+      operation.clientSequence > clientSequence &&
+      (state === "queued" || state === "sending") &&
+      isDayOrderOperation(operation) &&
+      operation.date === date,
   );
 
 const noteEntity = (note: Note, changeSequence = 0): CachedEntity => ({
@@ -474,7 +536,13 @@ export class LocalStore {
 
   async requiresSnapshot(): Promise<boolean> {
     const metadata = await this.#metadata();
-    return metadata?.syncProtocolVersion !== 2 || metadata.resetRequired;
+    return (
+      metadata?.syncProtocolVersion !== 2 ||
+      metadata.resetRequired ||
+      // ADR 0050: an older build skipped records this build can cache.
+      ((metadata.skippedUnknownKinds ?? 0) > 0 &&
+        metadata.skippedByKinds !== syncEntityKindsSignature)
+    );
   }
 
   async markResetRequired(): Promise<void> {
@@ -631,6 +699,18 @@ export class LocalStore {
       .sort(compareNotes);
   }
 
+  /**
+   * ADR 0050: the saved day orders in the cache, pending reorders included.
+   * `taskIds` are saved ranks; the views derive each date's members from the
+   * cached tasks and sort them by these ranks.
+   */
+  async loadCachedDayOrders(): Promise<readonly SavedDayOrder[]> {
+    return (await this.loadCachedEntities())
+      .filter(({ entityKind }) => entityKind === "day_order")
+      .map(({ value }) => savedDayOrderSchema.parse(value))
+      .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
   /** Cache an acknowledged initial create without moving the sync cursor. */
   async cacheCreatedTask(task: Task): Promise<void> {
     if (task.revision !== 1) return;
@@ -729,6 +809,42 @@ export class LocalStore {
             note: versions,
           };
         }
+        if (conflictEntityKind(conflict) === "day_order") {
+          // ADR 0050: the saved order beside the order this client wanted.
+          const cachedOrder = (await requestResult(
+            entities.get(entityKey("day_order", conflict.taskId)),
+          )) as CachedEntity | undefined;
+          const attempted =
+            entry !== undefined && isDayOrderOperation(entry.operation)
+              ? entry.operation.taskIds
+              : null;
+          const pending =
+            entry !== undefined &&
+            hasNewerActiveDayOrderMutation(
+              allEntries,
+              conflict.taskId,
+              entry.operation.clientSequence,
+            );
+          return {
+            conflict,
+            canonical: null,
+            attemptedFields: null,
+            retryLocalSupported: attempted !== null && !pending,
+            retryLocalUnavailableReason: pending
+              ? "pending-local-sync"
+              : attempted === null
+                ? "unsupported"
+                : null,
+            dayOrder: {
+              date: conflict.taskId,
+              canonical:
+                cachedOrder === undefined
+                  ? null
+                  : savedDayOrderSchema.parse(cachedOrder.value),
+              attempted,
+            },
+          };
+        }
         const attemptedFields =
           entry?.operation.kind === "task.patch"
             ? entry.operation.fields
@@ -774,6 +890,8 @@ export class LocalStore {
       throw new Error("Sync conflict is no longer available");
     if (review.note !== undefined)
       return this.#resolveNoteConflict(review, review.note, input);
+    if (review.dayOrder !== undefined)
+      return this.#resolveDayOrderConflict(review, review.dayOrder, input);
     if (input.choice === "keep-both")
       throw new Error("Only a note conflict can keep both versions");
     if (conflictEntityKind(review.conflict) !== "task") {
@@ -1210,6 +1328,32 @@ export class LocalStore {
     return operation;
   }
 
+  /**
+   * ADR 0050: save the order of a date offline. The base revision is the
+   * cached one (0 when the date has no saved order), which already counts
+   * this client's pending reorders.
+   */
+  async queueDayOrderReorder(
+    date: string,
+    taskIds: readonly string[],
+  ): Promise<SyncOperation> {
+    const metadata = await this.#requiredMetadata();
+    const database = await this.#open();
+    const read = database.transaction(entityStore, "readonly");
+    const cached = (await requestResult(
+      read.objectStore(entityStore).get(entityKey("day_order", date)),
+    )) as CachedEntity | undefined;
+    await transactionDone(read);
+    const operation = await this.#dayOrderOperation(
+      metadata,
+      date,
+      taskIds,
+      cached?.revision ?? 0,
+    );
+    await this.#queueDayOrderOperation(operation);
+    return operation;
+  }
+
   async queueTaskStatus(
     taskId: string,
     completed: boolean,
@@ -1302,7 +1446,9 @@ export class LocalStore {
     );
   }
 
-  async applySyncRound(response: SyncRoundResponse): Promise<void> {
+  async applySyncRound(
+    response: SyncRoundResponse & SkippedKinds,
+  ): Promise<void> {
     const database = await this.#open();
     const transaction = database.transaction(
       [metadataStore, entityStore, outboxStore, conflictStore, diagnosticStore],
@@ -1333,6 +1479,9 @@ export class LocalStore {
           conflictingFields: outcome.conflictingFields ?? null,
           code: outcome.code,
           entityKind: outcome.entityKind ?? "task",
+          ...(outcome.reasons === undefined
+            ? {}
+            : { reasons: outcome.reasons }),
         } satisfies LocalConflict);
       } else {
         outbox.put({
@@ -1350,6 +1499,15 @@ export class LocalStore {
         entry.operation.kind === "note.create"
       )
         entities.delete(entityKey("note", entry.operation.note.id));
+      // ADR 0050: a refused reorder must not stay as the cached order. The
+      // saved order, when one exists, is among the changes applied next;
+      // without one the date falls back to its derived order.
+      if (
+        outcome.kind !== "applied" &&
+        outcome.kind !== "replayed" &&
+        entry.operation.kind === "day_order.reorder"
+      )
+        entities.delete(entityKey("day_order", entry.operation.date));
     }
 
     for (const change of response.changes) this.#applyChange(entities, change);
@@ -1362,6 +1520,15 @@ export class LocalStore {
           .map(({ entityId }) => entityId),
       ),
     );
+    await this.#rebasePendingDayOrders(
+      entities,
+      outbox,
+      new Set([
+        ...response.changes
+          .filter(({ entityKind }) => entityKind === "day_order")
+          .map(({ entityId }) => entityId),
+      ]),
+    );
 
     const metadata = (await requestResult(
       metadataStoreHandle.get(metadataKey),
@@ -1370,10 +1537,21 @@ export class LocalStore {
       transaction.abort();
       throw new Error("A registered client is required before applying sync");
     }
+    // ADR 0050: changes of a kind this build does not know were skipped
+    // while the round was read. The cursor still advances past them, and
+    // the count is kept so a newer build takes a snapshot.
+    const skipped = response.skippedUnknownKinds ?? 0;
     metadataStoreHandle.put(
       {
         ...metadata,
         cursor: response.nextCursor,
+        ...(skipped === 0
+          ? {}
+          : {
+              skippedUnknownKinds:
+                (metadata.skippedUnknownKinds ?? 0) + skipped,
+              skippedByKinds: syncEntityKindsSignature,
+            }),
       },
       metadataKey,
     );
@@ -1383,11 +1561,14 @@ export class LocalStore {
       at: response.serverTimestamp,
       outcomeCount: response.outcomes.length,
       changeCount: response.changes.length,
+      skippedUnknownKinds: skipped,
     });
     await transactionDone(transaction);
   }
 
-  async replaceFromSnapshot(response: SyncSnapshotResponse): Promise<void> {
+  async replaceFromSnapshot(
+    response: SyncSnapshotResponse & SkippedKinds,
+  ): Promise<void> {
     if (response.hasMore)
       throw new Error(
         "A complete snapshot is required before cache replacement",
@@ -1430,7 +1611,12 @@ export class LocalStore {
           revision: snapshot.value.revision,
           changeSequence: 0,
         });
-      if (snapshot.entityKind === "task") {
+      if (snapshot.entityKind === "day_order") {
+        // ADR 0050: a saved day order is keyed by its date.
+        const entity = dayOrderEntity(snapshot.value);
+        structural.set(`day_order:${entity.id}`, entity);
+        entities.put(entity);
+      } else if (snapshot.entityKind === "task") {
         const value = snapshot.value;
         taskSnapshots.set(value.task.id, value);
         entities.put({
@@ -1599,6 +1785,9 @@ export class LocalStore {
         cursor: response.nextCursor,
         syncProtocolVersion: 2,
         resetRequired: false,
+        // ADR 0050: the count restarts with the cache it describes.
+        skippedUnknownKinds: response.skippedUnknownKinds ?? 0,
+        skippedByKinds: syncEntityKindsSignature,
       },
       metadataKey,
     );
@@ -1607,6 +1796,7 @@ export class LocalStore {
     diagnostics.add({
       at: response.serverTimestamp,
       snapshotCount: response.snapshots.length,
+      skippedUnknownKinds: response.skippedUnknownKinds ?? 0,
       reset: true,
     });
     await transactionDone(transaction);
@@ -1626,6 +1816,7 @@ export class LocalStore {
         ({ state }) => state === "queued" || state === "sending",
       ).length,
       conflictCount: conflicts.length,
+      skippedUnknownKindCount: metadata.skippedUnknownKinds ?? 0,
       operations: outbox.map(({ operation, state, safeErrorCode }) => ({
         operationId: operation.operationId,
         entityId: isHabitSyncOperation(operation)
@@ -2009,6 +2200,170 @@ export class LocalStore {
     return operation;
   }
 
+  async #dayOrderOperation(
+    metadata: LocalMetadata,
+    date: string,
+    taskIds: readonly string[],
+    baseRevision: number,
+  ): Promise<DayOrderOperation> {
+    const operation = await this.#operation(metadata, "day_order.reorder", {
+      date,
+      taskIds,
+      baseRevision,
+    });
+    if (!isDayOrderOperation(operation))
+      throw new Error("Expected a day-order operation");
+    return operation;
+  }
+
+  /**
+   * ADR 0050: queue one reorder and write the order it produces to the
+   * cache in the same transaction. With `resolves`, the conflicted reorder
+   * it replaces is retired and its conflict removed atomically.
+   */
+  async #queueDayOrderOperation(
+    operation: DayOrderOperation,
+    resolves?: {
+      readonly operationId: string;
+      /** The saved revision the owner reviewed; null when none is saved. */
+      readonly reviewedRevision: number | null;
+    },
+  ): Promise<void> {
+    const database = await this.#open();
+    const transaction = database.transaction(
+      [metadataStore, entityStore, outboxStore, conflictStore],
+      "readwrite",
+    );
+    const fail = (message: string): never => {
+      transaction.abort();
+      throw new Error(message);
+    };
+    const metadataHandle = transaction.objectStore(metadataStore);
+    const metadata = (await requestResult(metadataHandle.get(metadataKey))) as
+      LocalMetadata | undefined;
+    if (metadata === undefined)
+      return fail("A registered client is required before queueing");
+    // The base revision was read before this transaction; a reorder queued
+    // in between would make it stale.
+    if (metadata.nextClientSequence !== operation.clientSequence)
+      return fail("A newer local change was queued first; try again");
+    const entities = transaction.objectStore(entityStore);
+    const outbox = transaction.objectStore(outboxStore);
+    const key = entityKey("day_order", operation.date);
+    const cached = (await requestResult(entities.get(key))) as
+      CachedEntity | undefined;
+    if (resolves !== undefined) {
+      const conflicts = transaction.objectStore(conflictStore);
+      const original = (await requestResult(
+        outbox.get(resolves.operationId),
+      )) as LocalOutboxEntry | undefined;
+      const conflict: unknown = await requestResult(
+        conflicts.get(resolves.operationId),
+      );
+      if (
+        original === undefined ||
+        conflict === undefined ||
+        (cached?.revision ?? null) !== resolves.reviewedRevision
+      )
+        return fail("Sync conflict changed before it could be resolved");
+      outbox.put({
+        ...original,
+        state: "resolved",
+        resolvedAt: this.#now(),
+        resolutionChoice: "retry-local",
+        replacementOperationId: operation.operationId,
+      } satisfies LocalOutboxEntry);
+      conflicts.delete(resolves.operationId);
+    }
+    entities.put(
+      dayOrderEntity(applyDayOrderOperation(operation), cached?.changeSequence),
+    );
+    metadataHandle.put(
+      { ...metadata, nextClientSequence: metadata.nextClientSequence + 1 },
+      metadataKey,
+    );
+    outbox.put({
+      operation,
+      state: "queued",
+      safeErrorCode: null,
+    } satisfies LocalOutboxEntry);
+    await transactionDone(transaction);
+  }
+
+  /**
+   * ADR 0050: after a round delivered saved day orders, re-apply this
+   * client's still-pending reorders of those dates, so a reorder queued
+   * while the round was in flight stays visible and the next one is queued
+   * against the revision it will produce.
+   */
+  async #rebasePendingDayOrders(
+    entities: IDBObjectStore,
+    outbox: IDBObjectStore,
+    dates: ReadonlySet<string>,
+  ): Promise<void> {
+    if (dates.size === 0) return;
+    const pending = (
+      (await requestResult(outbox.getAll())) as LocalOutboxEntry[]
+    )
+      .filter(({ state }) => state === "queued" || state === "sending")
+      .map(({ operation }) => operation)
+      .filter(isDayOrderOperation)
+      .filter(({ date }) => dates.has(date))
+      .sort((left, right) => left.clientSequence - right.clientSequence);
+    for (const operation of pending) {
+      const key = entityKey("day_order", operation.date);
+      const cached = (await requestResult(entities.get(key))) as
+        CachedEntity | undefined;
+      entities.put(
+        dayOrderEntity(
+          applyDayOrderOperation(operation),
+          cached?.changeSequence,
+        ),
+      );
+    }
+  }
+
+  /**
+   * ADR 0050: a day-order conflict keeps both orders until the owner
+   * chooses. `keep-current` leaves the saved order; `retry-local` queues the
+   * local order again against the saved revision that was reviewed.
+   */
+  async #resolveDayOrderConflict(
+    review: TaskConflictReview,
+    versions: DayOrderConflictVersions,
+    input: ResolveTaskConflictInput,
+  ): Promise<SyncOperation | null> {
+    const reviewedRevision = versions.canonical?.revision ?? null;
+    if (
+      input.reviewedTaskRevision !==
+      (reviewedRevision ?? review.conflict.taskRevision)
+    )
+      throw new Error("The day order changed; review the latest order");
+    if (input.choice === "keep-current") {
+      await this.#dismissConflict(input.operationId);
+      return null;
+    }
+    if (input.choice !== "retry-local")
+      throw new Error("Only a note conflict can keep both versions");
+    if (review.retryLocalUnavailableReason === "pending-local-sync")
+      throw new Error(
+        "A newer local change must finish syncing before retrying",
+      );
+    if (!review.retryLocalSupported || versions.attempted === null)
+      throw new Error("This sync conflict cannot be retried locally");
+    const operation = await this.#dayOrderOperation(
+      await this.#requiredMetadata(),
+      versions.date,
+      versions.attempted,
+      reviewedRevision ?? 0,
+    );
+    await this.#queueDayOrderOperation(operation, {
+      operationId: input.operationId,
+      reviewedRevision,
+    });
+    return operation;
+  }
+
   /** Queue one structural operation and apply it to the cache atomically. */
   async #queueAndWriteEntity(
     operation: SyncOperation,
@@ -2168,6 +2523,14 @@ export class LocalStore {
         next = note === null ? null : noteEntity(note, current?.changeSequence);
         break;
       }
+      case "day_order.reorder":
+        // ADR 0050: the queued order stands in for the saved one. A reorder
+        // of a stale revision still conflicts when the server applies it.
+        next = dayOrderEntity(
+          applyDayOrderOperation(operation),
+          current?.changeSequence,
+        );
+        break;
       default:
         return;
     }

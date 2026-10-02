@@ -30,6 +30,9 @@ export const liveSyncHeartbeatSeconds = 25;
  * announces them with `changes` and no longer emits this family. The name
  * stays in the enum until a later contract cleanup so that a client built
  * against this version still parses a stream from an older server.
+ *
+ * `day_orders` is retired the same way (ADR 0050): saved day orders are feed
+ * records.
  */
 export const liveSyncResourceFamilies = [
   "all",

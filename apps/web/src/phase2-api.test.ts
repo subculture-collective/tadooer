@@ -247,6 +247,93 @@ describe("Phase 2 API transport", () => {
     });
   });
 
+  it("pages a snapshot by what the server sent when it skips unknown kinds (ADR 0050)", async () => {
+    const calls: string[] = [];
+    const project = (id: string) => ({
+      entityKind: "project",
+      value: {
+        id,
+        ownerId: "4519c805-e478-486b-a918-616fc6d9ea98",
+        title: "Home",
+        revision: 1,
+        createdAt: "2026-08-06T16:00:00.000Z",
+        updatedAt: "2026-08-06T16:00:00.000Z",
+        archivedAt: null,
+      },
+    });
+    const unknown = { entityKind: "kanban_lane", value: { id: "lane" } };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((path: string) => {
+        calls.push(path);
+        const first = calls.length === 1;
+        return Promise.resolve(
+          response({
+            // A page of unknown kinds only must not stop the pagination.
+            snapshots: first
+              ? [unknown, unknown]
+              : calls.length === 2
+                ? [project("728a504a-0997-4eb3-94dd-5d6ff8af5967"), unknown]
+                : [],
+            nextCursor: "sync-v1.epoch.2.tag",
+            hasMore: calls.length < 3,
+            protocolVersion: 2 as const,
+            serverTimestamp: "2026-08-06T16:00:00.000Z",
+          }),
+        );
+      }),
+    );
+
+    const snapshot = await getSyncSnapshot(client);
+
+    expect(calls).toEqual([
+      "/api/sync/snapshot?offset=0",
+      "/api/sync/snapshot?offset=2",
+      "/api/sync/snapshot?offset=4",
+    ]);
+    expect(snapshot.snapshots).toHaveLength(1);
+    expect(snapshot.skippedUnknownKinds).toBe(3);
+  });
+
+  it("skips a sync round change of an unknown kind and keeps the round's cursor (ADR 0050)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          response({
+            protocolVersion: 2,
+            outcomes: [],
+            changes: [
+              {
+                sequence: 5,
+                entityKind: "kanban_lane",
+                entityId: "728a504a-0997-4eb3-94dd-5d6ff8af5967",
+                kind: "upsert",
+                entityRevision: 1,
+                changedAt: "2026-08-06T16:00:00.000Z",
+                snapshot: { entityKind: "kanban_lane", value: {} },
+              },
+            ],
+            nextCursor: "sync-v1.epoch.5.tag",
+            hasMore: false,
+            serverTimestamp: "2026-08-06T16:00:00.000Z",
+          }),
+        ),
+      ),
+    );
+    await expect(
+      syncRound(client, "csrf-token", {
+        cursor: client.cursor,
+        operations: [],
+        pullLimit: 100,
+      }),
+    ).resolves.toMatchObject({
+      changes: [],
+      skippedUnknownKinds: 1,
+      nextCursor: "sync-v1.epoch.5.tag",
+    });
+  });
+
   it("restarts snapshot pagination when the authoritative cursor changes", async () => {
     const calls: string[] = [];
     vi.stubGlobal(

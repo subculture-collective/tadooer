@@ -95,6 +95,8 @@ import {
   dayOrderResponseSchema,
   dayOrderSchema,
   dayStartsAtSchema,
+  savedDayOrderSchema,
+  syncDayOrderReorderFields,
 } from "./day-order.ts";
 import {
   automationBoardMutationInputSchema,
@@ -195,6 +197,11 @@ export const idempotencyKeySchema = z
 
 export const revisionSchema = z.number().int().positive();
 export const entityIdSchema = z.uuid();
+/**
+ * ADR 0050: the identity of a sync feed record. Most kinds use a UUID; a
+ * saved day order is keyed by its calendar date.
+ */
+export const syncEntityKeySchema = z.union([entityIdSchema, z.iso.date()]);
 export const quotedRevisionEtagSchema = z.string().regex(/^"[1-9][0-9]*"$/);
 export const strongDavEtagSchema = z.string().regex(/^"[^"\r\n]+"$/);
 
@@ -1593,6 +1600,8 @@ const syncEntityKindSchema = z.enum([
   "tag",
   "subtask",
   "note",
+  // ADR 0050.
+  "day_order",
 ]);
 
 // ADR 0033: project and tag lifecycle. Records keep one revision, so a stale
@@ -1756,13 +1765,20 @@ export const syncOperationSchema = z.discriminatedUnion("kind", [
     noteId: entityIdSchema,
     baseRevision: revisionSchema,
   }),
+  // ADR 0050: a saved day order is one record per date with one revision.
+  // A reorder of a stale revision is a resource conflict; membership is
+  // derived from the tasks, so it is reconciled on apply and never conflicts.
+  syncOperationBaseSchema.extend({
+    kind: z.literal("day_order.reorder"),
+    ...syncDayOrderReorderFields,
+  }),
 ]);
 
 export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.enum(["applied", "replayed"]),
     operationId: entityIdSchema,
-    entityId: entityIdSchema,
+    entityId: syncEntityKeySchema,
     entityRevision: revisionSchema,
     changeSequence: revisionSchema,
   }),
@@ -1773,9 +1789,15 @@ export const syncOperationOutcomeSchema = z.discriminatedUnion("kind", [
     /** ADR 0033, ADR 0046: which record conflicted; absent means a task. */
     entityKind: syncEntityKindSchema.optional(),
     /** The conflicting entity's ID and revision for every entity kind. */
-    taskId: entityIdSchema,
+    taskId: syncEntityKeySchema,
     taskRevision: revisionSchema,
     conflictingFields: z.array(coreTaskFieldSchema).min(1).max(8).optional(),
+    /**
+     * ADR 0050: why a record operation was refused, for kinds other than
+     * tasks: `revision`, `record`, or the rule the write broke. Display
+     * only; a client that does not know a reason shows the general text.
+     */
+    reasons: z.array(z.string().min(1).max(40)).max(8).optional(),
   }),
   z.object({
     kind: z.literal("rejected"),
@@ -1927,6 +1949,8 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   z.object({ entityKind: z.literal("subtask"), value: subtaskSchema }),
   // ADR 0046: the whole note, as the HTTP note routes return it.
   z.object({ entityKind: z.literal("note"), value: noteSchema }),
+  // ADR 0050: the saved ranks of one date; members stay derived from tasks.
+  z.object({ entityKind: z.literal("day_order"), value: savedDayOrderSchema }),
   z.object({
     entityKind: z.literal("template"),
     value: syncTaskTemplateSnapshotSchema,
@@ -1959,13 +1983,14 @@ export const syncChangeSchema = z.object({
     "tag",
     "subtask",
     "note",
+    "day_order",
     "template",
     "template_set",
     "choice_pool",
     "planning_placeholder",
     "active_session",
   ]),
-  entityId: entityIdSchema,
+  entityId: syncEntityKeySchema,
   kind: z.enum(["upsert", "deleted", "session_changed"]),
   entityRevision: revisionSchema,
   changedAt: z.iso.datetime(),
@@ -2008,10 +2033,71 @@ export const syncSnapshotResponseSchema = z.object({
   serverTimestamp: z.iso.datetime(),
 });
 
+/**
+ * ADR 0050: the entity kinds this build can cache. A newer server may send
+ * a kind that is not listed here.
+ */
+export const syncKnownEntityKinds: readonly string[] =
+  syncChangeSchema.shape.entityKind.options;
+
+/**
+ * Identifies the set of kinds a build knows. A cache that skipped records
+ * under another signature is replaced from a snapshot (ADR 0050).
+ */
+export const syncEntityKindsSignature = [...syncKnownEntityKinds]
+  .sort()
+  .join(",");
+
+const hasUnknownEntityKind = (item: unknown): boolean =>
+  item !== null &&
+  typeof item === "object" &&
+  "entityKind" in item &&
+  typeof item.entityKind === "string" &&
+  !syncKnownEntityKinds.includes(item.entityKind);
+
+/** Drops list items of an unknown entity kind and counts them. */
+const withoutUnknownKinds =
+  (list: "changes" | "snapshots") =>
+  (input: unknown): unknown => {
+    if (input === null || typeof input !== "object") return input;
+    const items = (input as Record<string, unknown>)[list];
+    if (!Array.isArray(items)) return input;
+    const known = items.filter((item) => !hasUnknownEntityKind(item));
+    return {
+      ...input,
+      [list]: known,
+      skippedUnknownKinds: items.length - known.length,
+    };
+  };
+
+const skippedUnknownKindsSchema = z.number().int().nonnegative().default(0);
+
+/**
+ * ADR 0050: how a client reads a sync round. A change whose `entityKind` it
+ * does not know is skipped and counted instead of failing the whole round,
+ * so a tab running an older bundle keeps syncing the kinds it knows after a
+ * deploy, and its cursor keeps advancing. A change of a known kind must
+ * still be valid. The server contract stays `syncRoundResponseSchema`.
+ */
+export const clientSyncRoundResponseSchema = z.preprocess(
+  withoutUnknownKinds("changes"),
+  syncRoundResponseSchema.extend({
+    skippedUnknownKinds: skippedUnknownKindsSchema,
+  }),
+);
+
+/** ADR 0050: a snapshot page read with the same tolerance. */
+export const clientSyncSnapshotResponseSchema = z.preprocess(
+  withoutUnknownKinds("snapshots"),
+  syncSnapshotResponseSchema.extend({
+    skippedUnknownKinds: skippedUnknownKindsSchema,
+  }),
+);
+
 export const syncDiagnosticOperationSchema = z
   .object({
     operationId: entityIdSchema,
-    entityId: entityIdSchema.nullable(),
+    entityId: syncEntityKeySchema.nullable(),
     kind: z.enum([
       "habit.create",
       "habit.patch",
@@ -2035,6 +2121,7 @@ export const syncDiagnosticOperationSchema = z
       "note.create",
       "note.patch",
       "note.delete",
+      "day_order.reorder",
     ]),
     state: z.enum([
       "queued",
@@ -2045,7 +2132,8 @@ export const syncDiagnosticOperationSchema = z
       "rejected",
     ]),
     requestHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-    baseRevision: revisionSchema.nullable(),
+    /** 0 for a first reorder of a date with no saved order (ADR 0050). */
+    baseRevision: z.number().int().nonnegative().nullable(),
     safeErrorCode: apiErrorCodeSchema.nullable(),
   })
   .strict();
@@ -2059,6 +2147,11 @@ export const syncDiagnosticManifestSchema = z
     cursor: syncCursorSchema.nullable(),
     pendingOperationCount: z.number().int().nonnegative(),
     conflictCount: z.number().int().nonnegative(),
+    /**
+     * ADR 0050: changes and snapshot records this client skipped because it
+     * did not know their entity kind, since its last snapshot.
+     */
+    skippedUnknownKindCount: z.number().int().nonnegative().optional(),
     operations: z.array(syncDiagnosticOperationSchema).max(500),
   })
   .strict();
@@ -4390,6 +4483,13 @@ export type SyncRoundRequest = z.infer<typeof syncRoundRequestSchema>;
 export type SyncRoundResponse = z.infer<typeof syncRoundResponseSchema>;
 export type SyncCursorExpired = z.infer<typeof syncCursorExpiredSchema>;
 export type SyncSnapshotResponse = z.infer<typeof syncSnapshotResponseSchema>;
+/** A round as a client read it, with the count of skipped unknown kinds. */
+export type ClientSyncRoundResponse = z.infer<
+  typeof clientSyncRoundResponseSchema
+>;
+export type ClientSyncSnapshotResponse = z.infer<
+  typeof clientSyncSnapshotResponseSchema
+>;
 export type SyncDiagnosticManifest = z.infer<
   typeof syncDiagnosticManifestSchema
 >;
@@ -4433,7 +4533,7 @@ export const isHabitSyncOperation = (
 
 export type SyncEntityKind = z.infer<typeof syncEntityKindSchema>;
 
-/** The cached record an operation writes (ADR 0033, 0046); habits are separate. */
+/** The cached record an operation writes (ADR 0033, 0046, 0050); habits are separate. */
 export const syncOperationEntity = (
   operation: SyncOperation,
 ): {
@@ -4468,6 +4568,8 @@ export const syncOperationEntity = (
     case "note.patch":
     case "note.delete":
       return { entityKind: "note", entityId: operation.noteId };
+    case "day_order.reorder":
+      return { entityKind: "day_order", entityId: operation.date };
     default:
       return null;
   }

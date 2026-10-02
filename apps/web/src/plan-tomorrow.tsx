@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   dayOrderMaxPlannedTasks,
-  type DayOrder,
+  type SavedDayOrder,
   type Task,
 } from "@suite/contracts";
 import { Button } from "./components/ui/button.tsx";
@@ -41,7 +41,7 @@ export interface PlanTomorrowPanelProps {
   readonly date: string;
   readonly today: string;
   readonly tasks: readonly Task[];
-  readonly order: DayOrder | undefined;
+  readonly order: Pick<SavedDayOrder, "taskIds"> | undefined;
   readonly available: boolean;
   readonly busy: boolean;
   readonly onPlan: (tasks: readonly Task[]) => Promise<boolean>;
@@ -82,7 +82,7 @@ export const PlanTomorrowPanel = ({
       <CardContent className="grid gap-3">
         {!available ? (
           <p className="hint">
-            Reconnect to plan tomorrow or change its order.
+            Tomorrow can be planned once this device has synced.
           </p>
         ) : null}
         {planned.length === 0 ? (

@@ -317,6 +317,18 @@ describe("live sync route classification (ADR 0045)", () => {
     expect(Object.values(automationOperationFamilies).flat()).not.toContain(
       "notes",
     );
+    // ADR 0050: saved day orders are feed records. Planning tasks for a
+    // date also sets their planned day, which shapes the day plan.
+    expect(classifyLiveSyncRoute("PUT", "/api/day-orders/2026-10-03")).toEqual({
+      kind: "feed",
+    });
+    expect(
+      classifyLiveSyncRoute("POST", "/api/day-orders/2026-10-03/tasks"),
+    ).toEqual({ kind: "families", families: ["task_planning"] });
+    expect(automationOperationFamilies["day_order.reorder"]).toEqual([]);
+    expect(Object.values(automationOperationFamilies).flat()).not.toContain(
+      "day_orders",
+    );
     expect(classifyLiveSyncRoute("PUT", `/api/boards/${id}`)).toEqual({
       kind: "families",
       families: ["boards"],

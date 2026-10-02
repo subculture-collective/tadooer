@@ -558,19 +558,15 @@
     {
       "id": "day-order",
       "action": "Read and reorder the saved order of Today and each planned day; plan tasks for tomorrow",
-      "webApi": [
-        "getDayOrders",
-        "reorderDayOrder",
-        "planTasksForDay"
-      ],
+      "webApi": [],
       "catalog": [
         "day_order.get",
         "day_order.reorder"
       ],
       "status": "partial",
       "issue": 98,
-      "authority": "tasks:read for one date's order (the owner's planning date by default); tasks:write for a full-list reorder. A day order has no entity revision to freeze, so confirmation repeats the preview's day-order revision and exact-membership checks. Plan-for-tomorrow has no dedicated tool: the assistant sets planned days with tasks.update and then reorders. Online-only in the browser (ADR 0027).",
-      "source": "apps/web/src/api.ts"
+      "authority": "tasks:read for one date's order (the owner's planning date by default); tasks:write for a full-list reorder. A day order has no entity revision to freeze, so confirmation repeats the preview's day-order revision and exact-membership checks. Plan-for-tomorrow has no dedicated tool: the assistant sets planned days with tasks.update and then reorders. Saved day orders are sync feed records (ADR 0050): an assistant reorder appends a feed change in the same transaction and reaches every device in its next round. The browser reads day orders from its offline cache and reorders through the sync outbox, so it has no day-order API function.",
+      "source": "apps/web/src/local-store.ts"
     },
     {
       "id": "boards",

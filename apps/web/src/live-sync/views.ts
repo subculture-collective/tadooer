@@ -22,8 +22,6 @@ export const liveViews = [
   "counters",
   /** Imported plugin data on Connections. */
   "pluginData",
-  /** Saved day orders on Today and the Planner. */
-  "dayOrders",
   /** Board list and the open board. */
   "boards",
   /** Saved task views (sort, filter, grouping). */
@@ -79,8 +77,8 @@ export const liveSyncFamilyViews: Readonly<
   // refetches nothing, and the next sync round delivers the notes.
   notes: [],
   task_links: ["taskLinks"],
-  // Planned days and reminders shape the day plan and the saved day orders.
-  task_planning: ["dayPlan", "dayOrders"],
+  // Planned days and reminders shape the day plan.
+  task_planning: ["dayPlan"],
   archive: ["history"],
   recurrence: ["recurringSeries"],
   time_entries: ["worklog", "timeSpent"],
@@ -88,7 +86,9 @@ export const liveSyncFamilyViews: Readonly<
   // Daily evaluations are loaded with the counters page.
   evaluations: ["counters"],
   plugin_data: ["pluginData"],
-  day_orders: ["dayOrders"],
+  // Retired (ADR 0050): saved day orders are feed records read from the
+  // offline cache, like notes.
+  day_orders: [],
   // The server reports sections and saved views under `boards`.
   boards: ["boards", "taskViews", "sections", "menuFolders"],
   // ADR 0019 records that are not feed entities: views, sections, folders.
