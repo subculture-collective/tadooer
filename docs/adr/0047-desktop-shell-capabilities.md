@@ -162,10 +162,11 @@ These are owner decisions and are not implemented:
 - **Auto-update.** No download or install code exists. An update check against
   the instance's release channel can be added in `createShell().start()`; it
   needs a decision on where artifacts are hosted and how they are verified.
-- **Code signing and notarisation**, for any platform.
-- **macOS and Windows packages.** The code has the platform branches
-  (`open-url` for macOS links, `setLoginItemSettings` and
-  `setAsDefaultProtocolClient` outside Linux) but none of it has run there.
+- **Code signing and notarisation**, for any platform. The macOS section below
+  records what is prepared for it.
+- **The Windows package.** `setLoginItemSettings` and
+  `setAsDefaultProtocolClient` are called outside Linux, but nothing has run on
+  Windows.
 - **AppImage or deb.** The Linux artifact is a tar.gz of the packaged
   directory, which the existing `@electron/packager` produces without new
   tooling.
@@ -184,3 +185,107 @@ These are owner decisions and are not implemented:
 - The window self-check needs a display. Electron 43 crashes when it creates a
   window on Chromium's headless Ozone platform, so the check uses a real or
   virtual X or Wayland display.
+
+## macOS (added 2026-10-02)
+
+The owner decided on 2026-10-02 to package for macOS as well as Linux. Code
+signing and notarisation were not decided, so the macOS package is unsigned and
+signing is a separate later step. The capability boundary above is unchanged:
+the same shell code runs, with the platform differences listed here.
+
+Nothing in this section has run on a Mac. The bundles are built and inspected
+on Linux, the platform decisions are unit-tested as data
+(`apps/desktop/src/platform.mjs`), and the first launch is the manual checklist
+in `docs/operations/desktop.md`.
+
+### Package
+
+- **Two artifacts, one per architecture**:
+  `productivity-suite-desktop-<version>-darwin-arm64.zip` and `-darwin-x64.zip`,
+  each a zip of `Productivity Suite.app` with a `.sha256` file, written by the
+  same artifact script as the Linux tar.gz. A universal build was rejected for
+  now: it needs `lipo`, and `@electron/universal` refuses to run on any host
+  but macOS, while the build host is Linux. A Mac build step can add it later
+  without changing the two existing names.
+- **Bundle identifier `tv.subcult.tadooer`.** This is a proposal that the owner
+  should confirm before the first signed release. macOS keys the login item,
+  the notification and local-network permissions, the keychain entry and the
+  notarisation record to it, so changing it later makes macOS treat the app as
+  a new one.
+- **Category** `public.app-category.productivity`. **Minimum system** macOS
+  12.0, which Electron 43 sets.
+- **`Info.plist` additions**: `CFBundleURLTypes` for the `tadooer` scheme;
+  `LSUIElement` false, so the app has a Dock icon and a menu bar and the status
+  item is an addition; `NSLocalNetworkUsageDescription`, the text macOS 15
+  shows before it lets an app connect to a private address.
+- **Icon.** `mac/icon.icns` is generated from `apps/web/public/suite-icon.svg`
+  with `rsvg-convert` and a container writer in the repository
+  (`scripts/icns.mjs`), because no `.icns` tool is installed on the build host
+  and none was to be added. The artwork is drawn at 824 of 1024 pixels, the
+  proportion of Apple's icon grid. The menu-bar item uses
+  `assets/trayTemplate.png` and `@2x`, the glyph in black with transparency.
+
+Electron's own `Info.plist` also carries usage texts for the camera, the
+microphone, audio capture and Bluetooth. They grant nothing: the permission
+policy above denies those requests before Chromium asks the system, and the
+prepared entitlements do not include them.
+
+### Behaviour that differs from Linux
+
+| Area               | macOS behaviour                                                                                                                                                                                                                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Last window closes | The app keeps running. A Dock click (`activate`) shows the hidden window, or opens the Suite window, or the setup window when no server is stored.                                                                                                                                             |
+| Menu bar           | The platform layout: application menu (About, Change server…, Close to menu bar, Start at login, Services, Hide, Quit), File (Quick capture, Sync now, Close Window), Edit, View, Window. Shortcuts come from Electron's roles and use Cmd. The shell defines no shortcut of its own on macOS. |
+| Status item        | A template image. A click opens its menu; it does not toggle the window.                                                                                                                                                                                                                       |
+| Links              | Declared in `Info.plist` and delivered through `open-url`. A link that starts the app arrives before `ready` and is held for the first window. A link that cannot be opened still brings the window forward.                                                                                   |
+| Start at login     | `app.setLoginItemSettings`. The stored setting follows what `getLoginItemSettings` reports afterwards, because macOS may hold the request for approval.                                                                                                                                        |
+| Single instance    | Launch Services already keeps one instance for Finder, Dock and link launches; the lock covers a start from a terminal.                                                                                                                                                                        |
+| Settings file      | `~/Library/Application Support/Productivity Suite/shell-settings.json`, from Electron's `userData`.                                                                                                                                                                                            |
+| Close to menu bar  | Hides the window, leaving full screen first.                                                                                                                                                                                                                                                   |
+
+### What unsigned means
+
+- **Gatekeeper** stops the first launch of a downloaded copy until the owner
+  allows it by hand. The steps are in the operations document.
+- **No automatic update.** Electron's macOS updater installs an update only
+  when its code signature satisfies the running app's own, and an unsigned app
+  has none to compare. Updating means replacing the app by hand.
+- **Notifications may not appear.** Electron's documentation states that the
+  macOS notification APIs need a code-signed app and that unsigned builds do
+  not deliver to Notification Center. Whether the ad hoc signature described
+  below is enough is not known; the checklist records the result.
+- **Permissions do not carry over between builds.** Without a signing
+  identity macOS has no stable way to recognise the next build as the same
+  app, so it can ask again for the local network, notifications, the login
+  item and the keychain entry that protects the session cookies.
+
+In the 0.1.0 build with Electron 43.3.0, every arm64 executable carries the ad
+hoc signature the linker adds (it covers the code, names no one, and seals
+neither `Info.plist` nor the resources), and the x64 executables carry no
+signature. Apple silicon refuses arm64 code with no signature at all, so the
+packaging step fails if a later Electron ships arm64 without one.
+
+### Prepared for signing
+
+- `mac/entitlements.mac.plist` for the application: `cs.allow-jit`, which V8
+  needs under the hardened runtime, and `network.client`. The second one only
+  has an effect inside the App Sandbox, which a Developer ID build does not
+  use; it is listed so that a later sandbox decision starts from the one
+  resource the shell uses. `mac/entitlements.mac.helper.plist` for the helper
+  processes: `cs.allow-jit` only. A test fails if either file gains a device,
+  file, personal-information, Apple Events or library-validation entitlement.
+- `scripts/mac-sign.mjs` is the hook where signing and notarisation go. It is
+  not implemented. With `SUITE_MAC_SIGN` set it stops the build and names the
+  missing variables, or says that signing needs macOS, or says that the step
+  is not written. It never falls back to an unsigned artifact.
+- No certificate, key, password or team identifier is in the repository.
+
+### Release manifest
+
+The schema is unchanged; `desktopArtifact` stays one string. Proposed
+convention, to be confirmed by the owner: a release with one desktop artifact
+records it as before (`<file>@sha256:<hex>`); a release with several records
+the checksum index, `productivity-suite-desktop-<version>.sha256sums@sha256:<hex>`.
+The index is a `sha256sum -c` file listing every artifact, sorted by name, so
+its checksum pins all of them. `pnpm desktop:artifact` writes the index and
+prints each artifact's own value beside the release value.

@@ -217,7 +217,9 @@ write-only publisher on NUC's private `management` network as documented in
 [`docs/operations/tadooer-production.md`](docs/operations/tadooer-production.md).
 
 Build the Linux desktop bundle, its `tar.gz` and a SHA-256 file with
-`pnpm package:desktop`; `pnpm desktop:artifact` prints the name and checksum
+`pnpm package:desktop`, and the unsigned macOS bundles (Apple silicon and
+Intel, one zip each) with `pnpm package:desktop:mac`; both run on Linux.
+`pnpm desktop:artifact` prints every artifact's name and checksum and the value
 for the release manifest. On first start the app asks for the server address
 and checks `/api/build` there before storing it; `SUITE_SERVER_URL` overrides
 the stored address. It accepts HTTPS, loopback HTTP, and plaintext HTTP to a
@@ -229,7 +231,8 @@ The shell adds a tray with sync status, "Quick capture" and "Sync now", a
 single-instance lock, opt-in start at login and close-to-tray, and
 `tadooer://open/<path>` links. The page reaches it through three validated
 preload calls and nothing else. It stores one settings file and no owner data.
-Installation, checks and what remains for macOS and Windows are in
+Installation, what an unsigned macOS app means, the macOS smoke run that is
+still open, signing prerequisites and what remains for Windows are in
 [`docs/operations/desktop.md`](docs/operations/desktop.md); the boundary is
 [ADR 0047](docs/adr/0047-desktop-shell-capabilities.md).
 

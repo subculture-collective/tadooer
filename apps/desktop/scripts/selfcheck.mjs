@@ -6,24 +6,36 @@ import { join } from "node:path";
 import process from "node:process";
 import {
   outputDirectory,
-  packagedDirectoryName,
+  packagedExecutableSegments,
   readPackage,
 } from "./artifact.mjs";
 
 /**
- * Runs the packaged shell's window self-check (`--suite-selfcheck`) in a
- * temporary profile and removes that profile afterwards, so the check never
- * touches the owner's profile and leaves nothing behind.
+ * Runs a check of the packaged shell built for this machine: the Linux x64
+ * directory on Linux, the bundle of this Mac's architecture on macOS.
  *
- * It needs a display. Without one: `xvfb-run -a pnpm smoke:linux:shell`.
- * Extra arguments are passed to the application.
+ * By default it is the window self-check (`--suite-selfcheck`), in a
+ * temporary profile that is removed afterwards, so the check never touches
+ * the owner's profile and leaves nothing behind. It needs a display. On
+ * Linux without one: `xvfb-run -a pnpm smoke:linux:shell`. On macOS the
+ * windows stay hidden, but the Dock shows the app while the check runs.
+ *
+ * With `--smoke` it is the check that opens no window (`--suite-smoke`).
+ * Other arguments are passed to the application.
  */
 
+const smoke = process.argv.includes("--smoke");
+const passed = process.argv
+  .slice(2)
+  .filter((argument) => argument !== "--smoke");
 const manifest = await readPackage();
 const executable = join(
   outputDirectory,
-  packagedDirectoryName(manifest.productName, "linux", "x64"),
-  manifest.productName,
+  ...packagedExecutableSegments(
+    manifest.productName,
+    process.platform,
+    process.platform === "darwin" ? process.arch : "x64",
+  ),
 );
 const profile = await mkdtemp(join(tmpdir(), "tadooer-selfcheck-"));
 const environment = { ...process.env };
@@ -36,9 +48,9 @@ try {
   const result = spawnSync(
     executable,
     [
-      "--suite-selfcheck",
+      smoke ? "--suite-smoke" : "--suite-selfcheck",
       `--user-data-dir=${profile}`,
-      ...process.argv.slice(2),
+      ...passed,
     ],
     { stdio: "inherit", env: environment, timeout: 120_000 },
   );

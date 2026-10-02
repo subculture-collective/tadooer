@@ -10,6 +10,7 @@
   "scripts": {
     "build": "pnpm --filter @suite/web build && pnpm --filter @suite/server build && pnpm --filter @suite/mcp-stdio build && pnpm --filter @suite/quick-add build",
     "package:desktop": "pnpm --filter @suite/desktop package:linux",
+    "package:desktop:mac": "pnpm --filter @suite/desktop package:mac",
     "desktop:artifact": "pnpm --silent --filter @suite/desktop artifact:info",
     "dev": "pnpm --parallel --filter @suite/web --filter @suite/server dev",
     "format": "prettier --write apps packages *.json *.js *.yaml",

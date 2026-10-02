@@ -14,6 +14,8 @@ if command -v xvfb-run >/dev/null 2>&1; then
 else
   echo "xvfb-run is not installed: the desktop window self-check was skipped" >&2
 fi
-pnpm --filter @suite/desktop artifact:info
-SUITE_DESKTOP_ARTIFACT="$(node apps/desktop/scripts/artifact-info.mjs --manifest-value)" ./deploy/verify-phase8-compose.sh
+# This gate qualifies the Linux package, so it names that artifact even when
+# macOS packages from `pnpm package:desktop:mac` are present as well.
+pnpm --filter @suite/desktop artifact:info linux x64
+SUITE_DESKTOP_ARTIFACT="$(node apps/desktop/scripts/artifact-info.mjs linux x64 --manifest-value)" ./deploy/verify-phase8-compose.sh
 echo "Phase 8 packaged Linux client, release channels, rollback primitives, observability, and production qualification verified"
