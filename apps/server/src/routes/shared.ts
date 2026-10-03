@@ -406,21 +406,21 @@ export const describeConnectorFailure = (
         status,
         code: "BAIKAL_UNSAFE_URL",
         message:
-          "Baïkal advertised an address outside the configured endpoint origin. Make Baïkal's public host and port match BAIKAL_ENDPOINT; the Suite does not contact other hosts.",
+          "Baïkal advertised an address outside the configured endpoint origin. Make Baïkal's public host and port match BAIKAL_ENDPOINT; Tadooer does not contact other hosts.",
       };
     case "redirected":
       return {
         status,
         code: "BAIKAL_REDIRECTED",
         message:
-          "The endpoint answered with a redirect, which the Suite does not follow. Set BAIKAL_ENDPOINT to the final /dav.php/ address, including https:// when Baïkal requires TLS.",
+          "The endpoint answered with a redirect, which Tadooer does not follow. Set BAIKAL_ENDPOINT to the final /dav.php/ address, including https:// when Baïkal requires TLS.",
       };
     case "transport-failed":
       return {
         status,
         code: "BAIKAL_UNREACHABLE",
         message:
-          "The Suite could not reach the configured Baïkal endpoint. Check the hostname, port, network and TLS certificate; install a private certificate authority with NODE_EXTRA_CA_CERTS.",
+          "Tadooer could not reach the configured Baïkal endpoint. Check the hostname, port, network and TLS certificate; install a private certificate authority with NODE_EXTRA_CA_CERTS.",
       };
     case "credential-unavailable":
       return {

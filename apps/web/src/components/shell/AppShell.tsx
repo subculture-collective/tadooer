@@ -40,7 +40,7 @@ export const AppShell = ({
     <aside className="sidebar">
       <div className="sidebar-brand">
         <span className="brand-dot" />
-        Productivity Suite
+        Tadooer
       </div>
       <SidebarNav route={route} onNavigate={onNavigate} />
       <div className="sidebar-status">

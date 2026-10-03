@@ -178,7 +178,7 @@ export const qualifySoak = (ledgerValue, qualifiedAt, signedOffBy) => {
     version: "1.0.0",
     revision: ledger.candidate.revision,
     imageDigest: ledger.candidate.imageDigest,
-    desktopArtifact: "Productivity Suite-linux-x64",
+    desktopArtifact: "Tadooer-linux-x64",
     qualifiedAt: new Date(qualifiedAt).toISOString(),
     signOff: {
       signedOffBy: signedOffBy.trim(),

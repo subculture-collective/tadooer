@@ -12,6 +12,6 @@ try {
 } catch {
   // A stdio MCP process must reserve stdout for JSON-RPC replies. Deliberately
   // avoid token paths, credentials, network internals, and catalog details.
-  process.stderr.write("Productivity Suite MCP adapter could not start.\n");
+  process.stderr.write("Tadooer MCP adapter could not start.\n");
   process.exitCode = 1;
 }

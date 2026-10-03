@@ -54,18 +54,18 @@ const requireVersion = (version) => {
   return version;
 };
 
-/** `productivity-suite-desktop-0.1.0-linux-x64` */
+/** `tadooer-desktop-0.1.0-linux-x64` */
 export const artifactBaseName = (version, platform, arch) => {
   requireVersion(version);
   if (!/^[a-z0-9]+$/.test(platform) || !/^[a-z0-9]+$/.test(arch))
     throw new Error("Platform and architecture must be lower-case words");
-  return `productivity-suite-desktop-${version}-${platform}-${arch}`;
+  return `tadooer-desktop-${version}-${platform}-${arch}`;
 };
 
 export const artifactExtension = (platform) =>
   platform === "darwin" ? "zip" : "tar.gz";
 
-/** `productivity-suite-desktop-0.1.0-darwin-arm64.zip` */
+/** `tadooer-desktop-0.1.0-darwin-arm64.zip` */
 export const artifactFileName = (version, platform, arch) =>
   `${artifactBaseName(version, platform, arch)}.${artifactExtension(platform)}`;
 
@@ -80,11 +80,11 @@ export const checksumLine = (sha256, fileName) => {
 
 /**
  * The checksum index of a release with more than one desktop artifact:
- * `productivity-suite-desktop-0.1.0.sha256sums`. It has no platform in its
+ * `tadooer-desktop-0.1.0.sha256sums`. It has no platform in its
  * name because it lists all of them.
  */
 export const checksumIndexName = (version) =>
-  `productivity-suite-desktop-${requireVersion(version)}.sha256sums`;
+  `tadooer-desktop-${requireVersion(version)}.sha256sums`;
 
 /**
  * The text of the checksum index: one `sha256sum -c` line per artifact,

@@ -289,3 +289,20 @@ the checksum index, `productivity-suite-desktop-<version>.sha256sums@sha256:<hex
 The index is a `sha256sum -c` file listing every artifact, sorted by name, so
 its checksum pins all of them. `pnpm desktop:artifact` writes the index and
 prints each artifact's own value beside the release value.
+
+## Name (added 2026-10-02)
+
+The product is called Tadooer (`docs/design/README.md`). Electron's
+`productName` is `Tadooer`, so the packaged directory, the executable, the
+`.app` bundle, `CFBundleName`, the application menu, the tray tooltip, the
+notification title and the autostart `Name=` all say Tadooer, and the release
+archives are `tadooer-desktop-<version>-<platform>-<arch>`; the checksum index
+is `tadooer-desktop-<version>.sha256sums`. The bundle identifier
+`tv.subcult.tadooer`, the `tadooer://` scheme, the settings file's
+`application: "productivity-suite-desktop"` and the `service:
+"productivity-suite"` check are identifiers and did not change. Because
+Electron's `userData` path and the Safe Storage keychain entry follow the
+name, a copy installed under the earlier name does not share settings or
+session cookies with the renamed app. Earlier text in this document that
+names `Productivity Suite.app` or `productivity-suite-desktop-…` describes the
+packages before this date.

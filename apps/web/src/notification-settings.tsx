@@ -50,7 +50,7 @@ export const NotificationSettings = ({
       />
       <p className="hint">
         Detailed reminders contain only the task title, local scheduled time,
-        and a Suite task link. Notes and calendar-event details are excluded.
+        and a Tadooer task link. Notes and calendar-event details are excluded.
       </p>
       {!status.configured && (
         <p className="message message-error">

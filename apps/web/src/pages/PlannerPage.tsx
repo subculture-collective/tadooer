@@ -151,7 +151,7 @@ export const PlannerPage = ({
       <PageHeader
         eyebrow="Calendar context"
         title="Planner"
-        description="Place projected calendar events and Suite tasks on a real time grid."
+        description="Place projected calendar events and Tadooer tasks on a real time grid."
         actions={
           <Button
             type="button"

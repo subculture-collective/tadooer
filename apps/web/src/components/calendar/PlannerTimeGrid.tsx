@@ -222,8 +222,8 @@ const entriesFor = (
           end: new Date(start.getTime() + estimateMinutes * 60 * 1000),
           detail:
             task.estimateMinutes == null
-              ? "Suite task · 30 min placeholder"
-              : `Suite task · ${String(task.estimateMinutes)} min`,
+              ? "Tadooer task · 30 min placeholder"
+              : `Tadooer task · ${String(task.estimateMinutes)} min`,
           source: { kind: "task" as const, task },
         },
       ];
@@ -282,12 +282,12 @@ export function PlannerTimeGrid({
         <EmptyState
           icon={<CalendarDaysIcon />}
           title="Nothing is planned in this range"
-          description="Projected calendar events and Suite tasks with a planned time or day will appear here."
+          description="Projected calendar events and Tadooer tasks with a planned time or day will appear here."
         />
       )}
       <div className="planner-time-grid__legend" aria-label="Calendar legend">
         <Badge variant="calendar">Calendar event</Badge>
-        <Badge variant="secondary">Suite task</Badge>
+        <Badge variant="secondary">Tadooer task</Badge>
         <span>Times shown in {timeZone}</span>
       </div>
       <div
@@ -347,11 +347,11 @@ export function PlannerTimeGrid({
                       tabIndex={0}
                       className="planner-time-grid__all-day-event planner-time-grid__all-day-task"
                       key={`task:${task.id}`}
-                      aria-label={`${task.title}, planned for ${day.longLabel}, no time set. Suite task`}
+                      aria-label={`${task.title}, planned for ${day.longLabel}, no time set. Tadooer task`}
                       onClick={() => onSelectEntry?.({ kind: "task", task })}
                     >
                       <strong>{task.title}</strong>
-                      <span>Suite task · no time</span>
+                      <span>Tadooer task · no time</span>
                     </button>
                   ))}
                   {allDay.length === 0 && dayTasks.length === 0 ? (

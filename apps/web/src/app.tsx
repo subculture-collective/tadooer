@@ -2594,7 +2594,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           {state.kind === "error" && (
             <div>
               <p className="step">Connection problem</p>
-              <h2>Unable to reach the Suite</h2>
+              <h2>Unable to reach Tadooer</h2>
               <p className="muted">{state.message}</p>
               <Button onClick={() => location.reload()}>Retry</Button>
             </div>
@@ -2809,7 +2809,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               <p className="step">Step 2 of 2</p>
               <h2>Connect Baikal</h2>
               <p className="muted">
-                Enter the Baikal user you created. The Suite verifies it through
+                Enter the Baikal user you created. Tadooer verifies it through
                 CalDAV before storing an encrypted credential.
               </p>
               <p className="hint mono">
@@ -2834,7 +2834,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                 <div aria-live="polite">
                   <p className="muted">
                     CalDAV answered. {baikalProbe.writableEventCalendars} of{" "}
-                    {baikalProbe.calendars.length} calendars accept Suite
+                    {baikalProbe.calendars.length} calendars accept Tadooer
                     events.
                   </p>
                   <ul>

@@ -4,7 +4,7 @@ import { startSuiteServer } from "./server.ts";
 const config = loadConfig();
 const server = await startSuiteServer(config);
 
-console.log(`Productivity Suite listening on ${server.baseUrl}`);
+console.log(`Tadooer listening on ${server.baseUrl}`);
 
 const shutdown = async (): Promise<void> => {
   await server.close();

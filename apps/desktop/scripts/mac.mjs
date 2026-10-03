@@ -33,7 +33,7 @@ export const macEntitlementsFileName = "entitlements.mac.plist";
 export const macHelperEntitlementsFileName = "entitlements.mac.helper.plist";
 
 const localNetworkReason =
-  "Productivity Suite connects to the Suite server you chose when that server is on your local network.";
+  "Tadooer connects to the Tadooer server you chose when that server is on your local network.";
 
 /**
  * The keys added to Electron's `Info.plist`.

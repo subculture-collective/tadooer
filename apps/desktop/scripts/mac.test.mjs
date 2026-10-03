@@ -213,7 +213,7 @@ describe("macOS package", () => {
   const options = macPackagerOptions({
     directory: "/work/desktop",
     outputDirectory: "/work/desktop/dist-packages",
-    productName: "Productivity Suite",
+    productName: "Tadooer",
     arch: "arm64",
   });
 
@@ -222,7 +222,7 @@ describe("macOS package", () => {
     expect(options).toMatchObject({
       dir: "/work/desktop",
       out: "/work/desktop/dist-packages",
-      name: "Productivity Suite",
+      name: "Tadooer",
       platform: "darwin",
       arch: "arm64",
       appBundleId: "tv.subcult.tadooer",
@@ -235,7 +235,7 @@ describe("macOS package", () => {
       macPackagerOptions({
         directory: "/work/desktop",
         outputDirectory: "/out",
-        productName: "Productivity Suite",
+        productName: "Tadooer",
         arch: "universal",
       }),
     ).toThrow("Unsupported");
@@ -281,15 +281,15 @@ describe("macOS package", () => {
   it("accepts the Info.plist it asked for", () => {
     const plist = {
       CFBundleIdentifier: macBundleId,
-      CFBundleName: "Productivity Suite",
-      CFBundleExecutable: "Productivity Suite",
+      CFBundleName: "Tadooer",
+      CFBundleExecutable: "Tadooer",
       CFBundleShortVersionString: "0.1.0",
       CFBundlePackageType: "APPL",
       CFBundleIconFile: "electron.icns",
       LSApplicationCategoryType: macCategory,
       ...macInfoPlist(),
     };
-    const context = { productName: "Productivity Suite", version: "0.1.0" };
+    const context = { productName: "Tadooer", version: "0.1.0" };
     expect(macInfoPlistProblems(plist, context)).toEqual([]);
     expect(
       macInfoPlistProblems(parsePlist(buildPlist(plist)), context),
@@ -300,14 +300,14 @@ describe("macOS package", () => {
     const problems = macInfoPlistProblems(
       {
         CFBundleIdentifier: "com.electron.productivity-suite",
-        CFBundleName: "Productivity Suite",
-        CFBundleExecutable: "Productivity Suite",
+        CFBundleName: "Tadooer",
+        CFBundleExecutable: "Tadooer",
         CFBundleShortVersionString: "0.0.9",
         CFBundlePackageType: "APPL",
         LSUIElement: true,
         CFBundleURLTypes: [{ CFBundleURLSchemes: ["tadooer", "https"] }],
       },
-      { productName: "Productivity Suite", version: "0.1.0" },
+      { productName: "Tadooer", version: "0.1.0" },
     );
     expect(problems.join("\n")).toContain("CFBundleIdentifier");
     expect(problems.join("\n")).toContain("CFBundleShortVersionString");
@@ -482,17 +482,15 @@ describe("entitlements", () => {
   it("plans the hardened runtime for every signed file", () => {
     const context = {
       directory: "/work/desktop",
-      productName: "Productivity Suite",
+      productName: "Tadooer",
     };
-    expect(
-      macSignOptionsForFile("/out/Productivity Suite.app", context),
-    ).toEqual({
+    expect(macSignOptionsForFile("/out/Tadooer.app", context)).toEqual({
       hardenedRuntime: true,
       entitlements: "/work/desktop/mac/entitlements.mac.plist",
     });
     expect(
       macSignOptionsForFile(
-        "/out/Productivity Suite.app/Contents/Frameworks/Productivity Suite Helper (Renderer).app",
+        "/out/Tadooer.app/Contents/Frameworks/Tadooer Helper (Renderer).app",
         context,
       ),
     ).toEqual({
@@ -503,7 +501,7 @@ describe("entitlements", () => {
 });
 
 describe("signing hook", () => {
-  const bundle = { appPath: "/out/Productivity Suite.app" };
+  const bundle = { appPath: "/out/Tadooer.app" };
   const identity = {
     SUITE_MAC_SIGN: "1",
     SUITE_MAC_SIGN_IDENTITY: "Developer ID Application: Example (ABCDE12345)",

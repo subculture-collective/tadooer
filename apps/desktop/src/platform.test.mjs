@@ -14,7 +14,7 @@ import {
 
 const menuState = (overrides = {}) => ({
   platform: "darwin",
-  appName: "Productivity Suite",
+  appName: "Tadooer",
   packaged: true,
   closeToTray: false,
   startAtLogin: false,
@@ -64,9 +64,7 @@ describe("deep link inbox", () => {
   it("holds an open-url link that arrives before ready", () => {
     const inbox = createDeepLinkInbox();
     expect(inbox.receive("tadooer://open/today")).toBeUndefined();
-    expect(inbox.start(["/Applications/Productivity Suite"])).toBe(
-      "tadooer://open/today",
-    );
+    expect(inbox.start(["/Applications/Tadooer"])).toBe("tadooer://open/today");
   });
 
   it("keeps the latest of several early links", () => {
@@ -162,7 +160,7 @@ describe("application menu", () => {
   it("lays out the macOS menu bar in the platform order", () => {
     const menu = applicationMenu(menuState());
     expect(names(menu)).toEqual([
-      "Productivity Suite",
+      "Tadooer",
       "File",
       "editMenu",
       "View",

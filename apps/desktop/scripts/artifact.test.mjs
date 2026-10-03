@@ -18,15 +18,15 @@ const a = "a".repeat(64);
 const b = "b".repeat(64);
 const c = "c".repeat(64);
 const linux = {
-  artifact: "productivity-suite-desktop-0.1.0-linux-x64.tar.gz",
+  artifact: "tadooer-desktop-0.1.0-linux-x64.tar.gz",
   sha256: a,
 };
 const macArm = {
-  artifact: "productivity-suite-desktop-0.1.0-darwin-arm64.zip",
+  artifact: "tadooer-desktop-0.1.0-darwin-arm64.zip",
   sha256: b,
 };
 const macIntel = {
-  artifact: "productivity-suite-desktop-0.1.0-darwin-x64.zip",
+  artifact: "tadooer-desktop-0.1.0-darwin-x64.zip",
   sha256: c,
 };
 
@@ -46,7 +46,7 @@ describe("desktop artifact names", () => {
     expect(artifactFileName("0.1.0", "darwin", "arm64")).toBe(macArm.artifact);
     expect(artifactFileName("0.1.0", "darwin", "x64")).toBe(macIntel.artifact);
     expect(artifactFileName("1.2.3-rc.1", "darwin", "arm64")).toBe(
-      "productivity-suite-desktop-1.2.3-rc.1-darwin-arm64.zip",
+      "tadooer-desktop-1.2.3-rc.1-darwin-arm64.zip",
     );
   });
 
@@ -65,21 +65,20 @@ describe("desktop artifact names", () => {
   });
 
   it("finds the executable inside the macOS bundle", () => {
-    expect(packagedDirectoryName("Productivity Suite", "darwin", "arm64")).toBe(
-      "Productivity Suite-darwin-arm64",
+    expect(packagedDirectoryName("Tadooer", "darwin", "arm64")).toBe(
+      "Tadooer-darwin-arm64",
     );
-    expect(
-      packagedExecutableSegments("Productivity Suite", "darwin", "arm64"),
-    ).toEqual([
-      "Productivity Suite-darwin-arm64",
-      "Productivity Suite.app",
+    expect(packagedExecutableSegments("Tadooer", "darwin", "arm64")).toEqual([
+      "Tadooer-darwin-arm64",
+      "Tadooer.app",
       "Contents",
       "MacOS",
-      "Productivity Suite",
+      "Tadooer",
     ]);
-    expect(
-      packagedExecutableSegments("Productivity Suite", "linux", "x64"),
-    ).toEqual(["Productivity Suite-linux-x64", "Productivity Suite"]);
+    expect(packagedExecutableSegments("Tadooer", "linux", "x64")).toEqual([
+      "Tadooer-linux-x64",
+      "Tadooer",
+    ]);
   });
 });
 
@@ -113,11 +112,9 @@ describe("release manifest value", () => {
 
   it("names the index and its checksum for several artifacts", () => {
     const value = releaseDesktopArtifact("0.1.0", [linux, macArm, macIntel]);
-    expect(checksumIndexName("0.1.0")).toBe(
-      "productivity-suite-desktop-0.1.0.sha256sums",
-    );
+    expect(checksumIndexName("0.1.0")).toBe("tadooer-desktop-0.1.0.sha256sums");
     expect(value).toBe(
-      `productivity-suite-desktop-0.1.0.sha256sums@sha256:${sha256Text(checksumIndex([linux, macArm, macIntel]))}`,
+      `tadooer-desktop-0.1.0.sha256sums@sha256:${sha256Text(checksumIndex([linux, macArm, macIntel]))}`,
     );
     // Still one non-empty string in the form the manifest already uses.
     expect(value).toMatch(/^[\w.-]+@sha256:[0-9a-f]{64}$/);
