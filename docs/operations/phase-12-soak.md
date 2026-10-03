@@ -31,6 +31,14 @@ Productivity.
 
 ## Current run and scheduled collection
 
+**Ended early, 2026-10-03.** The owner asked, "I would like to get tadooer
+updated", and `0.15.0-rc.2` was deployed. The run below did not qualify. Its
+ledger is unchanged; the decision is in
+`20260920-calendar-a6983dc-r2-ended-20261003.json` beside it. The observer
+timer is stopped and disabled until the owner starts a new ledger for the new
+digest. See
+[release-0.15.0-rc.2-2026-10-03.md](../testing/release-0.15.0-rc.2-2026-10-03.md).
+
 The active NUC ledger is `/srv/apps/productivity/soak/20260920-calendar-a6983dc-r2.json`,
 also referenced by `soak/active.json`. It started September 20, 2026 at
 12:55:39.883 UTC with candidate `0.14.1-calendar` / `a6983dc` and digest
