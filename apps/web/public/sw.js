@@ -1,7 +1,14 @@
 /* global self, caches */
 
-const cacheName = "suite-shell-v2";
-const shell = ["/", "/manifest.webmanifest", "/suite-icon.svg"];
+const cacheName = "suite-shell-v3";
+const shell = [
+  "/",
+  "/manifest.webmanifest",
+  "/favicon.svg",
+  "/apple-touch-icon.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(shell)));
