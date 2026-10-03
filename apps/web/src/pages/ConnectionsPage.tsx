@@ -142,7 +142,7 @@ export const ConnectionsPage = ({
             csrfToken={csrfToken}
           />
           <p className="boundary-note">
-            Calendar reads and Suite-created time blocks are conditional and
+            Calendar reads and Tadooer-created time blocks are conditional and
             bounded. Calendar and focus mutations remain online-only and are
             never silently queued.
           </p>

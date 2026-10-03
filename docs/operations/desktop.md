@@ -1,6 +1,6 @@
 # Desktop app
 
-The desktop app is an Electron window around one Suite server (ADR 0015). ADR
+The desktop app is an Electron window around one Tadooer server (ADR 0015). ADR
 0047 lists what it may do beyond a browser tab: server setup, a tray, a single
 instance, start at login, `tadooer://` links and native notifications. It keeps
 no tasks and no credentials of its own.
@@ -8,6 +8,15 @@ no tasks and no credentials of its own.
 It is packaged for Linux (x64) and macOS (Apple silicon and Intel). The macOS
 package is unsigned and has not been started on a Mac yet; see "macOS smoke
 run".
+
+Renamed 2026-10-02: the product name is Tadooer. The packaged directory,
+executable and macOS bundle are `Tadooer`, the archives are
+`tadooer-desktop-<version>-<platform>-<arch>`, and Electron derives the
+settings directory and the keychain entry from the name. A copy installed
+under the old name keeps its own `Productivity Suite` settings directory and
+keychain entry; the renamed app starts with the setup page and asks for the
+server again. The settings file itself still records
+`application: "productivity-suite-desktop"`.
 
 ## Sign-in
 
@@ -30,16 +39,16 @@ pnpm desktop:artifact                              # every artifact: name, size,
 All of these run on the Linux build host. `package:desktop` writes three things
 to `apps/desktop/dist-packages/`:
 
-- `Productivity Suite-linux-x64/`, the directory `@electron/packager` creates;
-- `productivity-suite-desktop-<version>-linux-x64.tar.gz`, that directory
+- `Tadooer-linux-x64/`, the directory `@electron/packager` creates;
+- `tadooer-desktop-<version>-linux-x64.tar.gz`, that directory
   under a name without spaces;
-- `productivity-suite-desktop-<version>-linux-x64.tar.gz.sha256`, in the
+- `tadooer-desktop-<version>-linux-x64.tar.gz.sha256`, in the
   format `sha256sum -c` reads.
 
 `package:desktop:mac` writes, for `arm64` (Apple silicon) and `x64` (Intel):
 
-- `Productivity Suite-darwin-<arch>/Productivity Suite.app`;
-- `productivity-suite-desktop-<version>-darwin-<arch>.zip`, holding the `.app`
+- `Tadooer-darwin-<arch>/Tadooer.app`;
+- `tadooer-desktop-<version>-darwin-<arch>.zip`, holding the `.app`
   with its symbolic links stored as links;
 - the matching `.zip.sha256`.
 
@@ -107,26 +116,26 @@ compares each with its `.sha256` file and prints:
 {
   "artifacts": [
     {
-      "artifact": "productivity-suite-desktop-0.1.0-linux-x64.tar.gz",
+      "artifact": "tadooer-desktop-0.1.0-linux-x64.tar.gz",
       "sha256": "<64 hexadecimal digits>",
       "bytes": 127000000,
-      "desktopArtifact": "productivity-suite-desktop-0.1.0-linux-x64.tar.gz@sha256:<64 hexadecimal digits>"
+      "desktopArtifact": "tadooer-desktop-0.1.0-linux-x64.tar.gz@sha256:<64 hexadecimal digits>"
     },
     {
-      "artifact": "productivity-suite-desktop-0.1.0-darwin-arm64.zip",
+      "artifact": "tadooer-desktop-0.1.0-darwin-arm64.zip",
       "sha256": "<64 hexadecimal digits>",
       "bytes": 121000000,
-      "desktopArtifact": "productivity-suite-desktop-0.1.0-darwin-arm64.zip@sha256:<64 hexadecimal digits>"
+      "desktopArtifact": "tadooer-desktop-0.1.0-darwin-arm64.zip@sha256:<64 hexadecimal digits>"
     },
     {
-      "artifact": "productivity-suite-desktop-0.1.0-darwin-x64.zip",
+      "artifact": "tadooer-desktop-0.1.0-darwin-x64.zip",
       "sha256": "<64 hexadecimal digits>",
       "bytes": 123000000,
-      "desktopArtifact": "productivity-suite-desktop-0.1.0-darwin-x64.zip@sha256:<64 hexadecimal digits>"
+      "desktopArtifact": "tadooer-desktop-0.1.0-darwin-x64.zip@sha256:<64 hexadecimal digits>"
     }
   ],
-  "index": "productivity-suite-desktop-0.1.0.sha256sums",
-  "desktopArtifact": "productivity-suite-desktop-0.1.0.sha256sums@sha256:<64 hexadecimal digits>"
+  "index": "tadooer-desktop-0.1.0.sha256sums",
+  "desktopArtifact": "tadooer-desktop-0.1.0.sha256sums@sha256:<64 hexadecimal digits>"
 }
 ```
 
@@ -142,13 +151,13 @@ confirmation:
 - **One artifact** (a Linux-only release): the string names that archive and
   its checksum, as before. `index` is `null`.
 - **Several artifacts**: the command writes
-  `productivity-suite-desktop-<version>.sha256sums` beside them, a
+  `tadooer-desktop-<version>.sha256sums` beside them, a
   `sha256sum -c` file with one line per artifact sorted by file name. The
   string names that index and the checksum of the index. Because the index
   holds every artifact's checksum, the one string pins all of them.
 
 To check a download against a manifest: compare the index's SHA-256 with the
-manifest value, then run `sha256sum -c productivity-suite-desktop-<version>.sha256sums`
+manifest value, then run `sha256sum -c tadooer-desktop-<version>.sha256sums`
 (on macOS, `shasum -a 256 -c`) in the directory with the artifacts. Publish the
 index together with the artifacts.
 
@@ -159,7 +168,7 @@ which is how the Phase 8 gate fills its candidate manifest.
 
 ## Install on Linux
 
-Unpack the archive anywhere and start `Productivity Suite` inside it.
+Unpack the archive anywhere and start `Tadooer` inside it.
 
 On the first start the app asks for the server address. It accepts:
 
@@ -171,7 +180,7 @@ On the first start the app asks for the server address. It accepts:
 
 It then requests `/api/build` from that address and continues only when a
 Suite server answers. The address is stored in
-`~/.config/Productivity Suite/shell-settings.json` (mode 0600). Change it later
+`~/.config/Tadooer/shell-settings.json` (mode 0600). Change it later
 with **App → Change server…**. Setting `SUITE_SERVER_URL` overrides the stored
 address for that run and disables the menu item.
 
@@ -188,8 +197,8 @@ it, create `~/.local/share/applications/tadooer-desktop.desktop`:
 ```ini
 [Desktop Entry]
 Type=Application
-Name=Productivity Suite
-Exec="/path/to/Productivity Suite" %u
+Name=Tadooer
+Exec="/path/to/Tadooer" %u
 Terminal=false
 MimeType=x-scheme-handler/tadooer;
 ```
@@ -207,17 +216,17 @@ The app needs macOS 12 or later. Use the `arm64` zip on Apple silicon and the
 `x64` zip on an Intel Mac (Apple menu → About This Mac shows the chip).
 
 1. Check the download:
-   `shasum -a 256 -c productivity-suite-desktop-<version>-darwin-<arch>.zip.sha256`.
-2. Double-click the zip and move `Productivity Suite.app` to `/Applications`.
+   `shasum -a 256 -c tadooer-desktop-<version>-darwin-<arch>.zip.sha256`.
+2. Double-click the zip and move `Tadooer.app` to `/Applications`.
 3. Open it. The first time, Gatekeeper stops it; see the next section.
 
 The server address rules are the same as on Linux. The settings file is
-`~/Library/Application Support/Productivity Suite/shell-settings.json`; the
+`~/Library/Application Support/Tadooer/shell-settings.json`; the
 web app's session and offline data are in the same directory. The settings
-are in the application menu (**Productivity Suite → Change server…**,
+are in the application menu (**Tadooer → Change server…**,
 **Close to menu bar**, **Start at login**). Closing the window does not quit
 the app: it stays in the Dock and the menu bar, and a click on the Dock icon
-opens the window again. **Productivity Suite → Quit** or Cmd+Q ends it.
+opens the window again. **Tadooer → Quit** or Cmd+Q ends it.
 
 `tadooer://` links need no registration; the bundle declares the scheme.
 
@@ -243,8 +252,8 @@ it from a double-click.
   refuses, sign the copy for this Mac only:
 
   ```sh
-  xattr -dr com.apple.quarantine "/Applications/Productivity Suite.app"
-  codesign --force --deep --sign - "/Applications/Productivity Suite.app"
+  xattr -dr com.apple.quarantine "/Applications/Tadooer.app"
+  codesign --force --deep --sign - "/Applications/Tadooer.app"
   ```
 
   `--sign -` makes an ad hoc signature. It identifies no one and does not make
@@ -268,7 +277,7 @@ deliver to Notification Center. Step 7 of the smoke run records what happens.
 **macOS may ask again after every update.** It recognises an app by its
 signature. Without one, a replaced copy can look like a new app, so the
 prompts for the local network, notifications, the login item and the keychain
-entry "Productivity Suite Safe Storage" (which protects the session cookies)
+entry "Tadooer Safe Storage" (which protects the session cookies)
 can come back.
 
 **Other people's Macs will show the same block.** This build is for the
@@ -294,11 +303,11 @@ form (HTTPS or private HTTP).
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | 1   | `shasum -a 256 -c <zip>.sha256`, unzip, move the app to `/Applications`.                                                                                                    | `OK`; the app shows the Suite icon in Finder.                                                                                                                                           | Icon correct or generic.                                                     |
 | 2   | Double-click the app, then follow "What an unsigned app means".                                                                                                             | A Gatekeeper block, then the app opens after **Open Anyway**.                                                                                                                           | The exact dialog text; which path opened it; whether `codesign` was used.    |
-| 3   | In Terminal: `"/Applications/Productivity Suite.app/Contents/MacOS/Productivity Suite" --suite-smoke`                                                                       | One JSON line with `"preloads":true`, exit status 0.                                                                                                                                    | The line.                                                                    |
+| 3   | In Terminal: `"/Applications/Tadooer.app/Contents/MacOS/Tadooer" --suite-smoke`                                                                                             | One JSON line with `"preloads":true`, exit status 0.                                                                                                                                    | The line.                                                                    |
 | 4   | First run: enter the instance's address in the setup window.                                                                                                                | A local-network prompt for a private address (macOS 15+); a refused address shows a reason; an accepted one opens the Suite. Sign in.                                                   | Prompts shown; the stored file's path and mode (`ls -l`), expected 0600.     |
-| 5   | Menu bar and window: check the menus; copy and paste text with Cmd+C and Cmd+V; close the window with Cmd+W; click the Dock icon; press Cmd+Q and start again.              | Menus: Productivity Suite, File, Edit, View, Window. The app stays running without a window, the Dock click reopens it still signed in, Cmd+Q quits.                                    | Anything missing or misplaced.                                               |
+| 5   | Menu bar and window: check the menus; copy and paste text with Cmd+C and Cmd+V; close the window with Cmd+W; click the Dock icon; press Cmd+Q and start again.              | Menus: Tadooer, File, Edit, View, Window. The app stays running without a window, the Dock click reopens it still signed in, Cmd+Q quits.                                               | Anything missing or misplaced.                                               |
 | 6   | Status item: find it in the menu bar in light and dark appearance; open its menu; use **Hide window**, **Show window**, **Quick capture**, **Sync now**.                    | A monochrome glyph that follows the menu bar's colour. The status line reads `Synced · live` once signed in. Quick capture brings the window forward with the task title field focused. | A screenshot in each appearance; the status line.                            |
-| 7   | Quit. Run `open -a "Productivity Suite" --args --suite-test-notification`.                                                                                                  | macOS may ask for permission first; then one notification titled Productivity Suite. A click on it brings the window forward.                                                           | Shown or not; whether System Settings → Notifications lists the app.         |
+| 7   | Quit. Run `open -a "Tadooer" --args --suite-test-notification`.                                                                                                             | macOS may ask for permission first; then one notification titled Tadooer. A click on it brings the window forward.                                                                      | Shown or not; whether System Settings → Notifications lists the app.         |
 | 8   | Links: with the app running, `open "tadooer://open/today"`. Quit, then run the same command again. Then `open "tadooer://open/api/build"`.                                  | The window goes to Today both times, the second time from a cold start. The `/api` link only brings the window forward.                                                                 | Each result; whether macOS asked which app opens the link.                   |
 | 9   | Turn on **Start at login**. Look at System Settings → General → Login Items & Extensions. Log out and in. Turn it off again.                                                | The app is listed and starts after login; the checkbox matches the list. macOS may ask for approval first, and the app then says so.                                                    | The list entry's label; any approval prompt; whether it started.             |
 | 10  | Turn on **Close to menu bar**, close the window, wait a minute, reopen it from the status item. Repeat once from full screen.                                               | The window hides and returns without reloading; the status item kept its status line meanwhile.                                                                                         | Reload or not; any empty full-screen space left behind.                      |
@@ -362,18 +371,18 @@ keychain, over variables in a shell profile.
 3. Check the signature before notarising:
 
    ```sh
-   codesign --verify --deep --strict --verbose=2 "Productivity Suite.app"
-   codesign --display --entitlements - "Productivity Suite.app"
+   codesign --verify --deep --strict --verbose=2 "Tadooer.app"
+   codesign --display --entitlements - "Tadooer.app"
    ```
 
-4. Zip with `ditto -c -k --keepParent "Productivity Suite.app" <name>.zip`,
+4. Zip with `ditto -c -k --keepParent "Tadooer.app" <name>.zip`,
    submit with `xcrun notarytool submit <name>.zip --keychain-profile <profile> --wait`,
-   then `xcrun stapler staple "Productivity Suite.app"` and make the zip again
+   then `xcrun stapler staple "Tadooer.app"` and make the zip again
    with `ditto`, so the released zip holds the stapled app. `package-artifact.mjs`
    uses `zip`, which is right for an unsigned bundle only; give it a `ditto`
    branch for macOS hosts.
 5. Check the result as Gatekeeper will:
-   `spctl --assess --type execute --verbose=4 "Productivity Suite.app"` should
+   `spctl --assess --type execute --verbose=4 "Tadooer.app"` should
    answer `accepted` with `source=Notarized Developer ID`.
 6. Write the `.sha256` file for the new zip, run `pnpm desktop:artifact`, and
    repeat the smoke run. Steps 2, 7 and 9 are the ones signing should change.

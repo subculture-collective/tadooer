@@ -129,7 +129,7 @@ export function PlannerDetailsSheet({
   const title = task?.title ?? event?.summary ?? "Planner details";
   const description =
     event === undefined
-      ? "Suite task"
+      ? "Tadooer task"
       : `${event.source.providerDisplayLabel} · ${event.source.calendarName}`;
   const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const blockDefaults =
@@ -192,7 +192,7 @@ export function PlannerDetailsSheet({
           )}
           {task === undefined ? (
             <p className="text-sm text-subtext">
-              This provider calendar event is read-only in Productivity Suite.
+              This provider calendar event is read-only in Tadooer.
             </p>
           ) : (
             <>

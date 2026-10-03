@@ -22,7 +22,7 @@ node -e '
 ' "$health" "$ready" "$build"
 
 case "$shell" in
-  *"Productivity Suite"*) ;;
+  *"<title>Tadooer</title>"*) ;;
   *)
     echo "Web shell did not render the expected title" >&2
     exit 1

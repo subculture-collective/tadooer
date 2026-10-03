@@ -105,7 +105,7 @@ describe("App", () => {
         }}
       />,
     );
-    expect(markup).toContain("Productivity Suite");
+    expect(markup).toContain("Tadooer");
     expect(markup).toContain('aria-current="page"');
     expect(markup).toContain("Capture a task");
     expect(markup).toContain("Capture the first task");

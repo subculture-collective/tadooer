@@ -1,6 +1,6 @@
 {
-  "name": "Productivity Suite",
-  "short_name": "Suite",
+  "name": "Tadooer",
+  "short_name": "Tadooer",
   "description": "Private, self-hosted task and calendar planning",
   "start_url": "/today",
   "display": "standalone",

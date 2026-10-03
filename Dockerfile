@@ -27,7 +27,7 @@ ARG SUITE_VERSION=0.0.0-dev
 ARG SUITE_REVISION=development
 ARG SUITE_BUILD_DATE
 
-LABEL org.opencontainers.image.title="Productivity Suite" \
+LABEL org.opencontainers.image.title="Tadooer" \
   org.opencontainers.image.version="$SUITE_VERSION" \
   org.opencontainers.image.revision="$SUITE_REVISION"
 

@@ -28,7 +28,7 @@ import {
  * With a platform and an architecture it reports that one artifact. Without
  * them it reports every packaged artifact of the current version. When there
  * are several it also writes the checksum index
- * (`productivity-suite-desktop-<version>.sha256sums`), and the release value
+ * (`tadooer-desktop-<version>.sha256sums`), and the release value
  * names that index instead of a single archive. `--manifest-value` prints
  * only the release value.
  */

@@ -161,7 +161,7 @@ export const CalendarMigration = ({
     setFeeds([...feeds, result.capability]);
     setIssuedUrl(result.url);
     setMessage(
-      "Copy this capability URL now. Suite will not show its secret again.",
+      "Copy this capability URL now. Tadooer will not show its secret again.",
     );
   };
   return (

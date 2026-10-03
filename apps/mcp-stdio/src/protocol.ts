@@ -348,6 +348,7 @@ export class McpStdioServer {
             capabilities: { tools: {}, resources: {} },
             serverInfo: {
               name: "productivity-suite",
+              title: "Tadooer",
               version: this.serverVersion,
             },
           });

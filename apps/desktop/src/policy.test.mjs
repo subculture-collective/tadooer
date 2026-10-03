@@ -410,7 +410,7 @@ describe("deep links and navigation targets", () => {
   it("finds a deep link among command-line arguments", () => {
     expect(
       deepLinkFromArguments([
-        "/opt/suite/Productivity Suite",
+        "/opt/suite/Tadooer",
         "--flag",
         "tadooer://open/today",
       ]),
@@ -732,9 +732,9 @@ describe("start at login", () => {
   });
 
   it("quotes the executable for the Exec key", () => {
-    expect(
-      quoteExecArgument("/opt/Productivity Suite/Productivity Suite"),
-    ).toBe('"/opt/Productivity Suite/Productivity Suite"');
+    expect(quoteExecArgument("/opt/Tadooer/Tadooer")).toBe(
+      '"/opt/Tadooer/Tadooer"',
+    );
     expect(quoteExecArgument('/opt/a"b$c`d%e\\f')).toBe(
       '"/opt/a\\\\"b\\\\$c\\\\`d%%e\\\\\\\\f"',
     );
@@ -744,14 +744,14 @@ describe("start at login", () => {
 
   it("writes a single-command entry and removes it again", async () => {
     const entry = autostartEntry({
-      name: "Productivity Suite",
-      executable: "/opt/Productivity Suite/Productivity Suite",
+      name: "Tadooer",
+      executable: "/opt/Tadooer/Tadooer",
     });
     expect(entry.split("\n")).toEqual([
       "[Desktop Entry]",
       "Type=Application",
-      "Name=Productivity Suite",
-      'Exec="/opt/Productivity Suite/Productivity Suite"',
+      "Name=Tadooer",
+      'Exec="/opt/Tadooer/Tadooer"',
       "Terminal=false",
       "X-GNOME-Autostart-enabled=true",
       "",
@@ -767,8 +767,8 @@ describe("start at login", () => {
     const path = autostartPath({ XDG_CONFIG_HOME: directory }, "/unused");
     const options = {
       path,
-      name: "Productivity Suite",
-      executable: "/opt/Productivity Suite/Productivity Suite",
+      name: "Tadooer",
+      executable: "/opt/Tadooer/Tadooer",
     };
     await setAutostart({ ...options, enabled: true });
     expect(await readFile(path, "utf8")).toBe(entry);
@@ -785,7 +785,7 @@ describe("start at login", () => {
 describe("release artifact naming", () => {
   it("builds a manifest value the release channel accepts unchanged", () => {
     const name = `${artifactBaseName("0.1.0", "linux", "x64")}.tar.gz`;
-    expect(name).toBe("productivity-suite-desktop-0.1.0-linux-x64.tar.gz");
+    expect(name).toBe("tadooer-desktop-0.1.0-linux-x64.tar.gz");
     const desktopArtifact = manifestDesktopArtifact(name, "a".repeat(64));
     expect(desktopArtifact).toBe(`${name}@sha256:${"a".repeat(64)}`);
     expect(

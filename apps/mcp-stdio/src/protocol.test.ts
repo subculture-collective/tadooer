@@ -34,7 +34,13 @@ describe("MCP stdio protocol", () => {
     await expect(
       server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" }),
     ).resolves.toMatchObject({
-      result: { serverInfo: { name: "productivity-suite", version: "test" } },
+      result: {
+        serverInfo: {
+          name: "productivity-suite",
+          title: "Tadooer",
+          version: "test",
+        },
+      },
     });
     await expect(
       server.handle({ jsonrpc: "2.0", id: 2, method: "tools/list" }),

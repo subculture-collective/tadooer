@@ -207,7 +207,7 @@ export const GooglePlanning = ({
           <div>
             <p className="muted">
               Connect read-only calendar access in your system browser. The
-              Suite stores the refresh grant encrypted on the server.
+              Tadooer stores the refresh grant encrypted on the server.
             </p>
             <Button
               type="button"
