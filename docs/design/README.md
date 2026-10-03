@@ -77,6 +77,8 @@ Use them for chips, banners, and highlighted rows. Never fill a large area with
 a full-strength accent. Measured on `--base`: text 13.2:1, subtext 7.4:1, subtext-2 4.4:1,
 purple 6.8:1, pink 6.9:1, cyan 11.8:1, teal 11.0:1, green 12.0:1,
 orange 9.6:1, red 5.2:1. Crust on purple (primary button text) is 7.8:1.
+Subtext-2 is below the 4.5:1 target for ordinary text, so it is limited to
+eyebrows and metadata at weight 600.
 
 Calm Day states map to chips: working is green, scheduled break is cyan,
 unavailable is neutral, finished is purple. Live sync status uses the same
