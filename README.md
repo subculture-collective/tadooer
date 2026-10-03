@@ -1,30 +1,42 @@
 # Tadooer
 
-Tadooer is a private, self-hosted task and calendar planner. The repository is
-`subculture-collective/tadooer`; the workspace packages and the container image
-keep the name `productivity-suite`. This
-workspace is the implementation and integration home for that
-self-hostable productivity suite. The intended suite includes a Greenfield
-React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and
+Tadooer is a private, self-hosted task and calendar planner for one owner. A
+web app, a desktop shell and an Android shell show the same server. There is
+no hosted service and no sign-up. You run the server, create the single owner
+account on first load, and connect your own calendars.
+
+The repository is `subculture-collective/tadooer`; the workspace packages and
+the container image keep the name `productivity-suite`. This workspace is the
+implementation and integration home for the suite, which is intended to
+include a new React planner, Daymark's calendar work, Baïkal, SuperSync, and
 the existing Super Productivity MCP tooling.
 
-Phases 0 through 8 are complete, including live Google federation qualification
-for Phase 3. The runnable
-self-hosted suite includes secure single-owner
-authentication, encrypted Baïkal planning, a durable browser-local task cache,
-replay-safe queued task writes, explicit two-client conflicts, daily-use task
-organization, and one server-authoritative focus/break session with follower
-and takeover behavior, plus separately scoped automation credentials, a stable
-preview/confirm API, content-safe audit records, a catalog-driven local MCP
-stdio adapter, quick-add through the same confirmed API, and a separate
-Template Library with inert templates, ordered Template Sets, explicit-project
-instantiation, immutable provenance, sync snapshots, and confirmed MCP
-instantiation. Google calendar-list/event read scopes, encrypted refresh grants,
-incremental projection, explicit freshness, and calm daily planning are present
-and were qualified against a real Google OAuth grant on 2026-08-07. It does not
-claim offline calendar/focus mutation,
-closed-application background sync, recurrence editing beyond read-only Google
-instances, or hosted MCP.
+## What runs today
+
+Phases 0 through 8 are complete, including live Google federation
+qualification for Phase 3. The runnable suite has:
+
+- secure single-owner authentication;
+- encrypted Baïkal planning;
+- a durable browser-local task cache with replay-safe queued task writes and
+  explicit two-client conflicts;
+- daily-use task organization;
+- one server-authoritative focus/break session, with follower and takeover
+  behavior;
+- separately scoped automation credentials, a stable preview/confirm API and
+  content-safe audit records;
+- a catalog-driven local MCP stdio adapter, and quick-add through the same
+  confirmed API;
+- a separate Template Library with inert templates, ordered Template Sets,
+  explicit-project instantiation, immutable provenance, sync snapshots, and
+  confirmed MCP instantiation;
+- Google calendar-list and event read scopes, encrypted refresh grants,
+  incremental projection, explicit freshness, and calm daily planning,
+  qualified against a real Google OAuth grant on 2026-08-07.
+
+It does not claim offline calendar or focus mutation, closed-application
+background sync, recurrence editing beyond read-only Google instances, or
+hosted MCP.
 
 Calendar migration accepts either a generic ICS payload or an explicit Google
 Calendar ICS/Takeout export. Preview reports recurrence, attendees, alarms,
@@ -36,11 +48,14 @@ revoked immediately. This is migration and read-only publication, not Google
 OAuth, CalDAV write access, or background mirroring.
 
 Phase 8 adds a packaged Linux Electron client that displays the same Suite
-origin without Node integration or a second data authority. Release operations
+origin without Node integration or a second data authority. Unsigned macOS
+bundles are also built; their smoke run is still open. Release operations
 use immutable version/revision/image-digest manifests, explicit promotion and
 rollback history, coherent backup/restore, and content-free Prometheus metrics
-at `/api/metrics`. Android/iOS, PostgreSQL, and multi-user mode are deliberately
-not shipped because their conditional roadmap prerequisites are not met.
+at `/api/metrics`. iOS, PostgreSQL, and multi-user mode are deliberately not
+shipped because their conditional roadmap prerequisites are not met. The
+Android shell exists as source in `apps/mobile`; no APK has been built or run
+on a device.
 
 ## Run the Suite
 
@@ -115,7 +130,7 @@ second or two.
   the app is opened. Records outside the feed are refreshed only while their
   view is open and are not available offline.
 
-For the public HTTPS deployment, set `SUITE_SECURE_COOKIES=true` so the opaque
+For an HTTPS deployment, set `SUITE_SECURE_COOKIES=true` so the opaque
 session cookie is sent only over TLS. Preserve the original public `Host` header
 at the reverse proxy; unsafe API requests compare it with the browser's Origin
 in addition to requiring the session CSRF token.
