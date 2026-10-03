@@ -149,9 +149,9 @@ export const PlannerPage = ({
   return (
     <div className="today-page">
       <PageHeader
-        eyebrow="Calendar context"
+        eyebrow="Calendar and tasks"
         title="Planner"
-        description="Place projected calendar events and Tadooer tasks on a real time grid."
+        description="Calendar events and planned tasks on one time grid."
         actions={
           <Button
             type="button"
@@ -256,7 +256,7 @@ export const PlannerPage = ({
           {planner === null || !matchesRange ? (
             <p className="text-sm text-subtext">
               {error === null
-                ? "Waiting for calendar context for this period…"
+                ? "Nothing is loaded for this period yet."
                 : "No current data for the selected period."}
             </p>
           ) : (

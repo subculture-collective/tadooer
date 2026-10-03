@@ -58,7 +58,7 @@ export const ConnectionsPage = ({
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
         title="Connections"
-        description="Manage imports, assistant access, and calendar integrations."
+        description="Calendars, imports and assistant access."
       />
       <AssistantAccess csrfToken={csrfToken} />
       <SuperProductivityImport
@@ -119,7 +119,7 @@ export const ConnectionsPage = ({
         </CardHeader>
         <CardContent className="grid gap-3">
           {baikal.calendars.length === 0 ? (
-            <EmptyState title="No calendar collections were returned." />
+            <EmptyState title="Baikal returned no calendars." />
           ) : (
             <ul className="calendars">
               {baikal.calendars.map((calendar) => (
@@ -142,9 +142,10 @@ export const ConnectionsPage = ({
             csrfToken={csrfToken}
           />
           <p className="boundary-note">
-            Calendar reads and Tadooer-created time blocks are conditional and
-            bounded. Calendar and focus mutations remain online-only and are
-            never silently queued.
+            Tadooer reads a bounded window of each calendar. It changes only the
+            time blocks it created, and only when they have not changed
+            elsewhere. Calendar and focus changes need a connection and are
+            never queued.
           </p>
         </CardContent>
       </Card>

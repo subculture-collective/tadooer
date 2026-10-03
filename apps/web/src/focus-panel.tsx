@@ -153,7 +153,7 @@ const StartSession = ({
 
   if (availableTasks.length === 0) {
     return (
-      <p className="hint">Create or reopen a task before starting focus.</p>
+      <p className="hint">Focus needs an open task. Add one or reopen one.</p>
     );
   }
 
@@ -200,7 +200,7 @@ export const FocusPanel = ({
       activeSession?.state === "expired"
         ? "This focus session expired. Start a new session to continue."
         : activeSession?.state === "completed"
-          ? "The previous focus session is complete. Start a new session when ready."
+          ? "The last focus session is finished. Start another when you want one."
           : null;
     return (
       <Card aria-labelledby="focus-panel-title">
@@ -308,7 +308,7 @@ export const FocusPanel = ({
           </div>
         ) : (
           <div className="task-actions">
-            <p className="hint">Controlled on another registered device.</p>
+            <p className="hint">Another device controls this session.</p>
             <Button
               type="button"
               disabled={controlsDisabled}

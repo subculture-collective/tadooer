@@ -96,6 +96,6 @@ describe("TodayQueue", () => {
         onViewTasks={() => undefined}
       />,
     );
-    expect(markup).toContain("Nothing queued for today.");
+    expect(markup).toContain("Today is clear.");
   });
 });

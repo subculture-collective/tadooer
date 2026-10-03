@@ -449,7 +449,7 @@ export const TasksPage = ({
     <>
       <PageHeader
         title="Tasks"
-        description="Organize, edit, and schedule your tasks."
+        description="Every task, with filters and saved views."
       />
       <Card aria-labelledby="organization-title">
         <CardHeader>

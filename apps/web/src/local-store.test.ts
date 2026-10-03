@@ -329,7 +329,7 @@ describe("LocalStore", () => {
         reviewedTaskRevision: 1,
         reviewedFieldVersions: { title: 1 },
       }),
-    ).rejects.toThrow("latest canonical values");
+    ).rejects.toThrow("latest values");
     expect((await local.loadOutbox())[0]?.state).toBe("conflicted");
     expect(await local.loadConflicts()).toHaveLength(1);
   });

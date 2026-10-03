@@ -151,18 +151,16 @@ export const TodayPage = (props: TodayPageProps) => {
   return (
     <div className="today-page mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
-        eyebrow="Calm daily workspace"
+        eyebrow="Calm Day"
         title="Today"
         description={
           dayPlan === undefined
-            ? "Choose the next useful task from your local workspace."
+            ? "Here is the day."
             : calmStateLabel[dayPlan.state]
         }
       >
         {dayPlan?.nextTask === null ? (
-          <p className="text-xs text-subtext-2">
-            No scheduled task is ready next.
-          </p>
+          <p className="text-xs text-subtext-2">Nothing is scheduled next.</p>
         ) : dayPlan?.nextTask !== undefined ? (
           <p className="text-xs text-subtext-2">
             Next: {dayPlan.nextTask.title}
@@ -175,10 +173,10 @@ export const TodayPage = (props: TodayPageProps) => {
       >
         <span aria-hidden="true" className="size-1.5 rounded-full bg-success" />
         {syncStatus === "offline"
-          ? "Offline. Tasks can be captured, completed, and reopened."
+          ? "Offline. You can still add, complete and reopen tasks. They sync later."
           : syncStatus === "syncing"
             ? "Syncing local tasks."
-            : "Task sync is available."}
+            : "Task sync is on."}
       </p>
       {dailySummaryNote.trim() !== "" && (
         <Card aria-labelledby="daily-summary-note-title">
@@ -275,7 +273,7 @@ export const TodayPage = (props: TodayPageProps) => {
         <CardHeader>
           <SectionHeading
             id="week-plan-title"
-            eyebrow="Real calendar context"
+            eyebrow="From your calendars"
             title="Week plan"
             actions={
               planner !== null ? (

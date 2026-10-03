@@ -707,7 +707,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
                     ? {}
                     : { planningPreferences }),
                   message:
-                    "Working from this browser\u2019s durable task cache.",
+                    "Tadooer cannot reach the server. These are the tasks saved in this browser. Task changes are queued and sync when it is back.",
                 });
               else if (!cancelled())
                 setState({ kind: "error", message: messageFor(error) });
@@ -935,13 +935,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         );
       } else if (result.status.state !== "connected") {
         setCalendarMessage(
-          "Google Calendar could not finish syncing. The last saved projection has been kept. You can retry without disconnecting.",
+          "Google Calendar did not finish syncing. The events saved last time are kept. Retry without disconnecting.",
         );
       } else {
         setCalendarMessage(
-          full
-            ? "Google Calendar resynced successfully."
-            : "Google Calendar synced successfully.",
+          full ? "Google Calendar resynced." : "Google Calendar synced.",
         );
       }
       await refreshGooglePlanning();
@@ -1121,7 +1119,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
       if (local.conflictCount > 0)
         setFormError(
-          "A record changed on another client. Review the visible sync conflict before retrying.",
+          "A record changed on another device. Review the sync conflict shown here before retrying.",
         );
     } catch (error: unknown) {
       setState((current) =>
@@ -1177,7 +1175,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       );
       if (local.conflictCount > 0)
         setFormError(
-          "A record changed on another client. Review the visible sync conflict before retrying.",
+          "A record changed on another device. Review the sync conflict shown here before retrying.",
         );
     } catch (error: unknown) {
       setState((current) =>
@@ -2588,7 +2586,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           {state.kind === "loading" && (
             <div className="auth-loading">
               <div className="status-dot online" />
-              <p className="muted">Opening your suite...</p>
+              <p className="muted">Opening the planner...</p>
             </div>
           )}
           {state.kind === "error" && (
@@ -2604,8 +2602,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               <p className="step">Step 1 of 2</p>
               <h2>Create the owner account</h2>
               <p className="muted">
-                This first release supports one owner. The identity remains
-                explicit so future data is always ownership-scoped.
+                This planner has one owner. Everything in it belongs to this
+                account.
               </p>
               <Field
                 label="Display name"
@@ -2638,7 +2636,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           )}
           {state.kind === "login" && (
             <form onSubmit={(event) => void submitLogin(event)}>
-              <p className="step">Welcome back</p>
+              <p className="step">Private planner</p>
               <h2>Sign in</h2>
               {state.message !== undefined && (
                 <p className="message message-success">{state.message}</p>
@@ -2672,7 +2670,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               </p>
               {state.username !== undefined && (
                 <p className="message message-error">
-                  Session expired. Please sign in again.
+                  The session expired. Sign in again.
                 </p>
               )}
               {formError !== null && (
@@ -2809,8 +2807,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
               <p className="step">Step 2 of 2</p>
               <h2>Connect Baikal</h2>
               <p className="muted">
-                Enter the Baikal user you created. Tadooer verifies it through
-                CalDAV before storing an encrypted credential.
+                Enter the Baikal user you created. Tadooer checks it against the
+                calendar server, then stores the password encrypted.
               </p>
               <p className="hint mono">
                 {endpointHost(state.baikal.endpoint)} \u00b7 server-managed

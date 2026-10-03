@@ -56,15 +56,15 @@ export const InboxPage = ({
   return (
     <div className="today-page mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
-        eyebrow="Capture and clarify"
+        eyebrow="Not planned yet"
         title="Inbox"
-        description="Unscheduled tasks waiting for a decision."
+        description="Open tasks with no planned time."
       />
       <TaskCaptureForm busy={busy} onSubmit={onSubmitTask} />
       {inboxTasks.length === 0 ? (
         <EmptyState
-          title="Inbox zero"
-          description="Capture the next thing when it arrives."
+          title="The inbox is empty."
+          description="New tasks wait here until you give them a time."
         />
       ) : (
         <Card
@@ -72,7 +72,7 @@ export const InboxPage = ({
           aria-labelledby="inbox-list-title"
         >
           <CardHeader>
-            <SectionHeading id="inbox-list-title" title="To clarify" />
+            <SectionHeading id="inbox-list-title" title="To plan" />
           </CardHeader>
           <CardContent>
             <ul>

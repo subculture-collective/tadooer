@@ -216,7 +216,7 @@ export const TemplateLibrary = ({
     >
       <SectionHeading
         as="h3"
-        eyebrow="Reusable work"
+        eyebrow="For tasks you repeat"
         title="Template Library"
         id="template-library-title"
         actions={
@@ -241,8 +241,8 @@ export const TemplateLibrary = ({
         }
       />
       <p className="hint" id="template-library-note">
-        Templates are inert blueprints. They do not appear in active tasks,
-        reminders, or focus tracking.
+        A template does nothing until you create a task from it. It never
+        appears in tasks, reminders or focus tracking.
       </p>
       <form
         className="template-create"
@@ -290,7 +290,7 @@ export const TemplateLibrary = ({
         <Button disabled={busy}>{busy ? "Saving…" : "Save template"}</Button>
       </form>
       {templates.length === 0 ? (
-        <EmptyState title="No templates match this library yet." />
+        <EmptyState title="No templates here." />
       ) : (
         <ul className="template-list">
           {templates.map((template) => {
@@ -425,7 +425,8 @@ export const TemplateLibrary = ({
       <section className="template-sets" aria-labelledby="template-set-title">
         <h4 id="template-set-title">Template Sets</h4>
         <p className="hint">
-          Create every member as independent work in one existing project.
+          A set creates one task from each of its templates, in a project you
+          choose.
         </p>
         <form
           className="template-set-create"
@@ -449,7 +450,7 @@ export const TemplateLibrary = ({
           <Button disabled={busy || templates.length === 0}>Save set</Button>
         </form>
         {sets.length === 0 ? (
-          <EmptyState title="No reusable sets yet." />
+          <EmptyState title="No sets yet." />
         ) : (
           <ul className="template-list">
             {sets

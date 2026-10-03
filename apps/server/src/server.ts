@@ -262,7 +262,7 @@ export const startSuiteServer = async (
         const claimed = database.claimNotificationDelivery(due.id, now);
         if (claimed === undefined) continue;
         const result = await notificationPublisher.publish({
-          message: "Tadooer test reminder",
+          message: "Test reminder from Tadooer. Nothing is due.",
           click: `${config.publicOrigin ?? "http://localhost"}/settings`,
         });
         if (result.kind === "delivered")

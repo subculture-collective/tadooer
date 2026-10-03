@@ -88,7 +88,7 @@ describe("FocusPanel", () => {
       runningSession,
       "e1432ff2-025d-4151-9eb2-9e22f089ffb4",
     );
-    expect(markup).toContain("Controlled on another registered device.");
+    expect(markup).toContain("Another device controls this session.");
     expect(markup).toContain("Take over on this device");
     expect(markup).not.toContain("Complete focus session");
   });

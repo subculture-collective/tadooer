@@ -54,8 +54,10 @@ describe("Google planning surface", () => {
         {...callbacks}
       />,
     );
-    expect(html).toContain("Google OAuth credentials are not installed yet");
-    expect(html).toContain("Baïkal and local tasks continue to work normally");
+    expect(html).toContain(
+      "Google credentials are not installed on this server",
+    );
+    expect(html).toContain("Baïkal and your tasks work without them");
     expect(html).toContain("Working hours and quiet break");
   });
 

@@ -136,9 +136,9 @@ export const ReusePage = ({
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
-        eyebrow="Reusable building blocks"
+        eyebrow="Templates and pools"
         title="Reuse"
-        description="Save repeatable task patterns and make bounded choices from curated pools."
+        description="Templates for tasks you repeat. Pools for choosing from a list you wrote."
       />
       <TemplateLibrary
         templates={templates}

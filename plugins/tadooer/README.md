@@ -17,7 +17,7 @@ Create a scoped automation token in Tadooer Connections. Store the secret in a r
 
 ```json
 {
-  "url": "https://tadooer.subcult.tv",
+  "url": "https://tasks.example.org",
   "tokenFile": "/absolute/path/to/private-tadooer-token"
 }
 ```

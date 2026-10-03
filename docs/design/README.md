@@ -36,9 +36,51 @@ edit the copies. `suite-icon.svg` stays as the mark's editable source.
 **Wordmark.** "Tadooer" in Inter at weight 650 with tracking -0.015em, the same
 setting as page titles. Lowercase is for identifiers only.
 
-**Voice.** Plain words, present tense, one idea per sentence. State what the
-software does and does not do; the product's own documents never claim a
-feature that is not verified. No exclamation marks.
+**Voice.** The planner itself, quietly. The rules and sample copy are in
+[Voice](#voice) below.
+
+## Voice
+
+The planner speaks for itself, in short present-tense sentences with one idea
+each. Someone looks at this screen all day, so most of it says very little.
+
+- Labels, buttons and menu items are one or two plain words: "Sync now",
+  "Start focus", "Add task". They carry no voice.
+- The voice shows in page descriptions, empty states, the focus session,
+  setup, reminders and errors.
+- State what the software does and does not do. The product's own documents
+  never claim a feature that is not verified.
+- No exclamation marks. No praise when a task is completed. No talk of
+  getting more done, streaks as a goal, or hustle.
+- Tadooer is a private tool for one owner. Copy never invites anyone to sign
+  up, never shows a server address as if it were public, and never describes
+  a hosted service.
+- An error says what happened, what happened to the owner's data, and what to
+  do next. Sync, calendar and offline messages name the side that changed and
+  say whether anything was written.
+- Use "device" for a browser, desktop or phone the owner signed in on, and
+  "the server" for the one Tadooer instance. Keep storage and protocol terms
+  (cache, projection, canonical, CalDAV) out of interface copy unless the
+  owner has to act on them.
+
+Sample copy, as the app ships it:
+
+| Where                        | Copy                                                                                                                          |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Today, before the plan loads | Here is the day.                                                                                                              |
+| Today, nothing planned       | Today is clear.                                                                                                               |
+| Inbox, empty                 | The inbox is empty. New tasks wait here until you give them a time.                                                           |
+| Focus, no open task          | Focus needs an open task. Add one or reopen one.                                                                              |
+| Focus, another device        | Another device controls this session.                                                                                         |
+| Idle return                  | The session kept running. Choose what that time was; no time is added either way.                                             |
+| Offline                      | Tadooer cannot reach the server. These are the tasks saved in this browser. Task changes are queued and sync when it is back. |
+| Calendar conflict            | Calendar changed elsewhere. Refresh before updating this block.                                                               |
+| Bridge deletion              | Deleted in Google. The other copy stays until you decide.                                                                     |
+| Shell setup                  | This app shows that server. Your tasks and your sign-in stay on it.                                                           |
+| Test reminder                | Test reminder from Tadooer. Nothing is due.                                                                                   |
+
+Promotional copy lives in the Studio pack and is sample text until the owner
+reviews it; keep that label there.
 
 ## Direction
 

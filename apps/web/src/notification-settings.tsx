@@ -39,7 +39,7 @@ export const NotificationSettings = ({
     <section aria-labelledby="notification-settings-title">
       <SectionHeading
         as="h3"
-        eyebrow="Private ntfy delivery"
+        eyebrow="Delivered by ntfy"
         title="Task reminders"
         id="notification-settings-title"
         actions={
