@@ -123,7 +123,7 @@ export const handleNotifications: RouteHandler = async (
     }
     const now = new Date().toISOString();
     const result = await notificationPublisher.publish({
-      message: "Tadooer test reminder",
+      message: "Test reminder from Tadooer. Nothing is due.",
       click: `${config.publicOrigin ?? "http://localhost"}/settings`,
     });
     const delivered = result.kind === "delivered";

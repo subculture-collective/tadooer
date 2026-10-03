@@ -63,7 +63,9 @@ it("delivers durable tests with reminders disabled, bounds retries, and never re
         state: "delivered",
         attemptCount: 1,
       });
-      expect(publisher.mock.calls[0]?.[1]?.body).toBe("Tadooer test reminder");
+      expect(publisher.mock.calls[0]?.[1]?.body).toBe(
+        "Test reminder from Tadooer. Nothing is due.",
+      );
       db.queueNotificationTest("owner", "uncertain", now.toISOString());
       publisher.mockRejectedValueOnce(new Error("response lost"));
       await server.runNotifications();
