@@ -1,7 +1,8 @@
 # Tadooer
 
-Tadooer is a private, self-hosted task and calendar planner; the repository,
-packages and container image keep the name `productivity-suite`. This
+Tadooer is a private, self-hosted task and calendar planner. The repository is
+`subculture-collective/tadooer`; the workspace packages and the container image
+keep the name `productivity-suite`. This
 workspace is the implementation and integration home for that
 self-hostable productivity suite. The intended suite includes a Greenfield
 React productivity experience, Daymark's calendar work, Baïkal, SuperSync, and

@@ -11,7 +11,8 @@ there, interface rules here.
 ## Identity
 
 **Name.** Tadooer, written with one capital in prose and in the wordmark. The
-repository, package and image names stay `productivity-suite`, and the build
+repository is `subculture-collective/tadooer`; the workspace package and
+container image names stay `productivity-suite`, and the build
 and readiness endpoints report `service: "productivity-suite"`; the desktop and
 mobile shells check that value, so it is an identifier, not a name.
 
