@@ -2,7 +2,7 @@
 
 > Private single-owner planner. Sample promotional artwork and copy pending owner review.
 
-![Tadooer: The plan, and the one thing now. Sample planner artwork with placeholder tasks; pending owner review.](docs/assets/readme/banner.png)
+![Tadooer: The plan, and the one thing now. Sample planner artwork with placeholder tasks; pending owner review.](https://git.subcult.tv/api/v1/repos/subculture-collective/tadooer/raw/docs/assets/readme/banner.png?ref=7abce2c2fa04590c96172f9dd6ec59cbadf31e7b)
 
 **The plan, and the one thing now.**
 
