@@ -48,7 +48,9 @@ describe("TemplateLibrary", () => {
     const markup = renderToStaticMarkup(<TemplateLibrary {...props} />);
 
     expect(markup).toContain("Template Library");
-    expect(markup).toContain("Templates are inert blueprints");
+    expect(markup).toContain(
+      "A template does nothing until you create a task from it",
+    );
     expect(markup).toContain("Search templates");
     expect(markup).toContain("New template");
     expect(markup).toContain("Weekly review");

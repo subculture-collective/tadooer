@@ -282,7 +282,7 @@ export function PlannerTimeGrid({
         <EmptyState
           icon={<CalendarDaysIcon />}
           title="Nothing is planned in this range"
-          description="Projected calendar events and Tadooer tasks with a planned time or day will appear here."
+          description="Calendar events and tasks with a planned day or time appear here."
         />
       )}
       <div className="planner-time-grid__legend" aria-label="Calendar legend">

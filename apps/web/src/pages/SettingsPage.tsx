@@ -89,7 +89,7 @@ export const SettingsPage = ({
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       <PageHeader
         title="Settings"
-        description="Control planning, notifications, synchronization, and diagnostic data."
+        description="Preferences, reminders, your data and sync."
       />
       {google !== undefined &&
         planningPreferences !== undefined &&
@@ -196,8 +196,8 @@ export const SettingsPage = ({
             </div>
           </dl>
           <p className="hint">
-            Automation credentials remain separately scoped and revocable;
-            connector secrets are never returned to this page.
+            Assistant tokens are scoped and revoked one by one. Calendar secrets
+            are never sent to this page.
           </p>
           <Button
             type="button"

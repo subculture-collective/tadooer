@@ -63,8 +63,8 @@ export const SessionRecovery = ({
       </AlertTitle>
       <AlertDescription>
         <p>
-          Your workspace and queued work have been kept. Recover your session,
-          then review the result before retrying your action.
+          Your tasks and queued changes are kept. Enter your password, then
+          check the result before you repeat the action.
         </p>
         <form onSubmit={(event) => void recover(event)}>
           <p>Signed in as {username}</p>

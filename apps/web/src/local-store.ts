@@ -954,7 +954,7 @@ export class LocalStore {
       return null;
     }
     if (review.canonical === null)
-      throw new Error("The canonical task is no longer available for review");
+      throw new Error("The current task is no longer available for review");
     this.#assertConflictPreview(review, input);
     if (
       input.choice === "retry-local" &&
@@ -2059,9 +2059,9 @@ export class LocalStore {
     input: ResolveTaskConflictInput,
   ): void {
     if (review.canonical === null)
-      throw new Error("The canonical task is no longer available for review");
+      throw new Error("The current task is no longer available for review");
     if (review.canonical.task.revision !== input.reviewedTaskRevision)
-      throw new Error("The task changed; review the latest canonical values");
+      throw new Error("The task changed; review the latest values");
     const fields = Object.keys(review.attemptedFields ?? {}).map(
       syncFieldVersionKey,
     ) as CoreTaskField[];
@@ -2070,9 +2070,7 @@ export class LocalStore {
         input.reviewedFieldVersions[field] !==
         review.canonical.fieldVersions[field]
       )
-        throw new Error(
-          "A task field changed; review the latest canonical values",
-        );
+        throw new Error("A task field changed; review the latest values");
     }
   }
 

@@ -397,7 +397,7 @@ export const SyncConflictReview = ({
                       {review.retryLocalUnavailableReason ===
                       "pending-local-sync"
                         ? "Wait for the newer local task change to finish syncing, then refresh this review before retrying."
-                        : "This resource conflict cannot be retried locally. Keep it visible until you have reviewed the current task data."}
+                        : "This conflict cannot be retried from this device. Leave it here until you have checked the current task."}
                     </AlertDescription>
                   </Alert>
                 ) : (

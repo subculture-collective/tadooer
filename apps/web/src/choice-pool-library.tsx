@@ -162,14 +162,14 @@ export const ChoicePoolLibrary = ({
     >
       <SectionHeading
         as="h3"
-        eyebrow="Resolve vague work deliberately"
+        eyebrow="Pick from a list"
         title="Choice Pools"
         id="choice-pool-title"
       />
       <p className="muted">
-        Candidates remain inert until you preview and confirm a planning
-        placeholder. Eligibility is explainable and based on recorded selection
-        history.
+        A candidate does nothing until you preview a planning placeholder and
+        confirm it. Each candidate shows why it is eligible or not, based on
+        what was picked before.
       </p>
       <form
         className="choice-pool-create"

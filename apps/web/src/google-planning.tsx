@@ -179,11 +179,7 @@ export const GooglePlanning = ({
       <SectionHeading
         as="h3"
         id="google-planning-title"
-        eyebrow={
-          mode === "preferences"
-            ? "Civil-time planning"
-            : "Federated calendar context"
-        }
+        eyebrow={mode === "preferences" ? "Planning" : "Calendar connection"}
         title={
           mode === "preferences"
             ? "Working hours and time zone"
@@ -200,14 +196,15 @@ export const GooglePlanning = ({
       {mode !== "preferences" &&
         (!status.configured ? (
           <p className="muted">
-            Google OAuth credentials are not installed yet. Baïkal and local
-            tasks continue to work normally.
+            Google credentials are not installed on this server. Baïkal and your
+            tasks work without them.
           </p>
         ) : !status.connected ? (
           <div>
             <p className="muted">
-              Connect read-only calendar access in your system browser. The
-              Tadooer stores the refresh grant encrypted on the server.
+              Connecting opens Google in your system browser and asks for
+              read-only calendar access. Tadooer stores the grant encrypted on
+              the server.
             </p>
             <Button
               type="button"
@@ -254,9 +251,7 @@ export const GooglePlanning = ({
                 return (
                   <li key={calendar.id}>
                     <strong>{calendar.displayName}</strong>{" "}
-                    <span>
-                      {freshness?.message ?? "Awaiting first projection"}
-                    </span>{" "}
+                    <span>{freshness?.message ?? "Not read yet"}</span>{" "}
                     {capability !== undefined && (
                       <span
                         className="hint"
@@ -281,7 +276,7 @@ export const GooglePlanning = ({
                           ({preferences.timeZone})
                         </>
                       ) : (
-                        "Never successfully synced"
+                        "Never synced"
                       )}
                     </p>
                   </li>
@@ -300,8 +295,8 @@ export const GooglePlanning = ({
             <p className="hint">
               Google refresh is currently manual. A recent sync is considered
               fresh for fifteen minutes. Resync reloads your calendars and
-              events using the existing Google connection. Your saved projection
-              stays available if the resync fails.
+              events using the existing Google connection. The events already
+              saved stay available if the resync fails.
             </p>
             <div className="task-actions">
               <Button
@@ -336,7 +331,7 @@ export const GooglePlanning = ({
         <div className="day-plan-summary" role="status">
           <strong>Today: {dayPlan.state.replaceAll("_", " ")}</strong>
           {dayPlan.nextTask === null ? (
-            <span>No scheduled task is ready next.</span>
+            <span>Nothing is scheduled next.</span>
           ) : (
             <span>Next: {dayPlan.nextTask.title}</span>
           )}

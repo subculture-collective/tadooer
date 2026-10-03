@@ -155,7 +155,8 @@ describe("App", () => {
           ],
           recovery: [],
           conflictCount: 1,
-          message: "Working from this browser\u2019s durable task cache.",
+          message:
+            "Tadooer cannot reach the server. These are the tasks saved in this browser. Task changes are queued and sync when it is back.",
           planningPreferences: {
             workingDays: [1, 2, 3, 4, 5],
             workdayStart: "09:00",
@@ -173,7 +174,7 @@ describe("App", () => {
     expect(markup).toContain("Overdue");
     expect(markup).toContain("Planning");
     expect(markup).toContain(
-      "Offline. Tasks can be captured, completed, and reopened.",
+      "Offline. You can still add, complete and reopen tasks. They sync later.",
     );
     expect(markup).toContain("Reconnect to start focus");
     expect(markup).toContain("Reconnect to change calendar blocks");
@@ -252,7 +253,7 @@ describe("App", () => {
     expect(tasks).toContain("Filter tasks");
     expect(tasks).not.toContain("Template Library");
     expect(inbox).toContain("Inbox");
-    expect(inbox).toContain("To clarify");
+    expect(inbox).toContain("To plan");
     expect(inbox).toContain("Route-backed task");
     expect(reuse).toContain("Template Library");
     expect(reuse).toContain("Choice Pools");

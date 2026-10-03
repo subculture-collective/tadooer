@@ -172,9 +172,9 @@ export const CalendarMigration = ({
         title="Migration & read-only publication"
       />
       <p className="hint">
-        Preview a bounded ICS export before making a one-time copy into Baïkal.
-        Google exports use the Google Calendar ICS/Takeout adapter; this is not
-        live synchronization.
+        Preview an ICS export before making a one-time copy into Baïkal. Google
+        exports use the Google Calendar ICS/Takeout adapter; this is not live
+        synchronization.
       </p>
       <form
         className="calendar-import-form"

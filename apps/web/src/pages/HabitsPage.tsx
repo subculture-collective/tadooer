@@ -91,7 +91,7 @@ export const HabitsPage = ({
       <PageHeader
         id="habits-heading"
         title="Habits"
-        description="Small actions, repeated. Completion history uses each habit’s timezone."
+        description="Things you repeat. Each habit keeps its history in its own time zone."
       />
       {!online && (
         <Alert variant="warning" role="status">
@@ -186,7 +186,7 @@ export const HabitsPage = ({
       {library.habits.length === 0 && (
         <EmptyState
           title="No habits yet."
-          description="Start with one action you want to repeat."
+          description="Add one thing you want to repeat."
         />
       )}
       <div className="habit-list">

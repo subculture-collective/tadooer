@@ -209,7 +209,7 @@ export const TodayQueue = ({
         plannedToday.length +
         planning.length ===
       0 ? (
-        <EmptyState title="Nothing queued for today." />
+        <EmptyState title="Today is clear." />
       ) : (
         <>
           {section("Overdue", "today-overdue", overdue, "overdue")}
