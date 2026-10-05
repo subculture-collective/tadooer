@@ -13,6 +13,7 @@ import { withTemporaryDirectory } from "@suite/test-support";
 import {
   createFakeCalDav,
   createFakeGoogleCalendar,
+  vevent,
 } from "./calendar-bridge/fakes.ts";
 import { startSuiteServer } from "./server.ts";
 
@@ -203,6 +204,27 @@ describe("calendar bridge routes", () => {
           counts: { applied: 1 },
         });
         expect(baikal.resources.size).toBe(1);
+        // A role downgrade after mapping creation blocks before pending Baikal
+        // work can reach Google. Restoring the role preserves the mapping.
+        google.setAccessRole("reader");
+        await call("/api/connectors/google/sync", "POST");
+        const blockedHref = baikal.userPut(
+          "permission-change.ics",
+          vevent({ uid: "permission-change", summary: "Keep pending" }),
+        );
+        const googleWritesBefore = google.writes.length;
+        expect(await call(`${base}/run`, "POST")).toMatchObject({
+          status: 200,
+          body: {
+            outcome: "blocked",
+            reason: "google-calendar-not-writable",
+          },
+        });
+        expect(google.writes).toHaveLength(googleWritesBefore);
+        expect(baikal.resources.has(blockedHref)).toBe(true);
+        baikal.userDelete(blockedHref);
+        google.setAccessRole("owner");
+        await call("/api/connectors/google/sync", "POST");
         const links = calendarBridgeLinksResponseSchema.parse(
           (await call(`${base}/links`)).body,
         );

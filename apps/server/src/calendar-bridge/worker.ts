@@ -95,7 +95,7 @@ type JobResult =
 const grantPattern =
   /unauthorized|forbidden|authentication|authorization|consent|reconnect|not-connected|credential/;
 const configurationPattern =
-  /calendar-unavailable|unsafe-remote-url|redirected|caldav-unsupported/;
+  /calendar-unavailable|calendar-not-writable|unsafe-remote-url|redirected|caldav-unsupported/;
 
 /** Maps a pass or provider reason code to a failure class. */
 export const classifyBridgeReason = (reason: string): BridgeFailureClass =>

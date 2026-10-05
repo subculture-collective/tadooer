@@ -380,6 +380,9 @@ describe("calendar bridge worker", () => {
       "grant-expired",
     );
     expect(classifyBridgeReason("calendar-unavailable")).toBe("configuration");
+    expect(classifyBridgeReason("google-calendar-not-writable")).toBe(
+      "configuration",
+    );
     expect(classifyBridgeReason("baikal-transport-failed")).toBe(
       "provider-offline",
     );
