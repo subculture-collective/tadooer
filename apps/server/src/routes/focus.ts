@@ -23,7 +23,8 @@ import {
 
 /**
  * Focus preferences, session plans, idle disposition and break reminders
- * (issue #65, ADR 0029). Online-only; nothing here enters the sync feed.
+ * (issue #65, ADR 0029). Preference writes enter the sync feed for the
+ * read-only offline cache; plans, idle state and reminders remain online-only.
  *
  * - GET/PUT /api/focus/preferences        revisioned owner record (If-Match)
  * - GET  /api/focus/timer                 derived timer and reminder state

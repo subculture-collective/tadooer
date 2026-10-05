@@ -15,6 +15,7 @@ import {
   subtaskSchema,
   tagSchema,
   timeEntrySchema,
+  focusPreferencesResponseSchema,
   type ClientRegistrationResponse,
   type CoreTaskField,
   type Note,
@@ -32,6 +33,7 @@ import {
   type Task,
   type TaskFieldVersions,
   type TimeEntry,
+  type FocusPreferencesResponse,
   type PlanningPreferences,
   planningPreferencesSchema,
 } from "@suite/contracts";
@@ -78,6 +80,7 @@ export type CachedEntityKind =
   | "note"
   | "day_order"
   | "time_entry"
+  | "focus_preferences"
   | "template"
   | "template_set"
   | "choice_pool"
@@ -750,6 +753,18 @@ export class LocalStore {
       .map(({ value }) => timeEntrySchema.parse(value))
       .filter(({ workDate }) => inCachedTimeEntryWindow(workDate, now))
       .sort(compareTimeEntries);
+  }
+
+  /** Issue #114: the latest focus preferences, readable without a connection. */
+  async loadCachedFocusPreferences(): Promise<FocusPreferencesResponse | undefined> {
+    const record = (await this.loadCachedEntities()).find(
+      ({ entityKind }) => entityKind === "focus_preferences",
+    );
+    if (record === undefined) return undefined;
+    const { id: _id, ...value } = record.value as FocusPreferencesResponse & {
+      readonly id: string;
+    };
+    return focusPreferencesResponseSchema.parse(value);
   }
 
   /**
@@ -1769,6 +1784,14 @@ export class LocalStore {
         const entity = dayOrderEntity(snapshot.value);
         structural.set(`day_order:${entity.id}`, entity);
         entities.put(entity);
+      } else if (snapshot.entityKind === "focus_preferences") {
+        entities.put({
+          entityKind: "focus_preferences",
+          id: snapshot.value.id,
+          value: snapshot.value,
+          revision: snapshot.value.revision,
+          changeSequence: 0,
+        } satisfies CachedEntity);
       } else if (snapshot.entityKind === "task") {
         const value = snapshot.value;
         taskSnapshots.set(value.task.id, value);

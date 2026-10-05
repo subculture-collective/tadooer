@@ -340,6 +340,7 @@ describe("live sync route classification (ADR 0045)", () => {
         kind: "feed",
       });
     expect(automationOperationFamilies["time_entries.mutate"]).toEqual([]);
+    expect(automationOperationFamilies["focus.update_preferences"]).toEqual([]);
     expect(automationOperationFamilies["focus.complete"]).toEqual([
       "focus",
       "time_entries",

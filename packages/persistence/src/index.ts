@@ -1818,6 +1818,18 @@ const migrations: readonly Migration[] = [
         ON web_session_retired_tokens(device_id);
     `,
   },
+  {
+    // Issue #114: focus preferences join the sync feed as a read-only
+    // offline singleton. Existing rows have no feed change, so every client
+    // replaces its cache once while retaining and replaying its outbox.
+    id: "0052_sync_focus_preferences_epoch_reset",
+    sql: `
+      DELETE FROM sync_changes;
+      UPDATE sync_owner_state
+        SET epoch=lower(hex(randomblob(16))),next_sequence=1,retained_floor=0,
+            updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now');
+    `,
+  },
 ];
 
 /**
@@ -1923,7 +1935,19 @@ export class SuiteDatabase {
       currentTaskRevision: (ownerId, taskId) =>
         this.getTask(ownerId, taskId)?.revision,
     });
-    this.focus = new SqliteFocusStore(database);
+    this.focus = new SqliteFocusStore(
+      database,
+      (ownerId, revision, now) => {
+        this.#appendSyncChangeInTransaction(
+          ownerId,
+          "focus_preferences",
+          ownerId,
+          "upsert",
+          revision,
+          now,
+        );
+      },
+    );
     this.applicationPreferences = new SqliteApplicationPreferencesStore(
       database,
       {

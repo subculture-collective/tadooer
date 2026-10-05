@@ -435,6 +435,13 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             entityKind: "time_entry" as const,
             value: timeEntryResponse(entry),
           })),
+        () => ({
+          entityKind: "focus_preferences" as const,
+          value: {
+            id: session.owner.id,
+            ...database.focus.getPreferences(session.owner.id),
+          },
+        }),
         ...snapshot.templates.map((template) => () => ({
           entityKind: "template" as const,
           value: {
@@ -901,6 +908,10 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
           change.entityType === "time_entry"
             ? database.timeEntries.get(session.owner.id, change.entityId)
             : undefined;
+        const focusPreferences =
+          change.entityType === "focus_preferences"
+            ? database.focus.getPreferences(session.owner.id)
+            : undefined;
         const template =
           change.entityType === "template"
             ? database.getTaskTemplate(session.owner.id, change.entityId, true)
@@ -929,6 +940,7 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
             | "note"
             | "day_order"
             | "time_entry"
+            | "focus_preferences"
             | "template"
             | "template_set"
             | "choice_pool"
@@ -954,6 +966,14 @@ export const handleSync: RouteHandler = async (request, response, url, ctx) => {
                     entityKind: "time_entry" as const,
                     value: timeEntryResponse(timeEntry),
                   }
+                : focusPreferences !== undefined
+                  ? {
+                      entityKind: "focus_preferences" as const,
+                      value: {
+                        id: session.owner.id,
+                        ...focusPreferences,
+                      },
+                    }
                 : task !== undefined && versions !== undefined
                   ? {
                       entityKind: "task" as const,
