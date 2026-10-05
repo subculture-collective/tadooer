@@ -38,7 +38,7 @@ describe("hosted MCP OAuth", () => {
         createdAt: "2026-10-05T00:00:00.000Z",
       });
 
-      let now = "2026-10-05T00:00:00.000Z";
+      const now = "2026-10-05T00:00:00.000Z";
       let serial = 0;
       const random = (): string =>
         Buffer.alloc(32, ++serial).toString("base64url");
@@ -116,8 +116,12 @@ describe("hosted MCP OAuth", () => {
         });
         expect(tokens).toBeDefined();
         if (tokens === undefined) throw new Error("Tokens missing");
-        expect(oauth.authenticateAccess(tokens.accessToken, "tasks:read")).toBeDefined();
-        expect(oauth.authenticateAccess(tokens.accessToken, "notes:read")).toBeUndefined();
+        expect(
+          oauth.authenticateAccess(tokens.accessToken, "tasks:read"),
+        ).toBeDefined();
+        expect(
+          oauth.authenticateAccess(tokens.accessToken, "notes:read"),
+        ).toBeUndefined();
         expect(
           oauth.exchangeCode({
             code: approved.code,
@@ -136,8 +140,12 @@ describe("hosted MCP OAuth", () => {
         });
         expect(rotated).toBeDefined();
         if (rotated === undefined) throw new Error("Rotation missing");
-        expect(oauth.authenticateAccess(rotated.accessToken, "tasks:read")).toBeDefined();
-        expect(oauth.authenticateAccess(rotated.accessToken, "tasks:write")).toBeUndefined();
+        expect(
+          oauth.authenticateAccess(rotated.accessToken, "tasks:read"),
+        ).toBeDefined();
+        expect(
+          oauth.authenticateAccess(rotated.accessToken, "tasks:write"),
+        ).toBeUndefined();
 
         expect(
           oauth.refresh({
@@ -146,7 +154,9 @@ describe("hosted MCP OAuth", () => {
             resource: "https://tadooer.example/mcp",
           }),
         ).toBeUndefined();
-        expect(oauth.authenticateAccess(rotated.accessToken, "tasks:read")).toBeUndefined();
+        expect(
+          oauth.authenticateAccess(rotated.accessToken, "tasks:read"),
+        ).toBeUndefined();
       } finally {
         database.close();
       }

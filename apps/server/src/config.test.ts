@@ -18,9 +18,9 @@ describe("production server configuration", () => {
 
   it("keeps hosted OAuth disabled unless all public deployment inputs are explicit", () => {
     expect(loadConfig({}).hostedOAuth).toEqual({ enabled: false });
-    expect(() =>
-      loadConfig({ SUITE_HOSTED_OAUTH_ENABLED: "true" }),
-    ).toThrow("Hosted OAuth requires");
+    expect(() => loadConfig({ SUITE_HOSTED_OAUTH_ENABLED: "true" })).toThrow(
+      "Hosted OAuth requires",
+    );
 
     const config = loadConfig({
       SUITE_HOSTED_OAUTH_ENABLED: "true",
@@ -41,9 +41,9 @@ describe("production server configuration", () => {
     "https://tadooer.example/mcp?token=secret",
     "https://tadooer.example/mcp#fragment",
   ])("rejects an unsafe hosted OAuth resource: %s", (resource) => {
-    expect(() =>
-      loadConfig({ SUITE_HOSTED_OAUTH_RESOURCE: resource }),
-    ).toThrow("SUITE_HOSTED_OAUTH_RESOURCE");
+    expect(() => loadConfig({ SUITE_HOSTED_OAUTH_RESOURCE: resource })).toThrow(
+      "SUITE_HOSTED_OAUTH_RESOURCE",
+    );
   });
 
   it.each([

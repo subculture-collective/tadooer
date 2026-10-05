@@ -459,7 +459,7 @@ export const startSuiteServer = async (
     requestCounts,
     triggerNotifications,
     liveSync,
-    hostedOAuth,
+    ...(hostedOAuth === undefined ? {} : { hostedOAuth }),
   };
 
   const routes = [

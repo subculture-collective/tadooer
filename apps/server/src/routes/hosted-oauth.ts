@@ -1,6 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { automationTokenScopeSchema } from "@suite/contracts";
-import { clientAddress, readJson, sameOrigin, sendJson } from "../http-utils.ts";
+import {
+  clientAddress,
+  readJson,
+  sameOrigin,
+  sendJson,
+} from "../http-utils.ts";
 import type { RouteHandler } from "./shared.ts";
 
 const formLimit = 16 * 1024;
@@ -25,12 +30,17 @@ const oauthError = (
 };
 
 const readForm = async (request: IncomingMessage): Promise<URLSearchParams> => {
-  if (request.headers["content-type"]?.split(";", 1)[0]?.trim() !== "application/x-www-form-urlencoded")
+  if (
+    request.headers["content-type"]?.split(";", 1)[0]?.trim() !==
+    "application/x-www-form-urlencoded"
+  )
     throw new Error("CONTENT_TYPE");
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of request.iterator({ destroyOnReturn: false })) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+    const buffer = Buffer.isBuffer(chunk)
+      ? chunk
+      : Buffer.from(chunk as Uint8Array);
     bytes += buffer.byteLength;
     if (bytes > formLimit) {
       request.resume();
@@ -41,7 +51,10 @@ const readForm = async (request: IncomingMessage): Promise<URLSearchParams> => {
   return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
 };
 
-const unique = (parameters: URLSearchParams, name: string): string | undefined => {
+const unique = (
+  parameters: URLSearchParams,
+  name: string,
+): string | undefined => {
   const values = parameters.getAll(name);
   return values.length === 1 ? values[0] : undefined;
 };
@@ -81,7 +94,10 @@ export const handleHostedOAuth: RouteHandler = async (
   const method = request.method ?? "GET";
   const origin = oauth.issuer;
 
-  if (method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
+  if (
+    method === "GET" &&
+    url.pathname === "/.well-known/oauth-authorization-server"
+  ) {
     sendJson(response, 200, {
       issuer: origin,
       authorization_endpoint: `${origin}/oauth/authorize`,
@@ -96,7 +112,10 @@ export const handleHostedOAuth: RouteHandler = async (
     return true;
   }
 
-  if (method === "GET" && url.pathname === "/.well-known/oauth-protected-resource") {
+  if (
+    method === "GET" &&
+    url.pathname === "/.well-known/oauth-protected-resource"
+  ) {
     sendJson(response, 200, {
       resource: oauth.resource,
       authorization_servers: [origin],
@@ -108,36 +127,67 @@ export const handleHostedOAuth: RouteHandler = async (
 
   if (method === "GET" && url.pathname === "/oauth/authorize") {
     if (request.url === undefined || request.url.length > 4096) {
-      oauthError(response, 400, "invalid_request", "Authorization request is invalid");
+      oauthError(
+        response,
+        400,
+        "invalid_request",
+        "Authorization request is invalid",
+      );
       return true;
     }
     const values = Object.fromEntries(
-      requiredAuthorizationParameters.map((name) => [name, unique(url.searchParams, name)]),
-    ) as Record<(typeof requiredAuthorizationParameters)[number], string | undefined>;
+      requiredAuthorizationParameters.map((name) => [
+        name,
+        unique(url.searchParams, name),
+      ]),
+    ) as Record<
+      (typeof requiredAuthorizationParameters)[number],
+      string | undefined
+    >;
     const known = new Set<string>(requiredAuthorizationParameters);
     if (
       Object.values(values).some((value) => value === undefined) ||
       [...url.searchParams.keys()].some((name) => !known.has(name))
     ) {
-      oauthError(response, 400, "invalid_request", "Authorization request is invalid");
+      oauthError(
+        response,
+        400,
+        "invalid_request",
+        "Authorization request is invalid",
+      );
       return true;
     }
     const clientId = values.client_id ?? "";
     const key = `${clientAddress(request, ctx.config.trustedProxyCidrs ?? [])}:${clientId}`;
     if (!limiter.allows(key)) {
-      oauthError(response, 429, "temporarily_unavailable", "Too many authorization attempts");
+      oauthError(
+        response,
+        429,
+        "temporarily_unavailable",
+        "Too many authorization attempts",
+      );
       return true;
     }
     const client = oauth.clients.get(clientId);
     const redirectUri = values.redirect_uri ?? "";
-    if (client === undefined || !client.redirectUris.includes(redirectUri)) {
+    if (!client?.redirectUris.includes(redirectUri)) {
       limiter.record(key);
-      oauthError(response, 400, "invalid_request", "Client or redirect URI is invalid");
+      oauthError(
+        response,
+        400,
+        "invalid_request",
+        "Client or redirect URI is invalid",
+      );
       return true;
     }
     const session = ctx.auth.authenticate(request, false);
     if (session === undefined) {
-      oauthError(response, 401, "access_denied", "Owner authentication is required");
+      oauthError(
+        response,
+        401,
+        "access_denied",
+        "Owner authentication is required",
+      );
       return true;
     }
     const created = oauth.createConsentRequest(session.owner.id, {
@@ -152,7 +202,12 @@ export const handleHostedOAuth: RouteHandler = async (
     });
     if (created === undefined) {
       limiter.record(key);
-      oauthError(response, 400, "invalid_request", "Authorization request is invalid");
+      oauthError(
+        response,
+        400,
+        "invalid_request",
+        "Authorization request is invalid",
+      );
       return true;
     }
     sendJson(response, 200, {
@@ -168,7 +223,9 @@ export const handleHostedOAuth: RouteHandler = async (
   }
 
   if (method === "POST" && url.pathname === "/oauth/consent") {
-    const session = sameOrigin(request) ? ctx.auth.authenticate(request, true) : undefined;
+    const session = sameOrigin(request)
+      ? ctx.auth.authenticate(request, true)
+      : undefined;
     const body = await readJson(request);
     if (
       session === undefined ||
@@ -179,7 +236,12 @@ export const handleHostedOAuth: RouteHandler = async (
       typeof body !== "object" ||
       body === null
     ) {
-      oauthError(response, 403, "access_denied", "Valid owner consent is required");
+      oauthError(
+        response,
+        403,
+        "access_denied",
+        "Valid owner consent is required",
+      );
       return true;
     }
     const input = body as Record<string, unknown>;
@@ -189,7 +251,8 @@ export const handleHostedOAuth: RouteHandler = async (
       typeof input.state !== "string" ||
       typeof input.approved !== "boolean" ||
       Object.keys(input).some(
-        (key) => !["request_id", "request_proof", "state", "approved"].includes(key),
+        (key) =>
+          !["request_id", "request_proof", "state", "approved"].includes(key),
       )
     ) {
       oauthError(response, 400, "invalid_request", "Consent input is invalid");
@@ -203,12 +266,18 @@ export const handleHostedOAuth: RouteHandler = async (
       approved: input.approved,
     });
     if (result === undefined) {
-      oauthError(response, 400, "invalid_request", "Consent request expired or was already used");
+      oauthError(
+        response,
+        400,
+        "invalid_request",
+        "Consent request expired or was already used",
+      );
       return true;
     }
     const redirect = new URL(result.redirectUri);
     redirect.searchParams.set("state", result.state);
-    if (result.denied === true) redirect.searchParams.set("error", "access_denied");
+    if (result.denied === true)
+      redirect.searchParams.set("error", "access_denied");
     else redirect.searchParams.set("code", result.code ?? "");
     response.writeHead(303, {
       "Cache-Control": "no-store",
@@ -221,7 +290,12 @@ export const handleHostedOAuth: RouteHandler = async (
 
   if (method === "POST" && url.pathname === "/oauth/token") {
     if (request.headers.origin !== undefined) {
-      oauthError(response, 403, "invalid_request", "Browser token requests are forbidden");
+      oauthError(
+        response,
+        403,
+        "invalid_request",
+        "Browser token requests are forbidden",
+      );
       return true;
     }
     const form = await readForm(request);
@@ -230,7 +304,12 @@ export const handleHostedOAuth: RouteHandler = async (
     const resource = unique(form, "resource") ?? "";
     const key = `${clientAddress(request, ctx.config.trustedProxyCidrs ?? [])}:${clientId}`;
     if (!limiter.allows(key)) {
-      oauthError(response, 429, "temporarily_unavailable", "Too many token attempts");
+      oauthError(
+        response,
+        429,
+        "temporarily_unavailable",
+        "Too many token attempts",
+      );
       return true;
     }
     if (grantType === "authorization_code") {
@@ -243,7 +322,12 @@ export const handleHostedOAuth: RouteHandler = async (
         "code_verifier",
       ]);
       if ([...form.keys()].some((name) => !expected.has(name))) {
-        oauthError(response, 400, "invalid_request", "Token request is invalid");
+        oauthError(
+          response,
+          400,
+          "invalid_request",
+          "Token request is invalid",
+        );
         return true;
       }
       const result = oauth.exchangeCode({
@@ -255,7 +339,12 @@ export const handleHostedOAuth: RouteHandler = async (
       });
       if (result === undefined) {
         limiter.record(key);
-        oauthError(response, 400, "invalid_grant", "Authorization grant is invalid");
+        oauthError(
+          response,
+          400,
+          "invalid_grant",
+          "Authorization grant is invalid",
+        );
         return true;
       }
       sendJson(response, 200, {
@@ -276,12 +365,22 @@ export const handleHostedOAuth: RouteHandler = async (
         "scope",
       ]);
       if ([...form.keys()].some((name) => !expected.has(name))) {
-        oauthError(response, 400, "invalid_request", "Token request is invalid");
+        oauthError(
+          response,
+          400,
+          "invalid_request",
+          "Token request is invalid",
+        );
         return true;
       }
       const scope = form.has("scope") ? unique(form, "scope") : undefined;
       if (form.has("scope") && scope === undefined) {
-        oauthError(response, 400, "invalid_request", "Token request is invalid");
+        oauthError(
+          response,
+          400,
+          "invalid_request",
+          "Token request is invalid",
+        );
         return true;
       }
       const result = oauth.refresh({
@@ -304,13 +403,23 @@ export const handleHostedOAuth: RouteHandler = async (
       });
       return true;
     }
-    oauthError(response, 400, "unsupported_grant_type", "Grant type is not supported");
+    oauthError(
+      response,
+      400,
+      "unsupported_grant_type",
+      "Grant type is not supported",
+    );
     return true;
   }
 
   if (method === "POST" && url.pathname === "/oauth/revoke") {
     if (request.headers.origin !== undefined) {
-      oauthError(response, 403, "invalid_request", "Browser revocation requests are forbidden");
+      oauthError(
+        response,
+        403,
+        "invalid_request",
+        "Browser revocation requests are forbidden",
+      );
       return true;
     }
     const form = await readForm(request);
@@ -322,7 +431,12 @@ export const handleHostedOAuth: RouteHandler = async (
       clientId === undefined ||
       [...form.keys()].some((name) => !expected.has(name))
     ) {
-      oauthError(response, 400, "invalid_request", "Revocation request is invalid");
+      oauthError(
+        response,
+        400,
+        "invalid_request",
+        "Revocation request is invalid",
+      );
       return true;
     }
     oauth.revoke(token, clientId);

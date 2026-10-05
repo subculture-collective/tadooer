@@ -1,6 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
-import { automationTokenScopeSchema, type AutomationTokenScope } from "@suite/contracts";
+import {
+  automationTokenScopeSchema,
+  type AutomationTokenScope,
+} from "@suite/contracts";
 import type { SuiteDatabase } from "@suite/persistence";
 
 export interface HostedOAuthClient {
@@ -17,12 +20,14 @@ const expires = (now: string, milliseconds: number): string =>
 
 const parseRedirect = (value: string): string => {
   const redirect = new URL(value);
-  const loopback = redirect.hostname === "127.0.0.1" || redirect.hostname === "[::1]";
+  const loopback =
+    redirect.hostname === "127.0.0.1" || redirect.hostname === "[::1]";
   if (
     redirect.username !== "" ||
     redirect.password !== "" ||
     redirect.hash !== "" ||
-    (redirect.protocol !== "https:" && !(redirect.protocol === "http:" && loopback))
+    (redirect.protocol !== "https:" &&
+      !(redirect.protocol === "http:" && loopback))
   )
     throw new Error("Hosted OAuth client redirect URI is invalid");
   return redirect.href;
@@ -74,7 +79,8 @@ export class HostedOAuthService {
     readonly resource: string,
     clientConfigPath: string,
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly random: () => string = () => randomBytes(32).toString("base64url"),
+    private readonly random: () => string = () =>
+      randomBytes(32).toString("base64url"),
   ) {
     this.clients = loadHostedOAuthClients(clientConfigPath);
   }
@@ -83,7 +89,8 @@ export class HostedOAuthService {
     readonly ownerId?: string;
     readonly clientId?: string;
     readonly subjectId?: string;
-    readonly phase: "authorize" | "consent" | "token" | "refresh" | "revoke" | "resource";
+    readonly phase:
+      "authorize" | "consent" | "token" | "refresh" | "revoke" | "resource";
     readonly outcome: "succeeded" | "denied" | "failed" | "rate_limited";
     readonly errorCode?: string;
     readonly scopes?: readonly string[];
@@ -111,10 +118,14 @@ export class HostedOAuthService {
     readonly codeChallengeMethod: string;
     readonly resource: string;
     readonly scope: string;
-  }): { client: HostedOAuthClient; scopes: readonly AutomationTokenScope[] } | undefined {
+  }):
+    | { client: HostedOAuthClient; scopes: readonly AutomationTokenScope[] }
+    | undefined {
     const client = this.clients.get(input.clientId);
     const requested = input.scope.split(" ").filter(Boolean);
-    const parsedScopes = requested.map((scope) => automationTokenScopeSchema.safeParse(scope));
+    const parsedScopes = requested.map((scope) =>
+      automationTokenScopeSchema.safeParse(scope),
+    );
     if (
       client === undefined ||
       input.responseType !== "code" ||
@@ -178,7 +189,9 @@ export class HostedOAuthService {
     readonly requestProof: string;
     readonly state: string;
     readonly approved: boolean;
-  }): { redirectUri: string; state: string; code?: string; denied?: true } | undefined {
+  }):
+    | { redirectUri: string; state: string; code?: string; denied?: true }
+    | undefined {
     const now = this.now();
     const request = this.database.hostedOAuth.consumeRequest(
       input.requestId,
@@ -186,7 +199,7 @@ export class HostedOAuthService {
       input.ownerId,
       now,
     );
-    if (request === undefined || request.stateHash !== digest(input.state)) {
+    if (request?.stateHash !== digest(input.state)) {
       this.audit({
         ownerId: input.ownerId,
         phase: "consent",
@@ -205,7 +218,11 @@ export class HostedOAuthService {
         errorCode: "access_denied",
         scopes: request.scopes,
       });
-      return { redirectUri: request.redirectUri, state: input.state, denied: true };
+      return {
+        redirectUri: request.redirectUri,
+        state: input.state,
+        denied: true,
+      };
     }
     const grantId = randomUUID();
     const code = this.random();
@@ -304,9 +321,7 @@ export class HostedOAuthService {
     readonly clientId: string;
     readonly resource: string;
     readonly scope?: string;
-  }):
-    | { accessToken: string; refreshToken: string; scope: string }
-    | undefined {
+  }): { accessToken: string; refreshToken: string; scope: string } | undefined {
     const requested = (input.scope ?? "").split(" ").filter(Boolean);
     if (
       this.clients.get(input.clientId) === undefined ||
@@ -387,13 +402,16 @@ export class HostedOAuthService {
       this.now(),
     );
     this.audit({
-      ownerId: authenticated?.ownerId,
-      clientId: authenticated?.clientId,
-      subjectId: authenticated?.grantId,
       phase: "resource",
-      outcome: authenticated === undefined ? "denied" : "succeeded",
-      errorCode: authenticated === undefined ? "invalid_token" : undefined,
-      scopes: authenticated?.scopes,
+      ...(authenticated === undefined
+        ? { outcome: "denied" as const, errorCode: "invalid_token" }
+        : {
+            outcome: "succeeded" as const,
+            ownerId: authenticated.ownerId,
+            clientId: authenticated.clientId,
+            subjectId: authenticated.grantId,
+            scopes: authenticated.scopes,
+          }),
     });
     return authenticated;
   }

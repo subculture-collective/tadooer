@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 export const hostedOAuthMigration = {
   id: "0052_hosted_mcp_oauth",
@@ -134,7 +134,8 @@ export interface HostedOAuthAuditRecord {
   readonly ownerId: string | null;
   readonly clientId: string | null;
   readonly subjectId: string | null;
-  readonly phase: "authorize" | "consent" | "token" | "refresh" | "revoke" | "resource";
+  readonly phase:
+    "authorize" | "consent" | "token" | "refresh" | "revoke" | "resource";
   readonly outcome: "succeeded" | "denied" | "failed" | "rate_limited";
   readonly errorCode: string | null;
   readonly scopes: readonly string[];
@@ -150,10 +151,12 @@ export class SqliteHostedOAuthStore {
 
   createRequest(record: HostedOAuthRequestRecord): void {
     this.database
-      .prepare(`INSERT INTO hosted_oauth_requests
+      .prepare(
+        `INSERT INTO hosted_oauth_requests
         (id,request_hash,owner_id,client_id,redirect_uri,resource,scopes_json,state_hash,
          code_challenge,expires_at,consumed_at,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
       .run(
         record.id,
         record.requestHash,
@@ -179,19 +182,22 @@ export class SqliteHostedOAuthStore {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const row = this.database
-        .prepare(`SELECT * FROM hosted_oauth_requests
+        .prepare(
+          `SELECT * FROM hosted_oauth_requests
           WHERE id=? AND request_hash=? AND owner_id=?
-            AND consumed_at IS NULL AND expires_at>?`)
+            AND consumed_at IS NULL AND expires_at>?`,
+        )
         .get(id, requestHash, ownerId, now) as unknown as
-        | Record<string, string | null>
-        | undefined;
+        Record<string, string | null> | undefined;
       if (row === undefined) {
         this.database.exec("ROLLBACK;");
         return undefined;
       }
       const changed = this.database
-        .prepare(`UPDATE hosted_oauth_requests SET consumed_at=?
-          WHERE id=? AND consumed_at IS NULL AND expires_at>?`)
+        .prepare(
+          `UPDATE hosted_oauth_requests SET consumed_at=?
+          WHERE id=? AND consumed_at IS NULL AND expires_at>?`,
+        )
         .run(now, id, now).changes;
       if (changed !== 1) {
         this.database.exec("ROLLBACK;");
@@ -209,9 +215,11 @@ export class SqliteHostedOAuthStore {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       this.database
-        .prepare(`INSERT INTO hosted_oauth_grants
+        .prepare(
+          `INSERT INTO hosted_oauth_grants
           (id,owner_id,client_id,resource,scopes_json,created_at,expires_at,revoked_at)
-          VALUES (?,?,?,?,?,?,?,?)`)
+          VALUES (?,?,?,?,?,?,?,?)`,
+        )
         .run(
           grant.id,
           grant.ownerId,
@@ -223,9 +231,11 @@ export class SqliteHostedOAuthStore {
           grant.revokedAt,
         );
       this.database
-        .prepare(`INSERT INTO hosted_oauth_codes
+        .prepare(
+          `INSERT INTO hosted_oauth_codes
           (code_hash,grant_id,client_id,redirect_uri,resource,scopes_json,code_challenge,
-           expires_at,consumed_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+           expires_at,consumed_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        )
         .run(
           code.codeHash,
           code.grantId,
@@ -260,12 +270,14 @@ export class SqliteHostedOAuthStore {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const row = this.database
-        .prepare(`SELECT c.*,g.owner_id FROM hosted_oauth_codes c
+        .prepare(
+          `SELECT c.*,g.owner_id FROM hosted_oauth_codes c
           JOIN hosted_oauth_grants g ON g.id=c.grant_id
           WHERE c.code_hash=? AND c.client_id=? AND c.redirect_uri=? AND c.resource=?
             AND c.code_challenge=?
             AND c.consumed_at IS NULL AND c.expires_at>? AND g.revoked_at IS NULL
-            AND g.expires_at>?`)
+            AND g.expires_at>?`,
+        )
         .get(
           codeHash,
           clientId,
@@ -274,16 +286,16 @@ export class SqliteHostedOAuthStore {
           codeChallenge,
           now,
           now,
-        ) as unknown as
-        | Record<string, string | null>
-        | undefined;
+        ) as unknown as Record<string, string | null> | undefined;
       if (row === undefined) {
         this.database.exec("ROLLBACK;");
         return undefined;
       }
       const changed = this.database
-        .prepare(`UPDATE hosted_oauth_codes SET consumed_at=?
-          WHERE code_hash=? AND consumed_at IS NULL AND expires_at>?`)
+        .prepare(
+          `UPDATE hosted_oauth_codes SET consumed_at=?
+          WHERE code_hash=? AND consumed_at IS NULL AND expires_at>?`,
+        )
         .run(now, codeHash, now).changes;
       if (changed !== 1) {
         this.database.exec("ROLLBACK;");
@@ -333,12 +345,13 @@ export class SqliteHostedOAuthStore {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const row = this.database
-        .prepare(`SELECT t.*,g.owner_id,g.revoked_at AS grant_revoked_at,g.expires_at AS grant_expires_at
+        .prepare(
+          `SELECT t.*,g.owner_id,g.revoked_at AS grant_revoked_at,g.expires_at AS grant_expires_at
           FROM hosted_oauth_tokens t JOIN hosted_oauth_grants g ON g.id=t.grant_id
-          WHERE t.token_hash=? AND t.token_kind='refresh' AND t.client_id=? AND t.resource=?`)
+          WHERE t.token_hash=? AND t.token_kind='refresh' AND t.client_id=? AND t.resource=?`,
+        )
         .get(tokenHash, clientId, resource) as unknown as
-        | Record<string, string | null>
-        | undefined;
+        Record<string, string | null> | undefined;
       if (row === undefined) {
         this.database.exec("ROLLBACK;");
         return "invalid";
@@ -360,8 +373,10 @@ export class SqliteHostedOAuthStore {
         return "invalid";
       }
       const changed = this.database
-        .prepare(`UPDATE hosted_oauth_tokens SET rotated_at=?
-          WHERE token_hash=? AND rotated_at IS NULL AND revoked_at IS NULL`)
+        .prepare(
+          `UPDATE hosted_oauth_tokens SET rotated_at=?
+          WHERE token_hash=? AND rotated_at IS NULL AND revoked_at IS NULL`,
+        )
         .run(now, tokenHash).changes;
       if (changed !== 1) {
         this.revokeGrantInTransaction(String(row.grant_id), now);
@@ -404,14 +419,15 @@ export class SqliteHostedOAuthStore {
     now: string,
   ): (HostedOAuthTokenRecord & { readonly ownerId: string }) | undefined {
     const row = this.database
-      .prepare(`SELECT t.*,g.owner_id FROM hosted_oauth_tokens t
+      .prepare(
+        `SELECT t.*,g.owner_id FROM hosted_oauth_tokens t
         JOIN hosted_oauth_grants g ON g.id=t.grant_id
         WHERE t.token_hash=? AND t.token_kind='access' AND t.resource=?
           AND t.revoked_at IS NULL AND t.expires_at>?
-          AND g.revoked_at IS NULL AND g.expires_at>?`)
+          AND g.revoked_at IS NULL AND g.expires_at>?`,
+      )
       .get(tokenHash, resource, now, now) as unknown as
-      | Record<string, string | null>
-      | undefined;
+      Record<string, string | null> | undefined;
     if (row === undefined) return undefined;
     const token = this.tokenFromRow(row);
     return requiredScope === undefined || token.scopes.includes(requiredScope)
@@ -425,27 +441,27 @@ export class SqliteHostedOAuthStore {
     resource: string,
   ): HostedOAuthTokenRecord | undefined {
     const row = this.database
-      .prepare(`SELECT t.* FROM hosted_oauth_tokens t
+      .prepare(
+        `SELECT t.* FROM hosted_oauth_tokens t
         JOIN hosted_oauth_grants g ON g.id=t.grant_id
         WHERE t.token_hash=? AND t.token_kind='refresh'
-          AND t.client_id=? AND t.resource=?`)
+          AND t.client_id=? AND t.resource=?`,
+      )
       .get(tokenHash, clientId, resource) as unknown as
-      | Record<string, string | null>
-      | undefined;
+      Record<string, string | null> | undefined;
     return row === undefined ? undefined : this.tokenFromRow(row);
   }
 
-  revokeTokenFamily(
-    tokenHash: string,
-    clientId: string,
-    now: string,
-  ): boolean {
+  revokeTokenFamily(tokenHash: string, clientId: string, now: string): boolean {
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const row = this.database
-        .prepare(`SELECT grant_id FROM hosted_oauth_tokens
-          WHERE token_hash=? AND client_id=?`)
-        .get(tokenHash, clientId) as unknown as { grant_id: string } | undefined;
+        .prepare(
+          `SELECT grant_id FROM hosted_oauth_tokens
+          WHERE token_hash=? AND client_id=?`,
+        )
+        .get(tokenHash, clientId) as unknown as
+        { grant_id: string } | undefined;
       if (row !== undefined) this.revokeGrantInTransaction(row.grant_id, now);
       this.database.exec("COMMIT;");
       return row !== undefined;
@@ -457,22 +473,28 @@ export class SqliteHostedOAuthStore {
 
   revokeGrant(ownerId: string, grantId: string, now: string): boolean {
     const changed = this.database
-      .prepare(`UPDATE hosted_oauth_grants SET revoked_at=?
-        WHERE id=? AND owner_id=? AND revoked_at IS NULL`)
+      .prepare(
+        `UPDATE hosted_oauth_grants SET revoked_at=?
+        WHERE id=? AND owner_id=? AND revoked_at IS NULL`,
+      )
       .run(now, grantId, ownerId).changes;
     if (changed === 1)
       this.database
-        .prepare(`UPDATE hosted_oauth_tokens SET revoked_at=?
-          WHERE grant_id=? AND revoked_at IS NULL`)
+        .prepare(
+          `UPDATE hosted_oauth_tokens SET revoked_at=?
+          WHERE grant_id=? AND revoked_at IS NULL`,
+        )
         .run(now, grantId);
     return changed === 1;
   }
 
   appendAudit(record: HostedOAuthAuditRecord): void {
     this.database
-      .prepare(`INSERT INTO hosted_oauth_audit
+      .prepare(
+        `INSERT INTO hosted_oauth_audit
         (id,owner_id,client_id,subject_id,phase,outcome,error_code,scopes_json,resource,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
       .run(
         record.id,
         record.ownerId,
@@ -489,9 +511,11 @@ export class SqliteHostedOAuthStore {
 
   private insertToken(record: HostedOAuthTokenRecord): void {
     this.database
-      .prepare(`INSERT INTO hosted_oauth_tokens
+      .prepare(
+        `INSERT INTO hosted_oauth_tokens
         (token_hash,grant_id,client_id,resource,scopes_json,token_kind,expires_at,
-         rotated_at,revoked_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+         rotated_at,revoked_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
       .run(
         record.tokenHash,
         record.grantId,
@@ -508,14 +532,20 @@ export class SqliteHostedOAuthStore {
 
   private revokeGrantInTransaction(grantId: string, now: string): void {
     this.database
-      .prepare(`UPDATE hosted_oauth_grants SET revoked_at=COALESCE(revoked_at,?) WHERE id=?`)
+      .prepare(
+        `UPDATE hosted_oauth_grants SET revoked_at=COALESCE(revoked_at,?) WHERE id=?`,
+      )
       .run(now, grantId);
     this.database
-      .prepare(`UPDATE hosted_oauth_tokens SET revoked_at=COALESCE(revoked_at,?) WHERE grant_id=?`)
+      .prepare(
+        `UPDATE hosted_oauth_tokens SET revoked_at=COALESCE(revoked_at,?) WHERE grant_id=?`,
+      )
       .run(now, grantId);
   }
 
-  private requestFromRow(row: Record<string, string | null>): HostedOAuthRequestRecord {
+  private requestFromRow(
+    row: Record<string, string | null>,
+  ): HostedOAuthRequestRecord {
     return {
       id: String(row.id),
       requestHash: String(row.request_hash),
@@ -527,12 +557,14 @@ export class SqliteHostedOAuthStore {
       stateHash: String(row.state_hash),
       codeChallenge: String(row.code_challenge),
       expiresAt: String(row.expires_at),
-      consumedAt: row.consumed_at,
+      consumedAt: row.consumed_at ?? null,
       createdAt: String(row.created_at),
     };
   }
 
-  private codeFromRow(row: Record<string, string | null>): HostedOAuthCodeRecord {
+  private codeFromRow(
+    row: Record<string, string | null>,
+  ): HostedOAuthCodeRecord {
     return {
       codeHash: String(row.code_hash),
       grantId: String(row.grant_id),
@@ -542,12 +574,14 @@ export class SqliteHostedOAuthStore {
       scopes: scopes(String(row.scopes_json)),
       codeChallenge: String(row.code_challenge),
       expiresAt: String(row.expires_at),
-      consumedAt: row.consumed_at,
+      consumedAt: row.consumed_at ?? null,
       createdAt: String(row.created_at),
     };
   }
 
-  private tokenFromRow(row: Record<string, string | null>): HostedOAuthTokenRecord {
+  private tokenFromRow(
+    row: Record<string, string | null>,
+  ): HostedOAuthTokenRecord {
     return {
       tokenHash: String(row.token_hash),
       grantId: String(row.grant_id),
@@ -556,8 +590,8 @@ export class SqliteHostedOAuthStore {
       scopes: scopes(String(row.scopes_json)),
       tokenKind: String(row.token_kind) as "access" | "refresh",
       expiresAt: String(row.expires_at),
-      rotatedAt: row.rotated_at,
-      revokedAt: row.revoked_at,
+      rotatedAt: row.rotated_at ?? null,
+      revokedAt: row.revoked_at ?? null,
       createdAt: String(row.created_at),
     };
   }
