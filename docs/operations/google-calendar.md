@@ -137,11 +137,13 @@ records it and consent shows as lost; `invalid_grant` still requires reconnect.
 on Google's grant. Disconnect, or remove access in the Google account, to revoke
 it at Google.
 
-No Google write adapter is enabled yet. Time blocks aimed at a Google calendar
-are refused: 403 `GOOGLE_CALENDAR_NOT_WRITABLE` when the gate fails, 409
-`GOOGLE_WRITE_NOT_AVAILABLE` when it passes. Real-account qualification of the
-consent screen, granular scope choices, refresh scopes, shared-calendar roles
-and revocation is tracked in #50 and has not been performed.
+Direct task time blocks aimed at a Google calendar remain unavailable: 403
+`GOOGLE_CALENDAR_NOT_WRITABLE` when the gate fails and 409
+`GOOGLE_WRITE_NOT_AVAILABLE` when it passes. Opt-in bridge mappings use the
+conditional adapters from #40 and recheck writable capability before every
+pass. Real-account qualification of the consent screen, granular scope choices,
+refresh scopes, shared-calendar roles, writes and revocation is tracked in #50
+and has not been performed.
 
 ## Secret lifecycle, backup, and revocation
 
