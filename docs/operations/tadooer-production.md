@@ -42,6 +42,42 @@ an admin token, or a browser-visible credential.
 
 ## Promotion and deployment
 
+### Hosted MCP OAuth authorization
+
+Hosted OAuth and all of its discovery and grant endpoints remain disabled by
+default. Enabling authorization does not publish the hosted MCP transport. The
+operator owns the supported-client file; the owner owns consent and revocation;
+each client owns its state, PKCE verifier and issued tokens.
+
+Create a UID/GID 1000, mode-0600 JSON file outside the repository. It contains
+only deployment-owned public-client metadata, never client secrets or tokens:
+
+```json
+[
+  {
+    "id": "supported-assistant",
+    "name": "Supported assistant",
+    "redirectUris": ["https://assistant.example/oauth/callback"]
+  }
+]
+```
+
+Set all four values before recreating the container:
+
+- `SUITE_PUBLIC_ORIGIN=https://tadooer.example`
+- `SUITE_HOSTED_OAUTH_ENABLED=true`
+- `SUITE_HOSTED_OAUTH_CLIENT_CONFIG_PATH=/data/hosted-oauth-clients.json`
+- `SUITE_HOSTED_OAUTH_RESOURCE=https://tadooer.example/mcp`
+
+Redirect matching is exact. Hosted redirects require HTTPS; only explicit
+`127.0.0.1` or `[::1]` loopback redirects may use HTTP. Changes to clients or
+redirects are deployment changes and require restart; dynamic registration and
+client secrets are unsupported. Keep reverse-proxy request limits in place and
+do not log query strings, form bodies, cookies, codes, state, PKCE values or
+tokens. Operator backups contain OAuth rows as digests; owner exports exclude
+them. Live client/provider compatibility, hosted transport, proxy behavior,
+deployment and release publication require separate qualification.
+
 1. Run the complete repository and Phase 9 disposable gates.
 2. Build and push the image, record its registry digest, and create the release
    manifest before changing production.

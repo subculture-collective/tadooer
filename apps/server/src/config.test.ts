@@ -16,6 +16,36 @@ describe("production server configuration", () => {
     expect(config.secureCookies).toBe(true);
   });
 
+  it("keeps hosted OAuth disabled unless all public deployment inputs are explicit", () => {
+    expect(loadConfig({}).hostedOAuth).toEqual({ enabled: false });
+    expect(() => loadConfig({ SUITE_HOSTED_OAUTH_ENABLED: "true" })).toThrow(
+      "Hosted OAuth requires",
+    );
+
+    const config = loadConfig({
+      SUITE_HOSTED_OAUTH_ENABLED: "true",
+      SUITE_PUBLIC_ORIGIN: "https://tadooer.example",
+      SUITE_HOSTED_OAUTH_CLIENT_CONFIG_PATH: "./clients.json",
+      SUITE_HOSTED_OAUTH_RESOURCE: "https://tadooer.example/mcp",
+    });
+    expect(config.hostedOAuth).toMatchObject({
+      enabled: true,
+      resource: "https://tadooer.example/mcp",
+    });
+    expect(config.hostedOAuth?.clientConfigPath).toMatch(/clients\.json$/);
+  });
+
+  it.each([
+    "http://tadooer.example/mcp",
+    "https://user@tadooer.example/mcp",
+    "https://tadooer.example/mcp?token=secret",
+    "https://tadooer.example/mcp#fragment",
+  ])("rejects an unsafe hosted OAuth resource: %s", (resource) => {
+    expect(() => loadConfig({ SUITE_HOSTED_OAUTH_RESOURCE: resource })).toThrow(
+      "SUITE_HOSTED_OAUTH_RESOURCE",
+    );
+  });
+
   it.each([
     "http://tadooer.subcult.tv",
     "https://tadooer.subcult.tv/path",
