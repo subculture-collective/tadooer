@@ -5,10 +5,7 @@ import { googleProjectionFreshness } from "@suite/domain";
 import { archiveTask, createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
 import { PasswordConfirmation } from "./components/PasswordConfirmation.tsx";
-import {
-  subscribeSessionFailure,
-  type SessionFailure,
-} from "./session-recovery.ts";
+import { useSessionRecovery } from "./use-session-recovery.ts";
 import {
   type HabitListResponse,
   type HabitCommand,
@@ -36,6 +33,7 @@ import type {
   ChoicePoolItem,
   ChoicePoolSuggestionResponse,
   DayPlanResponse,
+  FocusPreferencesResponse,
   GoogleConnectorStatusResponse,
   NotificationPreferences,
   NotificationStatusResponse,
@@ -275,22 +273,27 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     initialState ?? { kind: "loading" },
   );
   const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [freshnessNow, setFreshnessNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setFreshnessNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const [sessionFailure, setSessionFailure] = useState<SessionFailure | null>(
-    null,
+  const applyRecoveredSession = useCallback(
+    (session: SessionResponse): void => {
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, session } : current,
+      );
+      setFormError(null);
+    },
+    [],
   );
-  useEffect(
-    () =>
-      subscribeSessionFailure((failure) => {
-        if (state.kind === "authenticated") setSessionFailure(failure);
-      }),
-    [state.kind],
+  const sessionRecovery = useSessionRecovery(
+    state.kind === "authenticated" ? state.session : null,
+    applyRecoveredSession,
   );
+  const sessionFailure = sessionRecovery.failure;
   const recovery =
     state.kind === "authenticated" ? (
       <>
@@ -300,20 +303,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           <SessionRecovery
             failure={sessionFailure}
             username={state.session.owner.username}
-            onRecovered={(session) => {
-              setState((current) =>
-                current.kind === "authenticated"
-                  ? { ...current, session }
-                  : current,
-              );
-              setSessionFailure(null);
-              setFormError(null);
-            }}
+            onRecovered={sessionRecovery.recover}
           />
         )}
       </>
     ) : null;
-  const [formError, setFormError] = useState<string | null>(null);
   const [baikalProbe, setBaikalProbe] = useState<BaikalProbeResponse | null>(
     null,
   );
@@ -330,6 +324,10 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const [dayOrders, setDayOrders] = useState<readonly SavedDayOrder[]>([]);
   // ADR 0050: stored time entries of the rolling window, from the cache.
   const [timeEntries, setTimeEntries] = useState<readonly TimeEntry[]>([]);
+  // Issue #114: focus preferences are a read-only offline feed singleton.
+  const [cachedFocusPreferences, setCachedFocusPreferences] = useState<
+    FocusPreferencesResponse | undefined
+  >();
   const timeEntryFeedMark = useRef<string | null | undefined>(undefined);
   const pinnedNotes = notes.filter(({ pinnedToToday }) => pinnedToToday);
   const [subtasks, setSubtasks] = useState<
@@ -473,6 +471,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       cachedNotes,
       cachedDayOrders,
       cachedTimeEntries,
+      focusPreferences,
       feedMark,
     ] = await Promise.all([
       localStore.loadCachedProjects(),
@@ -481,6 +480,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       localStore.loadCachedNotes(),
       localStore.loadCachedDayOrders(),
       localStore.loadCachedTimeEntries(),
+      localStore.loadCachedFocusPreferences(),
       localStore.loadTimeEntryFeedMark(),
     ]);
     setProjects(cachedProjects);
@@ -488,6 +488,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     setNotes(cachedNotes);
     setDayOrders(cachedDayOrders);
     setTimeEntries(cachedTimeEntries);
+    setCachedFocusPreferences(focusPreferences);
     // ADR 0050: a round delivered a stored time entry, by this tab or by
     // the leader tab. The views that read the server's time report reload;
     // the entry's routes no longer send a `resources` hint.
@@ -861,7 +862,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       error.code === "AUTH_REQUIRED"
     ) {
       setFormError(null);
-      setSessionFailure("expired");
+      sessionRecovery.reportFailure("expired");
     } else {
       setFormError(messageFor(error));
     }
@@ -1470,6 +1471,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     activeSession:
       state.kind === "authenticated" ? state.activeSession : undefined,
     online: networkOnline,
+    cachedPreferences: cachedFocusPreferences,
     tasks: state.kind === "authenticated" ? state.tasks : [],
     onSessionChanged: (session) =>
       setState((current) =>

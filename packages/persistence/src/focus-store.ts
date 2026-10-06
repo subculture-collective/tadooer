@@ -29,8 +29,8 @@ import {
  * - The notification ledger's kind check is widened for focus reminders,
  *   which carry no task ID and dedupe on (owner, kind, occurrence).
  *
- * Focus preferences and plans are online HTTP records outside the sync feed
- * and the offline cache.
+ * Focus preferences are read-only offline sync records (issue #114). Plans,
+ * idle dispositions and reminder state remain online-only.
  */
 export const focusMigration = {
   id: "0033_focus_preferences_idle",
@@ -130,7 +130,14 @@ export interface OwnerIntervalRecord {
 type Row = Record<string, string | number | null>;
 
 export class SqliteFocusStore {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly appendChange: (
+      ownerId: string,
+      revision: number,
+      now: string,
+    ) => void = () => undefined,
+  ) {}
 
   getPreferences(ownerId: string): FocusPreferencesRecord {
     const row = this.db
@@ -193,6 +200,7 @@ export class SqliteFocusStore {
         current.imported,
         now,
       );
+      this.appendChange(ownerId, current.revision + 1, now);
       this.db.exec("RELEASE SAVEPOINT focus_preferences;");
       return this.getPreferences(ownerId);
     } catch (error) {
@@ -222,6 +230,7 @@ export class SqliteFocusStore {
       focusPreferenceProvenanceSchema.parse(provenance),
       now,
     );
+    this.appendChange(ownerId, 1, now);
     return "applied";
   }
 

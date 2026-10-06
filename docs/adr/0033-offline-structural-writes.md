@@ -131,6 +131,13 @@ import qualification (#47) are recorded separately from this implementation.
 > are checked when the server applies them. Focus time, worklog reports and
 > older history stay online.
 
+> Note, 2026-10-05: focus preferences left this list as a read-only offline
+> singleton. Browser, assistant and import writes append a feed change, and
+> snapshots preserve revision 0 defaults as well as saved revisions. Writes
+> still require conditional HTTP/assistant confirmation; no focus-preference
+> outbox operation is added. Focus plans, idle dispositions, reminder state
+> and session control remain online-only.
+
 ## Consequences
 
 - Migration 0037 forces one snapshot reset per client; queued operations
