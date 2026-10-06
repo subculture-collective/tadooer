@@ -36,6 +36,7 @@ import type {
   ChoicePoolItem,
   ChoicePoolSuggestionResponse,
   DayPlanResponse,
+  FocusPreferencesResponse,
   GoogleConnectorStatusResponse,
   NotificationPreferences,
   NotificationStatusResponse,
@@ -330,6 +331,10 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const [dayOrders, setDayOrders] = useState<readonly SavedDayOrder[]>([]);
   // ADR 0050: stored time entries of the rolling window, from the cache.
   const [timeEntries, setTimeEntries] = useState<readonly TimeEntry[]>([]);
+  // Issue #114: focus preferences are a read-only offline feed singleton.
+  const [cachedFocusPreferences, setCachedFocusPreferences] = useState<
+    FocusPreferencesResponse | undefined
+  >();
   const timeEntryFeedMark = useRef<string | null | undefined>(undefined);
   const pinnedNotes = notes.filter(({ pinnedToToday }) => pinnedToToday);
   const [subtasks, setSubtasks] = useState<
@@ -473,6 +478,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       cachedNotes,
       cachedDayOrders,
       cachedTimeEntries,
+      focusPreferences,
       feedMark,
     ] = await Promise.all([
       localStore.loadCachedProjects(),
@@ -481,6 +487,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       localStore.loadCachedNotes(),
       localStore.loadCachedDayOrders(),
       localStore.loadCachedTimeEntries(),
+      localStore.loadCachedFocusPreferences(),
       localStore.loadTimeEntryFeedMark(),
     ]);
     setProjects(cachedProjects);
@@ -488,6 +495,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     setNotes(cachedNotes);
     setDayOrders(cachedDayOrders);
     setTimeEntries(cachedTimeEntries);
+    setCachedFocusPreferences(focusPreferences);
     // ADR 0050: a round delivered a stored time entry, by this tab or by
     // the leader tab. The views that read the server's time report reload;
     // the entry's routes no longer send a `resources` hint.
@@ -1470,6 +1478,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     activeSession:
       state.kind === "authenticated" ? state.activeSession : undefined,
     online: networkOnline,
+    cachedPreferences: cachedFocusPreferences,
     tasks: state.kind === "authenticated" ? state.tasks : [],
     onSessionChanged: (session) =>
       setState((current) =>

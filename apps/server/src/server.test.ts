@@ -188,7 +188,7 @@ describe("Suite HTTP server", () => {
           // ADR 0043: no worker settings in this configuration.
           calendarBridge: "disabled",
         });
-        expect(readiness.migrationCount).toBe(46);
+        expect(readiness.migrationCount).toBe(47);
 
         const build = await fetch(`${server.baseUrl}/api/build`);
         expect(build.status).toBe(200);

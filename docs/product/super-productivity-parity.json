@@ -470,7 +470,7 @@
       "status": "partial",
       "mapping": "Server-authoritative focus/break/takeover (ADR 0010) gains owner focus preferences (Pomodoro, Flowtime, countdown, idle, take-a-break, tracking reminder), per-session presets with cycle counting, browser idle detection with an assign/break/discard disposition applied as an interval correction, and countdown, break-end, take-a-break and tracking reminders through the notification ledger (ADR 0029). The focus sections of globalConfig apply once as focus preferences; desktop-only and audio settings are reported.",
       "acceptance": "Tests cover cycle math and flowtime break rules, pause-aware elapsed time across a DST change, idle disposition against work history (no double counting, 24 h cap), stale revisions, replay and restart, ledger dedup and suppression, owner isolation and backup/restore. Desktop-shell OS idle detection and a real-backup import remain open.",
-      "offlineSync": "Lease/controller semantics unchanged. Focus preferences, plans, idle dispositions and reminder state are online-only HTTP records outside the sync feed and offline cache; idle detection needs a connection to apply its disposition. Offline focus remains an explicit unsupported boundary.",
+      "offlineSync": "Lease/controller semantics unchanged. Focus preferences are a read-only offline singleton in the sync feed and IndexedDB cache: browser, assistant and import writes append a feed change, while edits still require a connection and the record revision. Plans, idle dispositions, reminder state and session control remain online-only; idle detection needs a connection to apply its disposition. Offline focus control remains unsupported.",
       "assistantIssue": 32,
       "taskFields": [],
       "projectFields": [],

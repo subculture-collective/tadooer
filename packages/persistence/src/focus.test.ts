@@ -124,6 +124,20 @@ describe("focus preferences persistence (ADR 0029)", () => {
           preferences: { pomodoro: { workMinutes: 50 } },
         });
         expect(
+          db
+            .pageSyncChanges("owner", db.getSyncState("owner").epoch, 0)
+            .changes.filter(
+              ({ entityType }) => entityType === "focus_preferences",
+            ),
+        ).toEqual([
+          expect.objectContaining({
+            entityType: "focus_preferences",
+            entityId: "owner",
+            kind: "upsert",
+            revision: 1,
+          }),
+        ]);
+        expect(
           db.focus.putPreferences("owner", 0, edited, now),
         ).toBeUndefined();
         expect(
@@ -162,6 +176,19 @@ describe("focus preferences persistence (ADR 0029)", () => {
       expect(
         db.focus.importInTransaction("owner", imported, provenance, now),
       ).toBe("applied");
+      expect(
+        db
+          .pageSyncChanges("owner", db.getSyncState("owner").epoch, 0)
+          .changes.filter(
+            ({ entityType }) => entityType === "focus_preferences",
+          ),
+      ).toEqual([
+        expect.objectContaining({
+          entityType: "focus_preferences",
+          entityId: "owner",
+          revision: 1,
+        }),
+      ]);
       expect(db.focus.getPreferences("owner")).toEqual({
         preferences: imported,
         revision: 1,
@@ -350,7 +377,7 @@ describe("focus preferences persistence (ADR 0029)", () => {
           kind: "test",
           state: "pending",
         });
-        expect(db.state().appliedMigrationCount).toBe(46);
+        expect(db.state().appliedMigrationCount).toBe(47);
         expect(
           db.focus.queueReminder("owner", "focus_tracking_reminder", now, now),
         ).toBe(true);

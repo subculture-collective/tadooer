@@ -123,6 +123,7 @@ import {
   focusIdleDispositionInputSchema,
   focusPreferenceMutationInputSchema,
   focusPreferenceSnapshotSchema,
+  focusPreferencesResponseSchema,
   focusReminderKinds,
   focusTimerBaseSchema,
 } from "./focus.ts";
@@ -1609,6 +1610,7 @@ const syncEntityKindSchema = z.enum([
   // ADR 0050.
   "day_order",
   "time_entry",
+  "focus_preferences",
 ]);
 
 // ADR 0033: project and tag lifecycle. Records keep one revision, so a stale
@@ -1980,6 +1982,10 @@ export const syncEntitySnapshotSchema = z.discriminatedUnion("entityKind", [
   // is a projection of the active session and is never a feed record.
   z.object({ entityKind: z.literal("time_entry"), value: timeEntrySchema }),
   z.object({
+    entityKind: z.literal("focus_preferences"),
+    value: focusPreferencesResponseSchema.extend({ id: entityIdSchema }),
+  }),
+  z.object({
     entityKind: z.literal("template"),
     value: syncTaskTemplateSnapshotSchema,
   }),
@@ -2013,6 +2019,7 @@ export const syncChangeSchema = z.object({
     "note",
     "day_order",
     "time_entry",
+    "focus_preferences",
     "template",
     "template_set",
     "choice_pool",

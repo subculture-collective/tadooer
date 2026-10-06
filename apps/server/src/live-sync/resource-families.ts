@@ -132,9 +132,11 @@ const routeRules: readonly RouteRule[] = [
   none(`placeholders/${uuid}/suggestion`, readOnly),
   feed("*", `habits(/${uuid}(/(archive|restore|occurrences))?)?`),
 
-  // Focus: the active session is a feed entity; its tracked time, focus
-  // preferences, plan and reminders are not.
+  // Focus: the active session and focus preferences are feed entities. Its
+  // tracked time, plans, idle dispositions and reminders are not.
   families("*", "active-session(/command)?", "focus", "time_entries"),
+  // Issue #114: focus preferences are a read-only offline feed singleton.
+  feed(["PUT"], "focus/preferences"),
   families(
     "*",
     "focus/(preferences|timer|plan|idle|break-reminder/snooze)",
@@ -326,7 +328,7 @@ export const automationOperationFamilies: Readonly<
   "focus.end_break": ["focus", "time_entries"],
   "focus.complete": ["focus", "time_entries"],
   "focus.takeover": ["focus", "time_entries"],
-  "focus.update_preferences": ["focus"],
+  "focus.update_preferences": feedOnly,
   "focus.idle_disposition": ["focus", "time_entries"],
   "templates.instantiate": feedOnly,
   "template_sets.instantiate": feedOnly,

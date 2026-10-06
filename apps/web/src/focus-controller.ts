@@ -58,6 +58,8 @@ export interface FocusControllerInput {
   readonly csrfToken: string | undefined;
   readonly activeSession: ActiveSession | null | undefined;
   readonly online: boolean;
+  /** Latest feed-backed cache value, including while disconnected. */
+  readonly cachedPreferences: FocusPreferencesResponse | undefined;
   readonly tasks: readonly Task[];
   readonly onSessionChanged: (session: ActiveSession) => void;
   readonly onSessionCommand: (
@@ -95,6 +97,7 @@ export const useFocusController = ({
   csrfToken,
   activeSession,
   online,
+  cachedPreferences,
   tasks,
   onSessionChanged,
   onSessionCommand,
@@ -141,6 +144,11 @@ export const useFocusController = ({
       return;
     }
     let cancelled = false;
+    if (cachedPreferences !== undefined) setPreferences(cachedPreferences);
+    if (!online)
+      return () => {
+        cancelled = true;
+      };
     void api
       .getFocusPreferences()
       .then((record) => {
@@ -150,7 +158,7 @@ export const useFocusController = ({
     return () => {
       cancelled = true;
     };
-  }, [api, authenticated, livePreferences]);
+  }, [api, authenticated, cachedPreferences, livePreferences, online]);
 
   const sessionKey = activeSession?.id ?? "none";
   const sessionRevision = activeSession?.revision ?? 0;
