@@ -288,8 +288,9 @@ Completed on 2026-08-06 on `codex/phase-4-automation-mcp`:
   the reserved provider href and UID
 - local TypeScript MCP stdio adapter with catalog-derived tools/resources and a
   mode-0600 token-file contract; hosted MCP remains disabled while the scoped
-  OAuth/PKCE design in [ADR 0051](adr/0051-hosted-mcp-oauth-authorization.md)
-  proceeds through implementation and live-client qualification
+  OAuth/PKCE authorization in [ADR 0051](adr/0051-hosted-mcp-oauth-authorization.md)
+  is implemented (PR #130, issue #34 closed); hosted transport #43 and
+  live-client/deployment qualification remain open
 - quick-add CLI using the same preview/confirm API and caller-stable retry key
 - contract, persistence, HTTP restart/replay/revocation, focus, MCP protocol,
   quick-add, and full repository verification gates

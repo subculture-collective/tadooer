@@ -6,6 +6,7 @@ import { archiveTask, createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
 import { PasswordConfirmation } from "./components/PasswordConfirmation.tsx";
 import { useSessionRecovery } from "./use-session-recovery.ts";
+import { useAppBootstrap } from "./use-app-bootstrap.ts";
 import {
   type HabitListResponse,
   type HabitCommand,
@@ -71,7 +72,6 @@ import {
   updateNotificationPreferences,
   sendTestNotification,
   getActiveSession,
-  getSetupStatus,
   getTasks,
   getPlanner,
   getProjects,
@@ -463,62 +463,73 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   // ADR 0033, ADR 0046: projects, tags, checklists and notes are read from
   // the local cache so offline-created records are usable before they have
   // synced.
-  const refreshCachedOrganization = useCallback(async () => {
-    const [
-      cachedProjects,
-      cachedTags,
-      cachedSubtasks,
-      cachedNotes,
-      cachedDayOrders,
-      cachedTimeEntries,
-      focusPreferences,
-      feedMark,
-    ] = await Promise.all([
-      localStore.loadCachedProjects(),
-      localStore.loadCachedTags(),
-      localStore.loadCachedSubtasks(),
-      localStore.loadCachedNotes(),
-      localStore.loadCachedDayOrders(),
-      localStore.loadCachedTimeEntries(),
-      localStore.loadCachedFocusPreferences(),
-      localStore.loadTimeEntryFeedMark(),
-    ]);
-    setProjects(cachedProjects);
-    setTags(cachedTags);
-    setNotes(cachedNotes);
-    setDayOrders(cachedDayOrders);
-    setTimeEntries(cachedTimeEntries);
-    setCachedFocusPreferences(focusPreferences);
-    // ADR 0050: a round delivered a stored time entry, by this tab or by
-    // the leader tab. The views that read the server's time report reload;
-    // the entry's routes no longer send a `resources` hint.
-    if (
-      timeEntryFeedMark.current !== undefined &&
-      timeEntryFeedMark.current !== feedMark
-    )
-      liveViewRegistry.refetchViews(["worklog", "timeSpent"]);
-    timeEntryFeedMark.current = feedMark;
-    setSubtasks(
-      cachedSubtasks.reduce<Record<string, Subtask[]>>((grouped, subtask) => {
-        (grouped[subtask.taskId] ??= []).push(subtask);
-        return grouped;
-      }, {}),
-    );
-  }, [localStore]);
+  const refreshCachedOrganization = useCallback(
+    async (isCurrent: () => boolean = () => true) => {
+      const [
+        cachedProjects,
+        cachedTags,
+        cachedSubtasks,
+        cachedNotes,
+        cachedDayOrders,
+        cachedTimeEntries,
+        focusPreferences,
+        feedMark,
+      ] = await Promise.all([
+        localStore.loadCachedProjects(),
+        localStore.loadCachedTags(),
+        localStore.loadCachedSubtasks(),
+        localStore.loadCachedNotes(),
+        localStore.loadCachedDayOrders(),
+        localStore.loadCachedTimeEntries(),
+        localStore.loadCachedFocusPreferences(),
+        localStore.loadTimeEntryFeedMark(),
+      ]);
+      if (!isCurrent()) return;
+      setProjects(cachedProjects);
+      setTags(cachedTags);
+      setNotes(cachedNotes);
+      setDayOrders(cachedDayOrders);
+      setTimeEntries(cachedTimeEntries);
+      setCachedFocusPreferences(focusPreferences);
+      // ADR 0050: a round delivered a stored time entry, by this tab or by
+      // the leader tab. The views that read the server's time report reload;
+      // the entry's routes no longer send a `resources` hint.
+      if (
+        timeEntryFeedMark.current !== undefined &&
+        timeEntryFeedMark.current !== feedMark
+      )
+        liveViewRegistry.refetchViews(["worklog", "timeSpent"]);
+      timeEntryFeedMark.current = feedMark;
+      setSubtasks(
+        cachedSubtasks.reduce<Record<string, Subtask[]>>((grouped, subtask) => {
+          (grouped[subtask.taskId] ??= []).push(subtask);
+          return grouped;
+        }, {}),
+      );
+    },
+    [localStore],
+  );
 
   // What a tab shows after sync rounds were applied, by itself or (ADR 0045)
   // by another tab of this browser profile.
   const readLocalState = useCallback(
-    async (client: LocalClientIdentity) => {
-      await refreshCachedOrganization();
-      setHabitLibrary(await localStore.loadCachedHabits());
-      setHabitPending(
-        (await localStore.loadOutbox()).some(
-          ({ operation, state }) =>
-            isHabitSyncOperation(operation) &&
-            (state === "queued" || state === "sending"),
-        ),
-      );
+    async (
+      client: LocalClientIdentity,
+      isCurrent: () => boolean = () => true,
+    ) => {
+      await refreshCachedOrganization(isCurrent);
+      const habits = await localStore.loadCachedHabits();
+      const outbox = await localStore.loadOutbox();
+      if (isCurrent()) {
+        setHabitLibrary(habits);
+        setHabitPending(
+          outbox.some(
+            ({ operation, state }) =>
+              isHabitSyncOperation(operation) &&
+              (state === "queued" || state === "sending"),
+          ),
+        );
+      }
       return {
         ...(await cachedTaskState()),
         client,
@@ -529,7 +540,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   );
 
   const runSync = useCallback(
-    async (session: SessionResponse, trigger?: SyncRoundTrigger) => {
+    async (
+      session: SessionResponse,
+      trigger?: SyncRoundTrigger,
+      isCurrent: () => boolean = () => true,
+    ) => {
       const transport = createSyncTransport(session.csrfToken);
       const engine = new SyncEngine(localStore, transport);
       const client = await engine.ensureClient();
@@ -540,7 +555,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       while (round.hasMore) round = await engine.sync(undefined, trigger);
       // The reads that follow a hint-triggered round are not owner activity.
       if (trigger === "push") noteBackgroundReads();
-      return readLocalState(client);
+      return readLocalState(client, isCurrent);
     },
     [localStore, readLocalState],
   );
@@ -548,8 +563,8 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   // Rounds the owner or the app's own lifecycle started. Other tabs reload
   // from IndexedDB afterwards.
   const synchronize = useCallback(
-    async (session: SessionResponse) => {
-      const local = await runSync(session);
+    async (session: SessionResponse, isCurrent: () => boolean = () => true) => {
+      const local = await runSync(session, undefined, isCurrent);
       liveSync.announceRound();
       return local;
     },
@@ -557,7 +572,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   );
 
   const loadAuthenticated = useCallback(
-    async (session: SessionResponse) => {
+    async (session: SessionResponse, isCurrent: () => boolean = () => true) => {
       const [
         baikal,
         google,
@@ -587,6 +602,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         getTemplateSets(),
         getChoicePools(),
       ]);
+      if (!isCurrent()) return;
       setProjects(projectList);
       setTags(tagList);
       setTemplates(library.templates);
@@ -618,28 +634,35 @@ export const App = ({ initialState, initialPath }: AppProps) => {
         baikal.connected || google.connected
           ? await getPlanner(window.from, window.to)
           : null;
+      if (!isCurrent()) return;
       let local: Awaited<ReturnType<typeof synchronize>> | undefined;
       try {
-        local = await synchronize(session);
+        local = await synchronize(session, isCurrent);
       } catch {
         // Direct authenticated reads remain a safe first-run fallback. Existing
         // browser profiles retain their IndexedDB cache for offline use.
         // ADR 0046: notes have no direct read; show what the cache holds.
-        setNotes(await localStore.loadCachedNotes().catch(() => []));
+        const cachedNotes = await localStore.loadCachedNotes().catch(() => []);
+        if (!isCurrent()) return;
+        setNotes(cachedNotes);
       }
+      if (!isCurrent()) return;
       const visibleTasks = local?.tasks ?? taskList.tasks;
       try {
         await localStore.savePlanningPreferences(planningPreferences);
       } catch {
+        if (!isCurrent()) return;
         setFormError(
           "Planning preferences are current, but they could not be cached for offline use.",
         );
       }
+      if (!isCurrent()) return;
       const subtaskEntries = await Promise.all(
         visibleTasks.map(
           async (task) => [task.id, await getSubtasks(task.id)] as const,
         ),
       );
+      if (!isCurrent()) return;
       setSubtasks(Object.fromEntries(subtaskEntries));
       setState({
         kind: "authenticated",
@@ -666,62 +689,38 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     [localStore, synchronize],
   );
 
-  useEffect(() => {
-    if (initialState !== undefined) return;
-    const lifecycle = { cancelled: false };
-    const cancelled = (): boolean => lifecycle.cancelled;
-    void getSetupStatus()
-      .then(async ({ setupRequired }) => {
-        if (cancelled()) return;
-        if (setupRequired) {
-          setState({ kind: "setup" });
-          return;
-        }
-        try {
-          const session = await resumeSession();
-          if (!cancelled()) await loadAuthenticated(session);
-        } catch (error: unknown) {
-          if (cancelled()) return;
-          if (error instanceof ApiRequestError && error.status === 401) {
-            setState({ kind: "login" });
-          } else {
-            setState({ kind: "error", message: messageFor(error) });
-          }
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled())
-          void Promise.all([
-            cachedTaskState(),
-            localStore.loadPlanningPreferences(),
-            localStore.clientIdentity(),
-            localStore.loadCachedNotes(),
-          ])
-            .then(([cached, planningPreferences, identity, cachedNotes]) => {
-              // ADR 0046: pinned notes stay readable with no session.
-              if (!cancelled() && identity !== undefined) setNotes(cachedNotes);
-              if (!cancelled() && identity !== undefined)
-                setState({
-                  kind: "offline",
-                  ...cached,
-                  ...(planningPreferences === undefined
-                    ? {}
-                    : { planningPreferences }),
-                  message:
-                    "Tadooer cannot reach the server. These are the tasks saved in this browser. Task changes are queued and sync when it is back.",
-                });
-              else if (!cancelled())
-                setState({ kind: "error", message: messageFor(error) });
-            })
-            .catch(() => {
-              if (!cancelled())
-                setState({ kind: "error", message: messageFor(error) });
-            });
-      });
-    return () => {
-      lifecycle.cancelled = true;
+  const readOfflineBootstrap = useCallback(async () => {
+    const [cached, planningPreferences, identity, cachedNotes] =
+      await Promise.all([
+        cachedTaskState(),
+        localStore.loadPlanningPreferences(),
+        localStore.clientIdentity(),
+        localStore.loadCachedNotes(),
+      ]);
+    if (identity === undefined) return null;
+    return {
+      kind: "offline" as const,
+      ...cached,
+      cachedNotes,
+      ...(planningPreferences === undefined ? {} : { planningPreferences }),
+      message:
+        "Tadooer cannot reach the server. These are the tasks saved in this browser. Task changes are queued and sync when it is back.",
     };
-  }, [cachedTaskState, initialState, loadAuthenticated, localStore]);
+  }, [cachedTaskState, localStore]);
+  const publishBootstrap = useCallback(
+    (next: AppState, cachedNotes?: readonly Note[]): void => {
+      if (cachedNotes !== undefined) setNotes(cachedNotes);
+      setState(next);
+    },
+    [],
+  );
+  useAppBootstrap({
+    enabled: initialState === undefined,
+    loadAuthenticated,
+    readOffline: readOfflineBootstrap,
+    publish: publishBootstrap,
+    messageFor,
+  });
 
   useEffect(() => {
     if (state.kind !== "authenticated") return;
