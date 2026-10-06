@@ -11,7 +11,6 @@
  * operations, stdin JSON) so callers do not put them in process arguments.
  */
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import process from "node:process";
 import { URL } from "node:url";
 import {
@@ -42,9 +41,12 @@ const baseUrl = () => {
   return normalizeBaseUrl(rawBaseUrl);
 };
 
-const readInput = () => {
+const readInput = async () => {
   try {
-    const parsed = JSON.parse(readFileSync(0, "utf8"));
+    process.stdin.setEncoding("utf8");
+    let input = "";
+    for await (const chunk of process.stdin) input += chunk;
+    const parsed = JSON.parse(input);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
       fail("stdin must be a JSON object");
     return parsed;
@@ -199,7 +201,7 @@ const seedEvent = async (base, input) => {
 const main = async () => {
   const base = baseUrl();
   if (command === "bootstrap") return bootstrap(base);
-  const input = readInput();
+  const input = await readInput();
   if (command === "get") return getEvent(base, input);
   if (command === "put") return putEvent(base, input);
   if (command === "delete") return deleteEvent(base, input);
