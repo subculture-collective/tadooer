@@ -279,12 +279,15 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     return () => window.clearInterval(timer);
   }, []);
 
-  const applyRecoveredSession = useCallback((session: SessionResponse): void => {
-    setState((current) =>
-      current.kind === "authenticated" ? { ...current, session } : current,
-    );
-    setFormError(null);
-  }, []);
+  const applyRecoveredSession = useCallback(
+    (session: SessionResponse): void => {
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, session } : current,
+      );
+      setFormError(null);
+    },
+    [],
+  );
   const sessionRecovery = useSessionRecovery(
     state.kind === "authenticated" ? state.session : null,
     applyRecoveredSession,

@@ -6,9 +6,7 @@ import {
 } from "./session-recovery.ts";
 
 const sessionKeyFor = (session: SessionResponse | null): string | null =>
-  session === null
-    ? null
-    : `${session.owner.id}:${session.csrfToken}`;
+  session === null ? null : `${session.owner.id}:${session.csrfToken}`;
 
 /** Owns the session-failure subscription for one authenticated generation. */
 export const useSessionRecovery = (
@@ -32,7 +30,8 @@ export const useSessionRecovery = (
     (recovered: SessionResponse): void => {
       // A recovery request from a replaced or signed-out session must not
       // publish over the newer session generation.
-      if (sessionKey === null || currentSessionKey.current !== sessionKey) return;
+      if (sessionKey === null || currentSessionKey.current !== sessionKey)
+        return;
       onRecovered(recovered);
       setFailure(null);
     },
