@@ -37,7 +37,7 @@ const snapshot = (revision: number, workMinutes: number) => ({
       },
     },
   ],
-  nextCursor: `cursor-${revision}`,
+  nextCursor: `cursor-${String(revision)}`,
   hasMore: false,
   serverTimestamp: "2026-10-05T12:00:00.000Z",
 });

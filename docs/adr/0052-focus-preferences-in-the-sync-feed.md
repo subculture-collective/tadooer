@@ -27,7 +27,7 @@ confirmation. No outbox operation is introduced because there is no field
 merge rule; allowing an offline whole-record write would overwrite unrelated
 changes from another device.
 
-Migration `0052_sync_focus_preferences_epoch_reset` resets the feed epoch so
+Migration `0053_sync_focus_preferences_epoch_reset` resets the feed epoch so
 preferences saved before this change enter existing caches. IndexedDB remains
 at version 2: the singleton uses the existing `entities` store, while the
 existing outbox store and queued operations are unchanged and replay over the

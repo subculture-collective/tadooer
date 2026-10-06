@@ -124,11 +124,8 @@ describe("focus preferences persistence (ADR 0029)", () => {
           preferences: { pomodoro: { workMinutes: 50 } },
         });
         expect(
-          db.pageSyncChanges(
-            "owner",
-            db.getSyncState("owner").epoch,
-            0,
-          ).changes,
+          db.pageSyncChanges("owner", db.getSyncState("owner").epoch, 0)
+            .changes,
         ).toEqual([
           expect.objectContaining({
             entityType: "focus_preferences",
@@ -373,7 +370,7 @@ describe("focus preferences persistence (ADR 0029)", () => {
           kind: "test",
           state: "pending",
         });
-        expect(db.state().appliedMigrationCount).toBe(46);
+        expect(db.state().appliedMigrationCount).toBe(47);
         expect(
           db.focus.queueReminder("owner", "focus_tracking_reminder", now, now),
         ).toBe(true);

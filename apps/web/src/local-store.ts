@@ -756,15 +756,14 @@ export class LocalStore {
   }
 
   /** Issue #114: the latest focus preferences, readable without a connection. */
-  async loadCachedFocusPreferences(): Promise<FocusPreferencesResponse | undefined> {
+  async loadCachedFocusPreferences(): Promise<
+    FocusPreferencesResponse | undefined
+  > {
     const record = (await this.loadCachedEntities()).find(
       ({ entityKind }) => entityKind === "focus_preferences",
     );
     if (record === undefined) return undefined;
-    const { id: _id, ...value } = record.value as FocusPreferencesResponse & {
-      readonly id: string;
-    };
-    return focusPreferencesResponseSchema.parse(value);
+    return focusPreferencesResponseSchema.parse(record.value);
   }
 
   /**
