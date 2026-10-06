@@ -186,17 +186,21 @@ pnpm verify:phase11
 slower disposable deployment check: it builds both services, validates rendered
 HTTP/API output, proves installation identity across restart, replaces the
 database and credential key, restores the matched backup pair, and removes its
-test volumes. `pnpm verify:phase1` additionally requires Docker Compose and a
-Chromium binary at `/usr/bin/chromium` (override with
+test volumes. It verifies readiness reports every migration as current and that
+the metrics endpoint reports the same applied count, rather than relying on a
+literal migration total. `pnpm verify:phase1` additionally requires Docker
+Compose and a Chromium binary at `/usr/bin/chromium` (override with
 `PLAYWRIGHT_CHROMIUM_PATH`). It provisions only synthetic data in a disposable
-Baïkal instance, drives the real UI, proves conditional VEVENT CRUD and visible
-conflict handling, restarts the Suite, restores all state into fresh volumes,
-repeats task placement, and removes the verification volumes.
+Baikal instance, drives the current Today and Tasks views, proves conditional
+VEVENT CRUD and visible conflict handling, restarts the Suite, restores all
+state into fresh volumes, repeats task scheduling, and removes the verification
+volumes.
 
-`pnpm verify:phase2` uses two disposable persistent Chromium profiles. It proves
-offline task create/edit across profile close/reopen, reconnect without a
-duplicate task, visible same-field conflict handling, follower takeover, and
-the same authoritative focus session after a Suite restart. Lease expiry and
+`pnpm verify:phase2` uses two disposable persistent Chromium profiles. It drives
+the current Today and Tasks views to prove offline task creation and title
+edits across profile close/reopen, reconnect without a duplicate task, offline
+same-field title conflict handling, follower takeover, and the same
+authoritative focus session after a Suite restart. Lease expiry and
 the no-duplicate-interval transition matrix use an injected clock in server
 tests; no test clock endpoint exists in the Compose runtime.
 

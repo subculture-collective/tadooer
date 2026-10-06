@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import process from "node:process";
+import { URL } from "node:url";
 import { chromium, expect } from "@playwright/test";
 
 const [mode, baseUrl, statePath] = process.argv.slice(2);
@@ -22,7 +23,16 @@ const executablePath =
   process.env.PLAYWRIGHT_CHROMIUM_PATH ?? "/usr/bin/chromium";
 const profileOne = `${statePath}.profile-one`;
 const profileTwo = `${statePath}.profile-two`;
-const task = (page, title) => page.locator(".tasks > li", { hasText: title });
+const task = (page, title) =>
+  page.locator(".today-task-row, .task-view-group > .tasks > li", {
+    hasText: title,
+  });
+const openTasks = async (page) => {
+  await page.getByRole("link", { name: "Tasks", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Captured tasks" }),
+  ).toBeVisible();
+};
 
 const open = async (path) =>
   chromium.launchPersistentContext(path, { executablePath, headless: true });
@@ -30,7 +40,7 @@ const login = async (page) => {
   await page.goto(baseUrl);
   await expect(
     page.getByRole("heading", {
-      name: /Create the owner account|Sign in|Connect Baïkal|Captured tasks/,
+      name: /^(Create the owner account|Sign in|Connect Baikal|Today)$/,
     }),
   ).toBeVisible();
   if (
@@ -55,21 +65,21 @@ const login = async (page) => {
     await page.getByLabel("Password").fill(ownerPassword);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(
-      page.getByRole("heading", { name: /Connect Baïkal|Captured tasks/ }),
+      page.getByRole("heading", { name: /^(Connect Baikal|Today)$/ }),
     ).toBeVisible();
   }
   if (
     await page
-      .getByRole("heading", { name: "Connect Baïkal" })
+      .getByRole("heading", { name: "Connect Baikal" })
       .isVisible()
       .catch(() => false)
   ) {
-    await page.getByLabel("Baïkal username").fill(davUsername);
-    await page.getByLabel("Baïkal password").fill(davPassword);
+    await page.getByLabel("Baikal username").fill(davUsername);
+    await page.getByLabel("Baikal password").fill(davPassword);
     await page.getByRole("button", { name: "Verify and connect" }).click();
   }
   await expect(
-    page.getByRole("heading", { name: "Captured tasks" }),
+    page.getByRole("heading", { name: "Today", exact: true }),
   ).toBeVisible();
 };
 
@@ -101,6 +111,7 @@ try {
   await firstPage.context().setOffline(true);
   await firstPage.getByLabel("What needs doing?").fill("Phase 2 offline task");
   await firstPage.getByRole("button", { name: "Capture task" }).click();
+  await openTasks(firstPage);
   let item = task(firstPage, "Phase 2 offline task");
   await expect(item).toBeVisible();
   await item.getByLabel("Title").fill("Phase 2 cached task");
@@ -118,7 +129,7 @@ try {
     await reopened.setOffline(false);
     await expect(page.getByRole("button", { name: "Sync now" })).toBeEnabled();
     await page.getByRole("button", { name: "Sync now" }).click();
-    await expect(page.getByText(/Task sync: online/)).toBeVisible();
+    await expect(page.getByText("Task sync is on.")).toBeVisible();
     const second = await open(profileTwo);
     try {
       const secondPage = second.pages()[0] ?? (await second.newPage());
@@ -126,6 +137,8 @@ try {
       await expect(task(secondPage, "Phase 2 cached task")).toBeVisible();
       await expect(task(secondPage, "Phase 2 cached task")).toHaveCount(1);
 
+      await openTasks(page);
+      await openTasks(secondPage);
       await reopened.setOffline(true);
       await second.setOffline(true);
       item = task(page, "Phase 2 cached task");
@@ -134,23 +147,37 @@ try {
       const secondItem = task(secondPage, "Phase 2 cached task");
       await secondItem.getByLabel("Title").fill("Phase 2 conflict loser");
       await secondItem.getByRole("button", { name: "Save task" }).click();
+      await expect(task(page, "Phase 2 conflict winner")).toBeVisible();
+      await expect(task(secondPage, "Phase 2 conflict loser")).toBeVisible();
       await reopened.setOffline(false);
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
       await expect(
         page.getByRole("button", { name: "Sync now" }),
       ).toBeEnabled();
       await page.getByRole("button", { name: "Sync now" }).click();
-      await expect(page.getByText(/Task sync: online/)).toBeVisible();
+      await expect(page.getByText("Task sync: online")).toBeVisible();
       await second.setOffline(false);
+      await secondPage
+        .getByRole("link", { name: "Settings", exact: true })
+        .click();
       await expect(
         secondPage.getByRole("button", { name: "Sync now" }),
       ).toBeEnabled();
       await secondPage.getByRole("button", { name: "Sync now" }).click();
-      await expect(secondPage.getByText(/visible conflicts: 1/i)).toBeVisible();
+      await expect(
+        secondPage.getByText("Conflicts: 1", { exact: true }),
+      ).toBeVisible();
+      await openTasks(secondPage);
       await expect(task(secondPage, "Phase 2 conflict winner")).toHaveCount(1);
 
-      await page.getByRole("button", { name: "Start focus" }).click();
+      await page.goto(new URL("/today", baseUrl).href);
+      await page
+        .getByRole("button", {
+          name: "Start focus on “Phase 2 conflict winner”",
+        })
+        .click();
       await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
-      await secondPage.reload();
+      await secondPage.goto(new URL("/today", baseUrl).href);
       await expect(
         secondPage.getByRole("button", { name: "Take over on this device" }),
       ).toBeVisible();

@@ -40,23 +40,30 @@ const context = await browser.newContext(
 const page = await context.newPage();
 
 const taskItem = (title) =>
-  page
-    .getByRole("heading", { name: "Captured tasks" })
-    .locator("xpath=following-sibling::ul[1][contains(@class, 'tasks')]")
-    .locator(":scope > li", { hasText: title });
+  page.locator(".task-view-group > .tasks > li").filter({
+    has: page.locator(".task-heading > strong").filter({ hasText: title }),
+  });
+const openTasks = async () => {
+  await page.getByRole("link", { name: "Tasks", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Captured tasks" }),
+  ).toBeVisible();
+};
+const openToday = async () => {
+  await page.getByRole("link", { name: "Today", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Today", exact: true }),
+  ).toBeVisible();
+};
 const localDateTime = (offsetHours) => {
   const date = new Date(Date.now() + offsetHours * 60 * 60 * 1000);
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 16);
 };
 
-const placeTask = async (
-  title,
-  start,
-  expectedButton = "Place in calendar",
-) => {
+const placeTask = async (title, start, expectedButton = "Schedule") => {
   const item = taskItem(title);
-  await item.getByLabel("Start").fill(start);
+  await item.getByLabel("Start", { exact: true }).fill(start);
   await item.getByLabel("Minutes", { exact: true }).fill("45");
   const [response] = await Promise.all([
     page.waitForResponse(
@@ -85,10 +92,10 @@ try {
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(
-      page.getByRole("heading", { name: "Connect Baïkal" }),
+      page.getByRole("heading", { name: "Connect Baikal" }),
     ).toBeVisible();
-    await page.getByLabel("Baïkal username").fill(davUsername);
-    await page.getByLabel("Baïkal password").fill(davPassword);
+    await page.getByLabel("Baikal username").fill(davUsername);
+    await page.getByLabel("Baikal password").fill(davPassword);
     await page.getByRole("button", { name: "Verify and connect" }).click();
     await expect(
       page.getByRole("heading", { name: "Week plan" }),
@@ -101,6 +108,7 @@ try {
       .last()
       .fill("Initial planning note");
     await page.getByRole("button", { name: "Capture task" }).click();
+    await openTasks();
     let item = taskItem("Phase 1 task");
     await expect(item).toBeVisible();
     await item.getByLabel("Title").fill("Phase 1 planned task");
@@ -111,14 +119,11 @@ try {
     await expect(item.getByText(/Completed/)).toBeVisible();
     await item.getByRole("button", { name: "Reopen" }).click();
     await expect(item.getByText(/Open/)).toBeVisible();
+    page.once("dialog", (dialog) => void dialog.accept());
     await item.getByRole("button", { name: "Delete" }).click();
     await expect(taskItem("Phase 1 planned task")).toHaveCount(0);
     await page
-      .locator("details.recovery")
-      .getByText(/Recently deleted tasks/)
-      .click();
-    await page
-      .locator("details.recovery")
+      .locator(".recovery")
       .getByRole("button", { name: "Restore task" })
       .click();
     await expect(taskItem("Phase 1 planned task")).toBeVisible();
@@ -150,9 +155,10 @@ try {
     await expect(
       page.getByRole("heading", { name: "Week plan" }),
     ).toBeVisible();
+    await expect(page.getByText(seedSummary)).toHaveCount(1);
+    await openTasks();
     await expect(taskItem(state.title)).toHaveCount(1);
     await expect(taskItem(state.title).getByText(/45 minutes/)).toBeVisible();
-    await expect(page.getByText(seedSummary)).toHaveCount(1);
 
     const eventUrl = new URL(state.mapping.href, baikalUrl);
     const current = await globalThis.fetch(eventUrl, {
@@ -196,9 +202,12 @@ try {
     await expect(
       page.getByRole("heading", { name: "Week plan" }),
     ).toBeVisible();
+    await openTasks();
     await expect(taskItem(state.title)).toHaveCount(1);
+    await openToday();
     await page.getByLabel("What needs doing?").fill("Post-restore task");
     await page.getByRole("button", { name: "Capture task" }).click();
+    await openTasks();
     const placed = await placeTask("Post-restore task", localDateTime(72));
     expect(placed.response.status()).toBe(201);
     const restoredTask = taskItem("Post-restore task");
@@ -208,7 +217,7 @@ try {
       .click();
     await expect(restoredTask.getByText(/45 minutes/)).toHaveCount(0);
     await expect(
-      restoredTask.getByRole("button", { name: "Place in calendar" }),
+      restoredTask.getByRole("button", { name: "Schedule" }),
     ).toBeVisible();
   }
 } finally {
