@@ -40,7 +40,9 @@ const context = await browser.newContext(
 const page = await context.newPage();
 
 const taskItem = (title) =>
-  page.locator(".task-view-group > .tasks > li", { hasText: title });
+  page.locator(".task-view-group > .tasks > li").filter({
+    has: page.locator(".task-heading > strong").filter({ hasText: title }),
+  });
 const openTasks = async () => {
   await page.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(
