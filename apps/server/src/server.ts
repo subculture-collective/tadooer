@@ -73,6 +73,8 @@ import { handleAutomation } from "./routes/automation.ts";
 import { handleNotifications } from "./routes/notifications.ts";
 import { handleHabits } from "./routes/habits.ts";
 import { handleStatic } from "./routes/static.ts";
+import { HostedOAuthService } from "./hosted-oauth.ts";
+import { handleHostedOAuth } from "./routes/hosted-oauth.ts";
 
 export interface RunningSuiteServer {
   readonly baseUrl: string;
@@ -116,6 +118,19 @@ export const startSuiteServer = async (
     config.trustedProxyCidrs ?? [],
   );
   const sessionClock = options.sessionClock ?? { now: () => new Date() };
+  const hostedOAuth =
+    config.hostedOAuth?.enabled === true &&
+    config.publicOrigin !== undefined &&
+    config.hostedOAuth.clientConfigPath !== undefined &&
+    config.hostedOAuth.resource !== undefined
+      ? new HostedOAuthService(
+          database,
+          config.publicOrigin,
+          config.hostedOAuth.resource,
+          config.hostedOAuth.clientConfigPath,
+          () => sessionClock.now().toISOString(),
+        )
+      : undefined;
   const schedulerClock = options.schedulerClock ?? systemSchedulerClock;
   // ADR 0043: every Google request (routes and worker) feeds one cooldown.
   const googleThrottle = new ProviderThrottle(schedulerClock);
@@ -444,9 +459,11 @@ export const startSuiteServer = async (
     requestCounts,
     triggerNotifications,
     liveSync,
+    ...(hostedOAuth === undefined ? {} : { hostedOAuth }),
   };
 
   const routes = [
+    handleHostedOAuth,
     handleHealth,
     handleAuthSetup,
     handleConnectors,
