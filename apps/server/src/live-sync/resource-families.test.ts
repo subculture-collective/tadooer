@@ -256,10 +256,12 @@ describe("live sync route classification (ADR 0045)", () => {
       [...withoutRoutes].filter(
         (name) =>
           // Automation operation modules run under the catalog paths;
-          // shared.ts holds helpers and static.ts serves the web app.
+          // shared.ts holds helpers, static.ts serves the web app, and
+          // hosted-oauth.ts only owns /oauth and /.well-known paths.
           !name.startsWith("automation-") &&
           name !== "shared.ts" &&
-          name !== "static.ts",
+          name !== "static.ts" &&
+          name !== "hosted-oauth.ts",
       ),
     ).toEqual([]);
   });

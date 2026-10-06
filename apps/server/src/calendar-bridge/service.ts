@@ -27,6 +27,7 @@ export type CalendarBridgeRunOutcome =
         | "google-consent-required"
         | "google-reconnect-required"
         | "google-unavailable"
+        | "google-calendar-not-writable"
         | "calendar-unavailable"
         | "baikal-credential-unavailable";
     };
@@ -130,6 +131,13 @@ export class CalendarBridgeService {
       );
       if (googleCalendar?.kind !== "google")
         return block("calendar-unavailable");
+      // Re-evaluate the discovered role for every pass. A mapping may outlive
+      // a Google permission change, but its permission to write must not.
+      if (
+        mapping.direction !== "google_to_baikal" &&
+        !this.google.writeCapability(ownerId, googleCalendar.id).writable
+      )
+        return block("google-calendar-not-writable");
       const baikalAccess = this.baikal.bridgeAccess(
         ownerId,
         mapping.baikalCalendarId,

@@ -17,6 +17,12 @@ export interface ServerConfig {
   readonly secureCookies: boolean;
   readonly publicOrigin?: string;
   readonly trustedProxyCidrs?: readonly string[];
+  /** Hosted OAuth authorization is inert unless explicitly enabled. */
+  readonly hostedOAuth?: {
+    readonly enabled: boolean;
+    readonly clientConfigPath?: string;
+    readonly resource?: string;
+  };
   /**
    * ADR 0043 background bridge worker. Absent means no worker runs; the
    * environment loader always supplies it (enabled unless switched off).
@@ -219,6 +225,35 @@ export const loadConfig = (
   environment: NodeJS.ProcessEnv = process.env,
 ): ServerConfig => {
   const publicOrigin = parsePublicOrigin(environment.SUITE_PUBLIC_ORIGIN);
+  const hostedOAuthEnabled = parseBoolean(
+    "SUITE_HOSTED_OAUTH_ENABLED",
+    environment.SUITE_HOSTED_OAUTH_ENABLED,
+  );
+  const hostedOAuthClientConfigPath =
+    environment.SUITE_HOSTED_OAUTH_CLIENT_CONFIG_PATH;
+  const hostedOAuthResource = environment.SUITE_HOSTED_OAUTH_RESOURCE;
+  if (
+    hostedOAuthEnabled &&
+    (publicOrigin === undefined ||
+      hostedOAuthClientConfigPath === undefined ||
+      hostedOAuthClientConfigPath === "" ||
+      hostedOAuthResource === undefined ||
+      hostedOAuthResource === "")
+  )
+    throw new Error(
+      "Hosted OAuth requires SUITE_PUBLIC_ORIGIN, SUITE_HOSTED_OAUTH_CLIENT_CONFIG_PATH, and SUITE_HOSTED_OAUTH_RESOURCE",
+    );
+  if (hostedOAuthResource !== undefined && hostedOAuthResource !== "") {
+    const resource = new URL(hostedOAuthResource);
+    if (
+      resource.protocol !== "https:" ||
+      resource.username !== "" ||
+      resource.password !== "" ||
+      resource.search !== "" ||
+      resource.hash !== ""
+    )
+      throw new Error("SUITE_HOSTED_OAUTH_RESOURCE must be an HTTPS URI");
+  }
   return {
     host: environment.HOST ?? "0.0.0.0",
     port: parsePort(environment.PORT),
@@ -252,6 +287,16 @@ export const loadConfig = (
     trustedProxyCidrs: parseTrustedProxyCidrs(
       environment.SUITE_TRUSTED_PROXY_CIDRS,
     ),
+    hostedOAuth: {
+      enabled: hostedOAuthEnabled,
+      ...(hostedOAuthClientConfigPath === undefined ||
+      hostedOAuthClientConfigPath === ""
+        ? {}
+        : { clientConfigPath: resolve(hostedOAuthClientConfigPath) }),
+      ...(hostedOAuthResource === undefined || hostedOAuthResource === ""
+        ? {}
+        : { resource: new URL(hostedOAuthResource).href }),
+    },
     calendarBridgeWorker: loadBridgeWorkerSettings(environment),
     syncRetentionDays: parseSyncRetentionDays(
       environment.SUITE_SYNC_RETENTION_DAYS,
