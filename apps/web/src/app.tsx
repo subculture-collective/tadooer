@@ -5,10 +5,7 @@ import { googleProjectionFreshness } from "@suite/domain";
 import { archiveTask, createTask } from "./api.ts";
 import { SessionRecovery } from "./components/SessionRecovery.tsx";
 import { PasswordConfirmation } from "./components/PasswordConfirmation.tsx";
-import {
-  subscribeSessionFailure,
-  type SessionFailure,
-} from "./session-recovery.ts";
+import { useSessionRecovery } from "./use-session-recovery.ts";
 import {
   type HabitListResponse,
   type HabitCommand,
@@ -276,22 +273,27 @@ export const App = ({ initialState, initialPath }: AppProps) => {
     initialState ?? { kind: "loading" },
   );
   const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [freshnessNow, setFreshnessNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setFreshnessNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const [sessionFailure, setSessionFailure] = useState<SessionFailure | null>(
-    null,
+  const applyRecoveredSession = useCallback(
+    (session: SessionResponse): void => {
+      setState((current) =>
+        current.kind === "authenticated" ? { ...current, session } : current,
+      );
+      setFormError(null);
+    },
+    [],
   );
-  useEffect(
-    () =>
-      subscribeSessionFailure((failure) => {
-        if (state.kind === "authenticated") setSessionFailure(failure);
-      }),
-    [state.kind],
+  const sessionRecovery = useSessionRecovery(
+    state.kind === "authenticated" ? state.session : null,
+    applyRecoveredSession,
   );
+  const sessionFailure = sessionRecovery.failure;
   const recovery =
     state.kind === "authenticated" ? (
       <>
@@ -301,20 +303,11 @@ export const App = ({ initialState, initialPath }: AppProps) => {
           <SessionRecovery
             failure={sessionFailure}
             username={state.session.owner.username}
-            onRecovered={(session) => {
-              setState((current) =>
-                current.kind === "authenticated"
-                  ? { ...current, session }
-                  : current,
-              );
-              setSessionFailure(null);
-              setFormError(null);
-            }}
+            onRecovered={sessionRecovery.recover}
           />
         )}
       </>
     ) : null;
-  const [formError, setFormError] = useState<string | null>(null);
   const [baikalProbe, setBaikalProbe] = useState<BaikalProbeResponse | null>(
     null,
   );
@@ -869,7 +862,7 @@ export const App = ({ initialState, initialPath }: AppProps) => {
       error.code === "AUTH_REQUIRED"
     ) {
       setFormError(null);
-      setSessionFailure("expired");
+      sessionRecovery.reportFailure("expired");
     } else {
       setFormError(messageFor(error));
     }
