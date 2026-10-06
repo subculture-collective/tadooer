@@ -15,6 +15,19 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  hostedOAuthMigration,
+  SqliteHostedOAuthStore,
+} from "./hosted-oauth-store.ts";
+export {
+  hostedOAuthMigration,
+  SqliteHostedOAuthStore,
+  type HostedOAuthAuditRecord,
+  type HostedOAuthCodeRecord,
+  type HostedOAuthGrantRecord,
+  type HostedOAuthRequestRecord,
+  type HostedOAuthTokenRecord,
+} from "./hosted-oauth-store.ts";
 import { SqliteCalendarProjectionStore } from "./calendar-projection-store.js";
 import {
   SqliteCredentialStore,
@@ -1818,11 +1831,12 @@ const migrations: readonly Migration[] = [
         ON web_session_retired_tokens(device_id);
     `,
   },
+  hostedOAuthMigration,
   {
     // Issue #114: focus preferences join the sync feed as a read-only
     // offline singleton. Existing rows have no feed change, so every client
     // replaces its cache once while retaining and replaying its outbox.
-    id: "0052_sync_focus_preferences_epoch_reset",
+    id: "0053_sync_focus_preferences_epoch_reset",
     sql: `
       DELETE FROM sync_changes;
       UPDATE sync_owner_state
@@ -1890,9 +1904,12 @@ export class SuiteDatabase {
   readonly calendarBridge: SqliteCalendarBridgeStore;
   /** ADR 0043: bridge worker schedule, leases and health aggregates. */
   readonly calendarBridgeWorker: SqliteCalendarBridgeWorkerStore;
+  /** ADR 0051: digest-only hosted MCP OAuth grants and credentials. */
+  readonly hostedOAuth: SqliteHostedOAuthStore;
 
   private constructor(database: DatabaseSync) {
     this.#database = database;
+    this.hostedOAuth = new SqliteHostedOAuthStore(database);
     this.dataExport = new SqliteDataExportStore(database);
     this.deviceSessions = new SqliteDeviceSessionStore(database);
     this.calendarSubscriptions = new SqliteCalendarSubscriptionStore(database);
@@ -1935,19 +1952,16 @@ export class SuiteDatabase {
       currentTaskRevision: (ownerId, taskId) =>
         this.getTask(ownerId, taskId)?.revision,
     });
-    this.focus = new SqliteFocusStore(
-      database,
-      (ownerId, revision, now) => {
-        this.#appendSyncChangeInTransaction(
-          ownerId,
-          "focus_preferences",
-          ownerId,
-          "upsert",
-          revision,
-          now,
-        );
-      },
-    );
+    this.focus = new SqliteFocusStore(database, (ownerId, revision, now) => {
+      this.#appendSyncChangeInTransaction(
+        ownerId,
+        "focus_preferences",
+        ownerId,
+        "upsert",
+        revision,
+        now,
+      );
+    });
     this.applicationPreferences = new SqliteApplicationPreferencesStore(
       database,
       {

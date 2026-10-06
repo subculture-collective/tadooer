@@ -8,9 +8,9 @@ Issue #36 (roadmap #15). Builds on the read-only Google federation (phase 3,
 migration `0012_phase_3_google_federation`), the encrypted connectors of ADR
 0007 and the bridge contract of ADR 0017, which requires "fresh Google write consent
 and permission-aware adapters" before any Google write. This ADR covers the
-consent and capability gate only. Conditional create/update/delete adapters,
-error classification and quota handling belong with the outbox in #40. Real
-account qualification belongs to #50.
+consent and capability gate. Conditional create/update/delete adapters, error
+classification and quota handling were subsequently added with the outbox in
+#40. Real account qualification belongs to #50.
 
 ## Scopes
 
@@ -77,11 +77,12 @@ refusal reasons are `not-connected`, `reconnect-required`, `consent-required`,
 Every write path to a Google calendar calls the gate before reserving work:
 the task time-block route and the assistant `schedule.create_time_block`
 preview and apply. A refused write returns 403 `GOOGLE_CALENDAR_NOT_WRITABLE`
-with the reason and no reservation or provider call. A calendar that passes the
-gate still returns 409 `GOOGLE_WRITE_NOT_AVAILABLE`, because no Google write
-adapter exists until #40. The bridge (#40/#46) must call the same gate for every
-dispatch and treat its result as ADR 0017's "lost write permission" block:
-pending work stays visible and accepted state is preserved.
+with the reason and no reservation or provider call. Direct task time blocks
+still return 409 `GOOGLE_WRITE_NOT_AVAILABLE` when the gate passes. The bridge
+uses the conditional adapters added by #40 and calls the same gate when a
+mapping is created and before every pass. Permission changes therefore block
+before provider work is read or dispatched; pending work stays visible and
+accepted state is preserved.
 
 ## Downgrade
 

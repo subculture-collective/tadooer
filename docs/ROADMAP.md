@@ -287,8 +287,9 @@ Completed on 2026-08-06 on `codex/phase-4-automation-mcp`:
   preview and explicit confirmation, including calendar reconciliation against
   the reserved provider href and UID
 - local TypeScript MCP stdio adapter with catalog-derived tools/resources and a
-  mode-0600 token-file contract; hosted MCP explicitly disabled pending a
-  separate public OAuth/PKCE design
+  mode-0600 token-file contract; hosted MCP remains disabled while the scoped
+  OAuth/PKCE design in [ADR 0051](adr/0051-hosted-mcp-oauth-authorization.md)
+  proceeds through implementation and live-client qualification
 - quick-add CLI using the same preview/confirm API and caller-stable retry key
 - contract, persistence, HTTP restart/replay/revocation, focus, MCP protocol,
   quick-add, and full repository verification gates
@@ -415,7 +416,7 @@ read-only calendar feed, and use provenance-aware import adapters.
 - Source adapter framework for later Super Productivity, Apple Reminders, Google
   Tasks, and other products
 - Historical Phase 7 scope covered one-time migration and publication. The separately approved opt-in Google/Baikal bridge follows ADR 0017 and issues #35–#50.
-  As of 2026-09-29, #35, #40, #45, #46 and #48 are implemented and tested against fake providers and disposable Baikal (ADRs 0039 and 0041–0044). #36 has consent and writable-role handling but no Google write adapters. No real Google account has been used; #50 owns that qualification, and the bridge stays opt-in with no mapping configured in production.
+  As of 2026-09-29, #35, #40, #45, #46 and #48 are implemented and tested against fake providers and disposable Baikal (ADRs 0039 and 0041–0044). #36 supplies explicit consent and writable-role handling to the conditional Google adapters in #40, including a capability recheck before every writing bridge pass. No real Google write grant has been used; #50 owns that qualification, and the bridge stays opt-in with no mapping configured in production.
 
 ### Exit evidence
 

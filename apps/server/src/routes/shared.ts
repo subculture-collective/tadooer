@@ -55,6 +55,7 @@ import type { CalendarBridgeWorker } from "../calendar-bridge/worker.ts";
 import type { ProviderThrottle } from "../calendar-bridge/throttle.ts";
 import type { NtfyPublisher } from "../notifications.ts";
 import type { LiveSyncService } from "../live-sync/service.ts";
+import type { HostedOAuthService } from "../hosted-oauth.ts";
 import { mimeTypes, securityHeaders } from "../http-utils.ts";
 
 export type RouteHandler = (
@@ -84,6 +85,8 @@ export interface RouteContext {
   readonly triggerNotifications?: () => Promise<void>;
   /** Live sync hint streams (ADR 0045). */
   readonly liveSync: LiveSyncService;
+  /** ADR 0051 authorization server; absent keeps every endpoint disabled. */
+  readonly hostedOAuth?: HostedOAuthService;
 }
 
 export const automationTokenResponse = (token: {

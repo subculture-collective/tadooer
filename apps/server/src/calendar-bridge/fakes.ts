@@ -53,6 +53,7 @@ export interface FakeGoogleCalendar {
   loseNextWriteResponse(): void;
   expireSyncTokens(): void;
   setUnavailable(value: boolean): void;
+  setAccessRole(role: "reader" | "writer" | "owner"): void;
   /** Extra token-endpoint scopes; used by the server route test. */
   grantScopes: string[];
 }
@@ -69,6 +70,7 @@ export const createFakeGoogleCalendar = (
   let loseResponse = false;
   let tokenFloor = 0;
   let unavailable = false;
+  let accessRole: "reader" | "writer" | "owner" = "owner";
 
   const touch = (event: GoogleEvent): GoogleEvent => {
     etagVersion += 1;
@@ -194,6 +196,9 @@ export const createFakeGoogleCalendar = (
     setUnavailable: (value) => {
       unavailable = value;
     },
+    setAccessRole: (role) => {
+      accessRole = role;
+    },
     fetch: async (input, init) => {
       await Promise.resolve();
       const url = requestUrl(input);
@@ -222,7 +227,7 @@ export const createFakeGoogleCalendar = (
               id: calendarId,
               etag: '"calendar-1"',
               summary: "Primary",
-              accessRole: "owner",
+              accessRole,
               primary: true,
               timeZone: "UTC",
             },
