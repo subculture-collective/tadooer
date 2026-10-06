@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import process from "node:process";
+import { URL } from "node:url";
 import { chromium, expect } from "@playwright/test";
 
 const [mode, baseUrl, statePath] = process.argv.slice(2);

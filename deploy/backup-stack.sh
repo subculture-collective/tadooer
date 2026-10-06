@@ -30,9 +30,9 @@ trap resume 0 1 2 15
 docker compose stop suite baikal >/dev/null
 mkdir -m 700 "$destination"
 mkdir "$destination/suite-data" "$destination/baikal-specific" "$destination/baikal-config"
-docker cp "$suite_container:/data/." "$destination/suite-data"
-docker cp "$baikal_container:/var/www/baikal/Specific/." "$destination/baikal-specific"
-docker cp "$baikal_container:/var/www/baikal/config/." "$destination/baikal-config"
+docker cp -a "$suite_container:/data/." "$destination/suite-data"
+docker cp -a "$baikal_container:/var/www/baikal/Specific/." "$destination/baikal-specific"
+docker cp -a "$baikal_container:/var/www/baikal/config/." "$destination/baikal-config"
 (
   cd "$destination"
   find suite-data baikal-specific baikal-config -type f -print0 |
