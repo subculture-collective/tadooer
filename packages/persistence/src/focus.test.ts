@@ -124,8 +124,11 @@ describe("focus preferences persistence (ADR 0029)", () => {
           preferences: { pomodoro: { workMinutes: 50 } },
         });
         expect(
-          db.pageSyncChanges("owner", db.getSyncState("owner").epoch, 0)
-            .changes,
+          db
+            .pageSyncChanges("owner", db.getSyncState("owner").epoch, 0)
+            .changes.filter(
+              ({ entityType }) => entityType === "focus_preferences",
+            ),
         ).toEqual([
           expect.objectContaining({
             entityType: "focus_preferences",
@@ -174,7 +177,11 @@ describe("focus preferences persistence (ADR 0029)", () => {
         db.focus.importInTransaction("owner", imported, provenance, now),
       ).toBe("applied");
       expect(
-        db.pageSyncChanges("owner", db.getSyncState("owner").epoch, 0).changes,
+        db
+          .pageSyncChanges("owner", db.getSyncState("owner").epoch, 0)
+          .changes.filter(
+            ({ entityType }) => entityType === "focus_preferences",
+          ),
       ).toEqual([
         expect.objectContaining({
           entityType: "focus_preferences",

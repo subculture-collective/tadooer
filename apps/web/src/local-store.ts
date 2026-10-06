@@ -763,7 +763,12 @@ export class LocalStore {
       ({ entityKind }) => entityKind === "focus_preferences",
     );
     if (record === undefined) return undefined;
-    return focusPreferencesResponseSchema.parse(record.value);
+    const value = record.value as FocusPreferencesResponse;
+    return focusPreferencesResponseSchema.parse({
+      preferences: value.preferences,
+      revision: value.revision,
+      imported: value.imported,
+    });
   }
 
   /**
