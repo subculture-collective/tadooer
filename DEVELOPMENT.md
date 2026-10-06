@@ -197,7 +197,7 @@ state into fresh volumes, repeats task scheduling, and removes the verification
 volumes.
 
 `pnpm verify:phase2` uses two disposable persistent Chromium profiles. It drives
-the current Today and Tasks views to prove offline task creation and status
+the current Today and Tasks views to prove offline task creation and title
 edits across profile close/reopen, reconnect without a duplicate task, offline
 same-field title conflict handling, follower takeover, and the same
 authoritative focus session after a Suite restart. Lease expiry and

@@ -49,7 +49,9 @@ const openTasks = async () => {
 };
 const openToday = async () => {
   await page.getByRole("link", { name: "Today", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Today", exact: true }),
+  ).toBeVisible();
 };
 const localDateTime = (offsetHours) => {
   const date = new Date(Date.now() + offsetHours * 60 * 60 * 1000);
@@ -57,13 +59,9 @@ const localDateTime = (offsetHours) => {
   return local.toISOString().slice(0, 16);
 };
 
-const placeTask = async (
-  title,
-  start,
-  expectedButton = "Schedule",
-) => {
+const placeTask = async (title, start, expectedButton = "Schedule") => {
   const item = taskItem(title);
-  await item.getByLabel("Start").fill(start);
+  await item.getByLabel("Start", { exact: true }).fill(start);
   await item.getByLabel("Minutes", { exact: true }).fill("45");
   const [response] = await Promise.all([
     page.waitForResponse(
@@ -119,6 +117,7 @@ try {
     await expect(item.getByText(/Completed/)).toBeVisible();
     await item.getByRole("button", { name: "Reopen" }).click();
     await expect(item.getByText(/Open/)).toBeVisible();
+    page.once("dialog", (dialog) => void dialog.accept());
     await item.getByRole("button", { name: "Delete" }).click();
     await expect(taskItem("Phase 1 planned task")).toHaveCount(0);
     await page

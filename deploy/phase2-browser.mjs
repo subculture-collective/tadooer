@@ -39,7 +39,7 @@ const login = async (page) => {
   await page.goto(baseUrl);
   await expect(
     page.getByRole("heading", {
-      name: /Create the owner account|Sign in|Connect Baikal|Today/,
+      name: /^(Create the owner account|Sign in|Connect Baikal|Today)$/,
     }),
   ).toBeVisible();
   if (
@@ -64,7 +64,7 @@ const login = async (page) => {
     await page.getByLabel("Password").fill(ownerPassword);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(
-      page.getByRole("heading", { name: /Connect Baikal|Today/ }),
+      page.getByRole("heading", { name: /^(Connect Baikal|Today)$/ }),
     ).toBeVisible();
   }
   if (
@@ -78,7 +78,7 @@ const login = async (page) => {
     await page.getByRole("button", { name: "Verify and connect" }).click();
   }
   await expect(
-    page.getByRole("heading", { name: "Today" }),
+    page.getByRole("heading", { name: "Today", exact: true }),
   ).toBeVisible();
 };
 
@@ -108,17 +108,13 @@ try {
   const firstPage = first.pages()[0] ?? (await first.newPage());
   await login(firstPage);
   await firstPage.context().setOffline(true);
-  await firstPage.getByLabel("What needs doing?").fill("Phase 2 cached task");
+  await firstPage.getByLabel("What needs doing?").fill("Phase 2 offline task");
   await firstPage.getByRole("button", { name: "Capture task" }).click();
-  let item = task(firstPage, "Phase 2 cached task");
+  await openTasks(firstPage);
+  let item = task(firstPage, "Phase 2 offline task");
   await expect(item).toBeVisible();
-  await item
-    .getByRole("button", { name: "Complete “Phase 2 cached task”" })
-    .click();
-  item = task(firstPage, "Phase 2 cached task");
-  await item
-    .getByRole("button", { name: "Reopen “Phase 2 cached task”" })
-    .click();
+  await item.getByLabel("Title").fill("Phase 2 cached task");
+  await item.getByRole("button", { name: "Save task" }).click();
   await expect(task(firstPage, "Phase 2 cached task")).toBeVisible();
   await first.close();
   firstClosed = true;
@@ -150,20 +146,27 @@ try {
       const secondItem = task(secondPage, "Phase 2 cached task");
       await secondItem.getByLabel("Title").fill("Phase 2 conflict loser");
       await secondItem.getByRole("button", { name: "Save task" }).click();
+      await expect(task(page, "Phase 2 conflict winner")).toBeVisible();
+      await expect(task(secondPage, "Phase 2 conflict loser")).toBeVisible();
       await reopened.setOffline(false);
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
       await expect(
         page.getByRole("button", { name: "Sync now" }),
       ).toBeEnabled();
       await page.getByRole("button", { name: "Sync now" }).click();
       await expect(page.getByText("Task sync: online")).toBeVisible();
       await second.setOffline(false);
+      await secondPage
+        .getByRole("link", { name: "Settings", exact: true })
+        .click();
       await expect(
         secondPage.getByRole("button", { name: "Sync now" }),
       ).toBeEnabled();
       await secondPage.getByRole("button", { name: "Sync now" }).click();
       await expect(
-        secondPage.getByText("Visible sync conflicts: 1"),
+        secondPage.getByText("Conflicts: 1", { exact: true }),
       ).toBeVisible();
+      await openTasks(secondPage);
       await expect(task(secondPage, "Phase 2 conflict winner")).toHaveCount(1);
 
       await page.goto(new URL("/today", baseUrl).href);
