@@ -158,9 +158,11 @@ docs/            ADRs, design rules and operations guides
 
 ## Contributing
 
-Open a pull request on GitHub against `main`. CI runs `pnpm verify` (format
-check, lint, typecheck, tests and build) on every pull request, and it must
-pass before the pull request can merge.
+- Report bugs and request features in [GitHub issues](https://github.com/subculture-collective/tadooer/issues).
+- Ask questions and share ideas in [GitHub Discussions](https://github.com/subculture-collective/tadooer/discussions).
+- Send code as a pull request on GitHub against `main`. CI runs `pnpm verify`
+  (format check, lint, typecheck, tests and build) on every pull request, and
+  it must pass before the pull request can merge.
 
 ## License
 
