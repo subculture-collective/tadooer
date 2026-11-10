@@ -26,3 +26,7 @@ client_secret.json
 
 # User Dev files
 /docs/scratchpad/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
