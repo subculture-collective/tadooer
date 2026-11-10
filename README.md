@@ -104,7 +104,12 @@ suites and every verification script in detail.
 
 ## Configuration
 
-Copy `.env.example` to `.env`. The main settings:
+With Docker Compose, `.env` sets only `SUITE_PORT`, `BAIKAL_PORT`,
+`BAIKAL_ENDPOINT` and `SUITE_SECURE_COOKIES`, because `compose.yaml` passes
+just those to the containers. Add any other server setting below to the
+`environment` block of the `suite` service, for example in a
+`compose.override.yaml`. Outside Compose, the server reads them from its
+environment. The main settings:
 
 | Variable                                      | Purpose                                                                             |
 | --------------------------------------------- | ----------------------------------------------------------------------------------- |
