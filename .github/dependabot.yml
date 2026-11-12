@@ -7,8 +7,8 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
+      interval: monthly
+    open-pull-requests-limit: 1
     # pnpm refuses lockfile entries published less than a day ago.
     cooldown:
       default-days: 3
@@ -40,8 +40,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       actions-minor-and-patch:
         patterns:
@@ -57,8 +57,8 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       docker-minor-and-patch:
         patterns:
