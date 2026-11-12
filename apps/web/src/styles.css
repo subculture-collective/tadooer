@@ -1846,6 +1846,147 @@
   .auth-card .step {
     color: var(--purple);
   }
+
+  /* Signed-out identity: mark, name, line and the planner-day motif from the
+     Studio pack. One column on phones, beside the card from 60rem. */
+  .auth-centre-branded {
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+  .auth-brand {
+    width: 100%;
+    max-width: 26rem;
+    display: grid;
+    gap: 0.5rem;
+  }
+  .auth-brand-lockup {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    margin-bottom: 0.25rem;
+  }
+  .auth-brand-mark {
+    width: 2.5rem;
+    height: 2.5rem;
+    flex: none;
+  }
+  .auth-brand-tile {
+    fill: var(--crust);
+    stroke: var(--line-strong);
+    stroke-width: 6;
+  }
+  .auth-brand-lines {
+    fill: var(--subtext);
+  }
+  .auth-brand-disc {
+    fill: var(--purple);
+  }
+  .auth-brand-check {
+    fill: none;
+    stroke: var(--crust);
+    stroke-width: 18;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .auth-brand-name {
+    font-size: var(--text-2xl);
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    color: var(--text);
+  }
+  .auth-brand h1 {
+    font-size: var(--text-2xl);
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+  .auth-brand-about {
+    color: var(--subtext);
+    font-size: var(--text-base);
+    line-height: 1.5;
+  }
+  .auth-brand-day {
+    display: none;
+    width: 100%;
+    height: auto;
+    margin-top: 1.5rem;
+  }
+  .auth-brand-day text {
+    font-family: var(--font-sans);
+    font-size: 19px;
+    fill: var(--text);
+  }
+  .auth-brand-day .day-hours text,
+  .auth-brand-day .day-meta text,
+  .auth-brand-day .day-calendar-text {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    fill: var(--subtext);
+  }
+  .auth-brand-day .day-meta text {
+    text-anchor: end;
+  }
+  .auth-brand-day .day-meta .day-now-text {
+    fill: var(--pink);
+  }
+  .auth-brand-day .day-calendar-text {
+    fill: var(--teal);
+  }
+  .auth-brand-day .day-rule {
+    stroke: var(--line);
+  }
+  .auth-brand-day .day-row {
+    fill: var(--surface-0);
+    stroke: var(--line);
+    stroke-width: 2;
+  }
+  .auth-brand-day .day-row-focus {
+    stroke: var(--purple);
+  }
+  .auth-brand-day .day-box rect {
+    fill: none;
+    stroke: var(--line-strong);
+    stroke-width: 2;
+  }
+  .auth-brand-day .day-calendar {
+    fill: color-mix(in srgb, var(--teal) 14%, var(--surface-0));
+  }
+  .auth-brand-day .day-calendar-edge {
+    fill: var(--teal);
+  }
+  .auth-brand-day .day-now {
+    stroke: var(--pink);
+    stroke-width: 2;
+  }
+  .auth-brand-day .day-now-dot {
+    fill: var(--pink);
+  }
+  /* Short screens, and phones with the keyboard open: keep the form in view. */
+  @media (max-height: 40rem) and (max-width: 59.99rem) {
+    .auth-brand-about {
+      display: none;
+    }
+  }
+  @media (min-width: 60rem) {
+    .auth-centre-branded {
+      flex-direction: row;
+      gap: 4rem;
+    }
+    .auth-brand {
+      max-width: 30rem;
+    }
+    .auth-brand h1 {
+      font-size: 1.75rem;
+    }
+    .auth-brand-about {
+      font-size: var(--text-lg);
+    }
+    .auth-brand-day {
+      display: block;
+    }
+  }
   .auth-card form,
   .auth-card > div {
     display: grid;

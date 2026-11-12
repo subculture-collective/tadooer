@@ -1,6 +1,7 @@
 import { readonlyFeedKindViews } from "./live-sync/views.ts";
 import { readonlyFeedKinds } from "@suite/contracts";
 import { OfflineLibrary } from "./pages/OfflineLibrary.tsx";
+import { AuthBrand } from "./auth-brand.tsx";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { usePlannerLoader } from "./use-planner-loader.ts";
@@ -2971,7 +2972,14 @@ export const App = ({ initialState, initialPath }: AppProps) => {
   const auth = isAuth;
   if (auth)
     return (
-      <div className="auth-centre">
+      <div
+        className={
+          state.kind === "login" || state.kind === "setup"
+            ? "auth-centre auth-centre-branded"
+            : "auth-centre"
+        }
+      >
+        {(state.kind === "login" || state.kind === "setup") && <AuthBrand />}
         <div className="auth-card">
           {recovery}
           {state.kind === "loading" && (

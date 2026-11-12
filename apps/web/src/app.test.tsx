@@ -12,6 +12,28 @@ describe("App", () => {
     expect(markup).toContain("one owner");
   });
 
+  it("gives the signed-out screens the identity without recruiting", () => {
+    for (const kind of ["login", "setup"] as const) {
+      const markup = renderToStaticMarkup(<App initialState={{ kind }} />);
+      expect(markup).toContain("<h1>The plan, and the one thing now.</h1>");
+      expect(markup).toContain(">Tadooer</span>");
+      expect(markup).toContain("private and self-hosted");
+      expect(markup).toContain("There is no sign-up.");
+      expect(markup).not.toMatch(/sign up|https?:\/\/|get more done|!\s*</i);
+    }
+    const login = renderToStaticMarkup(
+      <App initialState={{ kind: "login" }} />,
+    );
+    expect(login).toContain("<h2>Sign in</h2>");
+    // The planner day uses placeholder titles, so it stays decorative.
+    expect(login).toMatch(/<svg class="auth-brand-day"[^>]*aria-hidden="true"/);
+    expect(
+      renderToStaticMarkup(
+        <App initialState={{ kind: "error", message: "Unreachable" }} />,
+      ),
+    ).not.toContain("auth-brand");
+  });
+
   it("renders discovered event and todo capabilities without claiming event reads", () => {
     const markup = renderToStaticMarkup(
       <App

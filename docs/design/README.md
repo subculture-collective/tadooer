@@ -37,6 +37,14 @@ edit the copies. `suite-icon.svg` stays as the mark's editable source.
 **Wordmark.** "Tadooer" in Inter at weight 650 with tracking -0.015em, the same
 setting as page titles. Lowercase is for identifiers only.
 
+**Signed-out screens.** Sign-in and first-run setup show the mark with the
+wordmark, the line "The plan, and the one thing now.", two sentences saying
+what Tadooer is and that the instance is private and self-hosted, and, from
+60rem, the Studio pack's planner day (`apps/web/src/auth-brand.tsx`). The mark
+there has the pack's `--line-strong` border because it sits on `--crust`. The
+planner day's row titles are placeholders, so it is hidden from assistive
+technology. Below 60rem the form follows the copy directly.
+
 **Voice.** The planner itself, quietly. The rules and sample copy are in
 [Voice](#voice) below.
 
