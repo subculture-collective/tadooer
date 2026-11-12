@@ -2,10 +2,10 @@
 
 Implementation revision: `630d45dec387afbd926e5ab013a23f42f5eb6b4f`, based on
 `588c1ed99df36402d22d5447ad0f4c88d35a9df5`. Delivery: [PR #89](https://git.subcult.tv/subculture-collective/tadooer/pulls/89).
-This record covers development acceptance for [#14](https://git.subcult.tv/subculture-collective/tadooer/issues/14)
-and [#16](https://git.subcult.tv/subculture-collective/tadooer/issues/16).
-Candidate deployment remains [#37](https://git.subcult.tv/subculture-collective/tadooer/issues/37);
-production soak remains [#21](https://git.subcult.tv/subculture-collective/tadooer/issues/21).
+This record covers development acceptance for [#14](https://github.com/subculture-collective/tadooer/issues/16)
+and [#16](https://github.com/subculture-collective/tadooer/issues/18).
+Candidate deployment remains [#37](https://github.com/subculture-collective/tadooer/issues/39);
+production soak remains [#21](https://github.com/subculture-collective/tadooer/issues/23).
 
 ## Environment and automated checks
 

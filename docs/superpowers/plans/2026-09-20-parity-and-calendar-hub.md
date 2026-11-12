@@ -22,7 +22,7 @@ units below retain dependency intent; the execution evidence is chronological.
 - #55 organization and #56 checklist assistant operations are implemented in
   PRs #70–#73 with 34 catalog tools and built-runtime checks. #57–#60 remain.
 - All real-data cutover, live client/provider, candidate delivery and soak gates
-  remain separate issues in [roadmap #15](https://git.subcult.tv/subculture-collective/tadooer/issues/15).
+  remain separate issues in [roadmap #15](https://github.com/subculture-collective/tadooer/issues/17).
 
 ## Ordered units
 

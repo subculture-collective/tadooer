@@ -3,7 +3,7 @@
 Issue #22. Source inspected at `cc1babd` on September 20, 2026. The old plans are
 historical design/execution proposals, not runnable queues of unfinished work.
 Their unchecked shell/test/commit steps do not prove features are missing.
-Current work is tracked by [roadmap #15](https://git.subcult.tv/subculture-collective/tadooer/issues/15)
+Current work is tracked by [roadmap #15](https://github.com/subculture-collective/tadooer/issues/17)
 and the issues below. This audit changes documentation, not application behavior.
 
 ## August architecture plan
@@ -55,6 +55,6 @@ sequences or claim their originally proposed tests ran. No production interactio
 new visual acceptance, client installation or stable release is established here.
 
 Residual issue links:
-[#74](https://git.subcult.tv/subculture-collective/tadooer/issues/74),
-[#75](https://git.subcult.tv/subculture-collective/tadooer/issues/75),
-[#76](https://git.subcult.tv/subculture-collective/tadooer/issues/76).
+[#74](https://github.com/subculture-collective/tadooer/issues/66),
+[#75](https://github.com/subculture-collective/tadooer/issues/67),
+[#76](https://github.com/subculture-collective/tadooer/issues/68).

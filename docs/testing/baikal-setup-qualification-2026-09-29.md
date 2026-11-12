@@ -1,6 +1,6 @@
 # Baikal setup qualification — September 29, 2026
 
-Issue [#35](https://git.subcult.tv/subculture-collective/tadooer/issues/35),
+Issue [#35](https://github.com/subculture-collective/tadooer/issues/37),
 [ADR 0039](../adr/0039-baikal-setup-qualification.md). Source: branch
 `issue/35-wave6` on base `b22e3a6a2f5153c9067577720436e10b3d32f730`; the run
 used the uncommitted change set that the issue #35 commit records. Upstream

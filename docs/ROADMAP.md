@@ -6,7 +6,7 @@ the September 20 interview. Dependency order is not a calendar commitment.
 ## Current checkpoint
 
 See [STATUS.md](STATUS.md) for the single current source, publication, deployment
-and qualification checkpoint, and [roadmap issue #15](https://git.subcult.tv/subculture-collective/tadooer/issues/15)
+and qualification checkpoint, and [roadmap issue #15](https://github.com/subculture-collective/tadooer/issues/17)
 for all implementation and acceptance issues. The numbered phases below preserve
 historical scope and evidence; their original exclusions do not cancel the
 September parity, assistant and opt-in calendar-hub decisions.

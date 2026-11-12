@@ -1,7 +1,7 @@
 # Feature Prioritization
 
 **Status:** Framework approved August 5; current application reconciled September 20.
-See [the current checkpoint](../STATUS.md) and [roadmap #15](https://git.subcult.tv/subculture-collective/tadooer/issues/15).
+See [the current checkpoint](../STATUS.md) and [roadmap #15](https://github.com/subculture-collective/tadooer/issues/17).
 
 ## Goal
 

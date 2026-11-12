@@ -5,8 +5,13 @@ read of the production `/api/build` and `/api/ready` endpoints; the production
 section was updated after the `0.15.0-rc.6` deployment on November 4. This is
 the single current checkpoint; phase notes, release records under
 `docs/testing/` and execution plans keep the dated history. The repository is
-[subculture-collective/tadooer](https://git.subcult.tv/subculture-collective/tadooer)
+[subculture-collective/tadooer](https://github.com/subculture-collective/tadooer)
 and its default branch is `main`.
+
+Issues moved from Gitea to GitHub on November 10, 2026 and were renumbered.
+Issue numbers in this repository's documents are the Gitea numbers. A linked
+number opens the matching GitHub issue, whose first line names its Gitea
+number.
 
 ## Production
 
@@ -25,12 +30,12 @@ and disk image. Before it, `0.15.0-rc.6` was deployed by hand
 
 ## Stable release
 
-[#21](https://git.subcult.tv/subculture-collective/tadooer/issues/21) still
+[#21](https://github.com/subculture-collective/tadooer/issues/23) still
 describes the September 20 soak of `0.14.1-calendar` (`a6983dc`, 19
 migrations). Production has since moved through `0.15.0-rc.1` to `rc.8`, so
 that soak does not cover the running build. Its disposition is an owner
 decision recorded on
-[#37](https://git.subcult.tv/subculture-collective/tadooer/issues/37). Elapsed
+[#37](https://github.com/subculture-collective/tadooer/issues/39). Elapsed
 time alone never qualifies `1.0.0`; workflow evidence, backup and restore, the
 absence of qualifying failures and sign-off remain required.
 
