@@ -1,0 +1,72 @@
+version: 2
+
+# Green pull requests in this organization merge themselves, so every
+# ecosystem here is limited to grouped minor and patch updates. Major versions
+# and the dependencies listed under "ignore" are updated by hand.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    # pnpm refuses lockfile entries published less than a day ago.
+    cooldown:
+      default-days: 3
+    groups:
+      npm-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+      # Desktop packaging, signing and notarization run only in the release
+      # workflow; update these with a release candidate.
+      - dependency-name: electron
+      - dependency-name: "@electron/*"
+      # A Capacitor update needs `cap sync` to regenerate the native projects.
+      - dependency-name: "@capacitor/*"
+      # The browser suites run outside CI against installed browser builds.
+      - dependency-name: "@playwright/test"
+      # Icon and component updates can change what the interface looks like.
+      - dependency-name: lucide-react
+      - dependency-name: radix-ui
+      # 8.72 adds strict-preset findings and needs more than the 4 GB lint heap.
+      - dependency-name: typescript-eslint
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      actions-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      docker-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major

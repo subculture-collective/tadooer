@@ -8,6 +8,6 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@xmldom/xmldom": "0.9.10"
+    "@xmldom/xmldom": "0.9.12"
   }
 }

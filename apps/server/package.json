@@ -19,6 +19,6 @@
   },
   "devDependencies": {
     "@suite/test-support": "workspace:*",
-    "tsx": "4.23.8"
+    "tsx": "4.23.15"
   }
 }

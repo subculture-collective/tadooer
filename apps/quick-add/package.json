@@ -14,6 +14,6 @@
     "@suite/contracts": "workspace:*"
   },
   "devDependencies": {
-    "tsx": "4.23.8"
+    "tsx": "4.23.15"
   }
 }
