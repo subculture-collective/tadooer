@@ -95,15 +95,17 @@ jobs:
           # printed text matches it exactly, which a multi-line key does not.
           NUC_DEPLOY_KEY_B64: ${{ secrets.NUC_DEPLOY_KEY_B64 }}
           NUC_KNOWN_HOSTS: ${{ secrets.NUC_KNOWN_HOSTS }}
+          DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
         run: |
           set -euo pipefail
+          : "${DEPLOY_TARGET:?DEPLOY_TARGET secret is not set}"
           umask 077
           key="$RUNNER_TEMP/nuc-deploy-key"
           trap 'rm -f "$key" "$RUNNER_TEMP/nuc-known-hosts"' EXIT
           printf '%s' "$NUC_DEPLOY_KEY_B64" | base64 -d > "$key"
           printf '%s\n' "$NUC_KNOWN_HOSTS" > "$RUNNER_TEMP/nuc-known-hosts"
           nuc=(ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes
-            -o "UserKnownHostsFile=$RUNNER_TEMP/nuc-known-hosts" -o ServerAliveInterval=30 onnwee@10.0.0.56)
+            -o "UserKnownHostsFile=$RUNNER_TEMP/nuc-known-hosts" -o ServerAliveInterval=30 "$DEPLOY_TARGET")
           echo "Sending tadooer:$VERSION to nuc"
           docker save "tadooer:$VERSION" | "${nuc[@]}" receive "$VERSION"
           "${nuc[@]}" deploy "$VERSION" "$REVISION"
